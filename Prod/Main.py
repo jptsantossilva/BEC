@@ -220,7 +220,8 @@ def trader():
             if balanceQty < buyOrderQty:
                 sellQty = balanceQty
             sellQty = adjustSize(coinPair, sellQty)
-            if sellQty > 0:            
+            if sellQty > 0: 
+                sendTelegramMessage('',Client.SIDE_SELL+" "+coinPair+" "+str(sellQty))           
                 order = client.create_order(symbol=coinPair,
                                         side=Client.SIDE_SELL,
                                         type=Client.ORDER_TYPE_MARKET,
@@ -254,6 +255,7 @@ def trader():
         if lastrow.FastMA > lastrow.SlowMA:
             positionSize = calcPositionSize()
             # print("positionSize: ", positionSize)
+            sendTelegramMessage('',Client.SIDE_BUY+" "+coinPair+" "+str(positionSize))  
             order = client.create_order(symbol=coinPair,
                                         side=Client.SIDE_BUY,
                                         type=Client.ORDER_TYPE_MARKET,
