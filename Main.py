@@ -8,7 +8,7 @@ from datetime import datetime
 import time
 import sys
 import math
-import btalib
+# import btalib
 
 # %%
 #criar csv das orders
@@ -51,15 +51,19 @@ posframe = pd.read_csv('positioncheck')
 # read orders csv
 # we just want the header, there is no need to get all the existing orders.
 # at the end we will append the orders to the csv
-# dforders = pd.read_csv('orders', nrows=0)
-dforders = pd.read_csv('orders')
+dforders = pd.read_csv('orders', nrows=0)
+
 # dforders
 
 # %%
 # constants
 
-# coins to trade
-symbols = ['BTCBUSD','ETHBUSD','BNBBUSD','SOLBUSD','MATICBUSD','FTTBUSD']
+# coin pairs to trade - add to the positionscheck file the coin pairs you want to trade.
+# only use BUSD pairs 
+# symbols = ['BTCBUSD','ETHBUSD','BNBBUSD','SOLBUSD','MATICBUSD','FTTBUSD']
+# positionscheck file example
+# Currency,position,quantity
+# BTCBUSD,0,0.0
 
 # strategy
 timeframe = Client.KLINE_INTERVAL_1HOUR # "1h"
@@ -109,6 +113,30 @@ def sendTelegramAlert(emoji, date, coin, timeframe, strategy, ordertype, value, 
 client = Client(api_key, api_secret)
 
 # %%
+# Not working properly yet
+def spot_balance():
+        sum_btc = 0.0
+        balances = client.get_account()
+        for _balance in balances["balances"]:
+            asset = _balance["asset"]
+            if True: #float(_balance["free"]) != 0.0 or float(_balance["locked"]) != 0.0:
+                try:
+                    btc_quantity = float(_balance["free"]) + float(_balance["locked"])
+                    if asset == "BTC":
+                        sum_btc += btc_quantity
+                    else:
+                        _price = client.get_symbol_ticker(symbol=asset + "BTC")
+                        sum_btc += btc_quantity * float(_price["price"])
+                except:
+                    pass
+
+        current_btc_price_USD = client.get_symbol_ticker(symbol="BTCUSDT")["price"]
+        own_usd = sum_btc * float(current_btc_price_USD)
+        print(" * Spot => %.8f BTC == " % sum_btc, end="")
+        print("%.8f USDT" % own_usd)
+# spot_balance()
+
+# %%
 def calcPositionSize():
 
     # get balance from BUSD
@@ -127,9 +155,9 @@ def calcPositionSize():
     return positionSize
 
 # %%
-def getdata(symbol):
+def getdata(coinPair):
     
-    frame = pd.DataFrame(client.get_historical_klines(symbol,
+    frame = pd.DataFrame(client.get_historical_klines(coinPair,
                                                     timeframe,
                                                     '200 hour ago UTC'))
 
@@ -172,34 +200,37 @@ def adjustSize(coin, amount):
 # %%
 def trader():
 
+    listPosition1 = posframe[posframe.position == 1].Currency
+    listPosition0 = posframe[posframe.position == 0].Currency
+
     # check open positions and SELL if conditions are fulfilled 
-    for coin in posframe[posframe.position == 1].Currency:
-        df = getdata(coin)
+    for coinPair in listPosition1:
+        df = getdata(coinPair)
         applytechnicals(df)
         lastrow = df.iloc[-1]
         if lastrow.SlowMA > lastrow.FastMA:
-            coinOnly = coin.replace('BUSD','')
+            coinOnly = coinPair.replace('BUSD','')
             # was not selling because the buy order amount is <> from the balance => fees were applied and we get less than the buy order
             # thats why we need to get the current balance  
             balanceQty = float(client.get_asset_balance(asset=coinOnly)['free'])
             # print("balanceQty: ",balanceQty)
-            buyOrderQty = float(posframe[posframe.Currency == coin].quantity.values[0])
+            buyOrderQty = float(posframe[posframe.Currency == coinPair].quantity.values[0])
             # print("buyOrderQty: ",buyOrderQty)
             sellQty = buyOrderQty
             if balanceQty < buyOrderQty:
                 sellQty = balanceQty
-            sellQty = adjustSize(coin, sellQty)
+            sellQty = adjustSize(coinPair, sellQty)
             if sellQty > 0:            
-                order = client.create_order(symbol=coin,
+                order = client.create_order(symbol=coinPair,
                                         side=Client.SIDE_SELL,
                                         type=Client.ORDER_TYPE_MARKET,
-                                        # quantity = posframe[posframe.Currency == coin].quantity.values[0]
+                                        # quantity = posframe[posframe.Currency == coinPair].quantity.values[0]
                                         quantity = sellQty
                                         )
-                changepos(coin,order,buy=False)
+                changepos(coinPair,order,buy=False)
                 
                 #add new row to end of DataFrame
-                dforders.loc[len(dforders.index)] = [coin, order['price'], order['executedQty'], order['side'], pd.to_datetime(order['transactTime'], unit='ms'),]
+                dforders.loc[len(dforders.index)] = [coinPair, order['price'], order['executedQty'], order['side'], pd.to_datetime(order['transactTime'], unit='ms'),]
                 
                 # print(order)
                 # sendTelegramMessage(eExitTrade, order)
@@ -213,24 +244,24 @@ def trader():
                                 order['price'],
                                 order['executedQty'])
             else:
-                changepos(coin,'',buy=False)
+                changepos(coinPair,'',buy=False)
 
     # check coins not in positions and BUY if conditions are fulfilled
-    for coin in posframe[posframe.position == 0].Currency:
-        df = getdata(coin)
+    for coinPair in listPosition0:
+        df = getdata(coinPair)
         applytechnicals(df)
         lastrow = df.iloc[-1]
         if lastrow.FastMA > lastrow.SlowMA:
             positionSize = calcPositionSize()
             # print("positionSize: ", positionSize)
-            order = client.create_order(symbol=coin,
+            order = client.create_order(symbol=coinPair,
                                         side=Client.SIDE_BUY,
                                         type=Client.ORDER_TYPE_MARKET,
                                         quoteOrderQty = positionSize)
-            changepos(coin,order,buy=True)
+            changepos(coinPair,order,buy=True)
             
             #add new row to end of DataFrame
-            dforders.loc[len(dforders.index)] = [coin, order['price'], order['executedQty'], order['side'], pd.to_datetime(order['transactTime'], unit='ms'),]
+            dforders.loc[len(dforders.index)] = [coinPair, order['price'], order['executedQty'], order['side'], pd.to_datetime(order['transactTime'], unit='ms'),]
                       
             # print(order)
             # sendTelegramMessage(eEnterTrade, order)
@@ -244,8 +275,8 @@ def trader():
                             order['price'],
                             order['executedQty'])
         else:
-            print(f'{coin} - Buy condition not fulfilled')
-            sendTelegramMessage(eInformation,f'{coin} - Buy condition not fulfilled')
+            print(f'{coinPair} - Buy condition not fulfilled')
+            sendTelegramMessage(eInformation,f'{coinPair} - Buy condition not fulfilled')
 
 
 # %%
