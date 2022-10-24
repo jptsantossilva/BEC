@@ -1,76 +1,57 @@
 # %%
 import os
+import re
+from turtle import left
+from xml.dom import ValidationErr
 import pandas as pd
 from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceOrderException
+from binance import BinanceSocketManager
+from binance.helpers import round_step_size
 import requests
 from datetime import datetime
 import time
 import sys
 import math
-# import btalib
+import numpy as np
+import dataframe_image as dfi
 
-# %%
-#criar csv das orders
-# orders = client.get_all_orders(symbol='BTCBUSD', limit=1)
-# dforders = pd.DataFrame(orders)
-# # colunas a manter
-# col_keep = ['symbol','price','executedQty','side','time']
-# dforders = dforders[col_keep]
-# dforders.time = pd.to_datetime(dforders.time, unit='ms')
-# dforders.to_csv('orders.csv', mode='a', index=False, header=False)
-
-# %%
-# create initial csv with positions
-# posframe = pd.DataFrame(symbols)
-# posframe.columns = ['Currency']
-# posframe['position'] = 0
-# posframe['quantity'] = 0
-# posframe.to_csv('positioncheck', index=False)
 
 # %%
 # environment variables
 try:
     # Binance
     api_key = os.environ.get('binance_api')
-    # print("api_key: ", api_key)
     api_secret = os.environ.get('binance_secret')
     
     # Telegram
     telegramToken = os.environ.get('telegramToken') 
     telegram_chat_id = os.environ.get('telegram_chat_id')
-
 except KeyError: 
     print("Environment variable does not exist")
 
-# %%
-# read positions csv
-posframe = pd.read_csv('positioncheck')
-# posframe
-
-# read orders csv
-# we just want the header, there is no need to get all the existing orders.
-# at the end we will append the orders to the csv
-dforders = pd.read_csv('orders', nrows=0)
-
-# dforders
+# Binance Client
+client = Client(api_key, api_secret)
 
 # %%
 # constants
 
-# coin pairs to trade - add to the positionscheck file the coin pairs you want to trade.
-# only use BUSD pairs 
-# symbols = ['BTCBUSD','ETHBUSD','BNBBUSD','SOLBUSD','MATICBUSD','FTTBUSD']
 # positionscheck file example
 # Currency,position,quantity
 # BTCBUSD,0,0.0
 
 # strategy
-timeframe = Client.KLINE_INTERVAL_1HOUR # "1h"
+# gTimeframe = client.KLINE_INTERVAL_1HOUR # "1h"
+gFastMA = int("8")
+gSlowMA = int("34")
+gTimeFrameNum = int("1")
+gtimeframeTypeShort = "h" # hour, day
+gtimeframeTypeLong = "hour" # hour, day
+gStrategyName = str(gFastMA)+"/"+str(gSlowMA)+" CROSS"
 
 # percentage of balance to open position for each trade - example 0.1 = 10%
-tradepercentage = float("0.002")
-minPositionSize = 20 # minimum position size in usd
+tradepercentage = float("0.01") #0.2%
+minPositionSize = float("15.0") # minimum position size in usd
 # risk percentage per trade - example 0.01 = 1%
 risk = float("0.01")
 
@@ -103,14 +84,33 @@ def sendTelegramAlert(emoji, date, coin, timeframe, strategy, ordertype, value, 
     url = f"https://api.telegram.org/bot{telegramToken}/sendMessage?chat_id={telegram_chat_id}&text={lmsg}"
     requests.get(url).json() # this sends the message
 
-# %%
-# def testTelegramMessages():
-    # sendTelegramMessage(eInformation," Environment variable does not exist")
-# testTelegramMessages()
+def sendTelegramPhoto(photoName='balance.png'):
+    # get current dir
+    cwd = os.getcwd()
+    limg = cwd+"/"+photoName
+    # print(limg)
+    oimg = open(limg, 'rb')
+    url = f"https://api.telegram.org/bot{telegramToken}/sendPhoto?chat_id={telegram_chat_id}"
+    requests.post(url, files={'photo':oimg}) # this sends the message
 
 # %%
-# Binance Client
-client = Client(api_key, api_secret)
+# read positions csv
+posframe = pd.read_csv('positioncheck')
+# posframe
+
+# Todo
+# get top 10 relative to BTC or USD strongest coins and trade those.
+# the coins must have liquidity- choose from the top50 or 100 max from the marketcap rank 
+# Add them automatically to positioncheck.
+# remove the coins that are not so strong = not in an uptrend. example below 4H/1D 200MA
+# 
+
+# read orders csv
+# we just want the header, there is no need to get all the existing orders.
+# at the end we will append the orders to the csv
+# sendTelegramMessage("", "read orders csv")
+dforders = pd.read_csv('orders', nrows=0)
+# dforders
 
 # %%
 # Not working properly yet
@@ -138,28 +138,37 @@ def spot_balance():
 
 # %%
 def calcPositionSize():
+    # sendTelegramMessage("", "calc position size")
 
-    # get balance from BUSD
-    stableBalance = client.get_asset_balance(asset='BUSD')['free']
-    stableBalance = float(stableBalance)
-    # print(stableBalance)
+    try:
+        
+        # get balance from BUSD
+        stablecoin = client.get_asset_balance(asset='BUSD')
+        stablecoin = float(stablecoin['free'])
+        # print(stableBalance)
 
-    # calculate position size based on the percentage per trade
-    positionSize = stableBalance*tradepercentage 
-    positionSize = round(positionSize, 8)
+        # calculate position size based on the percentage per trade
+        resultado = stablecoin*tradepercentage 
+        resultado = round(resultado, 5)
+
+        if resultado < minPositionSize:
+            resultado = minPositionSize
+
+
+        return resultado
+    except BinanceAPIException as e:
+        sendTelegramMessage(eWarning, e)
     
-    if positionSize < minPositionSize:
-        positionSize = minPositionSize
-
-    # positionAmount = 10
-    return positionSize
+    
 
 # %%
 def getdata(coinPair):
-    
+
+    lstartDate = str(gSlowMA*gTimeFrameNum)+" "+gtimeframeTypeLong+" ago UTC" 
+    ltimeframe = str(gTimeFrameNum)+gtimeframeTypeShort
     frame = pd.DataFrame(client.get_historical_klines(coinPair,
-                                                    timeframe,
-                                                    '200 hour ago UTC'))
+                                                    ltimeframe,
+                                                    lstartDate))
 
     frame = frame[[0,4]]
     frame.columns = ['Time','Close']
@@ -171,12 +180,14 @@ def getdata(coinPair):
 def applytechnicals(df):
     # df['FastSMA'] = df.Close.rolling(50).mean()
     # df['SlowSMA'] = df.Close.rolling(200).mean()
-    df['FastMA'] = df['Close'].ewm(span=8, adjust=False).mean()
-    df['SlowMA'] = df['Close'].ewm(span=34, adjust=False).mean()
     
+    df['FastMA'] = df['Close'].ewm(span=gFastMA, adjust=False).mean()
+    df['SlowMA'] = df['Close'].ewm(span=gSlowMA, adjust=False).mean()
+
 
 # %%
 def changepos(curr, order, buy=True):
+    # sendTelegramMessage("", "change pos")
     if buy:
         posframe.loc[posframe.Currency == curr, 'position'] = 1
         posframe.loc[posframe.Currency == curr, 'quantity'] = float(order['executedQty'])
@@ -189,49 +200,75 @@ def changepos(curr, order, buy=True):
 
 # %%
 def adjustSize(coin, amount):
+
+    # sendTelegramMessage("", "adjust size")
+    
     for filt in client.get_symbol_info(coin)['filters']:
         if filt['filterType'] == 'LOT_SIZE':
-            stepSize = filt['stepSize'].find('1') - 2
+            stepSize = float(filt['stepSize'])
+            minQty = float(filt['minQty'])
             break
-    order_quantity = math.floor(amount * 10**stepSize) / float(10**stepSize)
+
+    order_quantity = round_step_size(amount, stepSize)
     return order_quantity
 
 
 # %%
 def trader():
+    # sendTelegramMessage("", "trader")
 
     listPosition1 = posframe[posframe.position == 1].Currency
     listPosition0 = posframe[posframe.position == 0].Currency
 
     # check open positions and SELL if conditions are fulfilled 
     for coinPair in listPosition1:
+        # sendTelegramMessage("",coinPair) 
         df = getdata(coinPair)
         applytechnicals(df)
         lastrow = df.iloc[-1]
+
         if lastrow.SlowMA > lastrow.FastMA:
+            # sendTelegramMessage("",client.SIDE_SELL+" "+coinPair) 
             coinOnly = coinPair.replace('BUSD','')
             # was not selling because the buy order amount is <> from the balance => fees were applied and we get less than the buy order
-            # thats why we need to get the current balance  
-            balanceQty = float(client.get_asset_balance(asset=coinOnly)['free'])
+            # thats why we need to get the current balance 
+            # sendTelegramMessage("",client.SIDE_SELL+" coinOnly:"+coinOnly) 
+            # balanceQty = client.get_asset_balance(asset=coinOnly)['free']
+            try:
+                balanceQty = float(client.get_asset_balance(asset=coinOnly)['free'])  
+            except BinanceAPIException as ea:
+                sendTelegramMessage(eWarning, ea)
+
+            # sendTelegramMessage("",client.SIDE_SELL+" "+coinPair+" balanceQty:"+str(balanceQty))
+
             # print("balanceQty: ",balanceQty)
             buyOrderQty = float(posframe[posframe.Currency == coinPair].quantity.values[0])
+            # sendTelegramMessage("",client.SIDE_SELL+" "+coinPair+" buyOrderQty:"+str(buyOrderQty))
             # print("buyOrderQty: ",buyOrderQty)
             sellQty = buyOrderQty
+            # sendTelegramMessage("",client.SIDE_SELL+" "+coinPair+" sellQty: "+str(sellQty))
             if balanceQty < buyOrderQty:
                 sellQty = balanceQty
+                # sendTelegramMessage("",client.SIDE_SELL+" "+coinPair+" sellQty:"+str(sellQty))
             sellQty = adjustSize(coinPair, sellQty)
+            sendTelegramMessage("",client.SIDE_SELL+" "+coinPair+" sellQty="+str(sellQty))
             if sellQty > 0: 
-                sendTelegramMessage('',Client.SIDE_SELL+" "+coinPair+" "+str(sellQty))           
-                order = client.create_order(symbol=coinPair,
-                                        side=Client.SIDE_SELL,
-                                        type=Client.ORDER_TYPE_MARKET,
-                                        # quantity = posframe[posframe.Currency == coinPair].quantity.values[0]
-                                        quantity = sellQty
-                                        )
-                changepos(coinPair,order,buy=False)
                 
+                try:        
+                    order = client.create_order(symbol=coinPair,
+                                            side=client.SIDE_SELL,
+                                            type=client.ORDER_TYPE_MARKET,
+                                            # quantity = posframe[posframe.Currency == coinPair].quantity.values[0]
+                                            quantity = sellQty
+                                            )
+                    changepos(coinPair,order,buy=False)
+                except BinanceAPIException as ea:
+                    sendTelegramMessage(eWarning, ea)
+                except BinanceOrderException as eo:
+                    sendTelegramMessage(eWarning, eo)
+
                 #add new row to end of DataFrame
-                dforders.loc[len(dforders.index)] = [coinPair, order['price'], order['executedQty'], order['side'], pd.to_datetime(order['transactTime'], unit='ms'),]
+                dforders.loc[len(dforders.index)] = [order['orderId'],coinPair, order['price'], order['executedQty'], order['side'], pd.to_datetime(order['transactTime'], unit='ms')]
                 
                 # print(order)
                 # sendTelegramMessage(eExitTrade, order)
@@ -239,76 +276,74 @@ def trader():
                                 # order['transactTime']
                                 pd.to_datetime(order['transactTime'], unit='ms'), 
                                 order['symbol'], 
-                                timeframe, 
-                                "SMA 50-200 CROSS",
+                                str(gTimeFrameNum)+gtimeframeTypeShort, 
+                                gStrategyName,
                                 order['side'],
                                 order['price'],
                                 order['executedQty'])
             else:
                 changepos(coinPair,'',buy=False)
+        else:
+            print(f'{coinPair} - Sell condition not fulfilled')
+            sendTelegramMessage("",f'{coinPair} - Sell condition not fulfilled')
 
     # check coins not in positions and BUY if conditions are fulfilled
     for coinPair in listPosition0:
+        # sendTelegramMessage("",coinPair) 
         df = getdata(coinPair)
         applytechnicals(df)
         lastrow = df.iloc[-1]
         if lastrow.FastMA > lastrow.SlowMA:
             positionSize = calcPositionSize()
+            # sendTelegramMessage("", "calc position size 5")
             # print("positionSize: ", positionSize)
-            sendTelegramMessage('',Client.SIDE_BUY+" "+coinPair+" "+str(positionSize))  
-            order = client.create_order(symbol=coinPair,
-                                        side=Client.SIDE_BUY,
-                                        type=Client.ORDER_TYPE_MARKET,
-                                        quoteOrderQty = positionSize)
-            changepos(coinPair,order,buy=True)
-            
-            #add new row to end of DataFrame
-            dforders.loc[len(dforders.index)] = [coinPair, order['price'], order['executedQty'], order['side'], pd.to_datetime(order['transactTime'], unit='ms'),]
-                      
-            # print(order)
-            # sendTelegramMessage(eEnterTrade, order)
-            sendTelegramAlert(eEnterTrade,
-                            # order['transactTime'], 
-                            pd.to_datetime(order['transactTime'], unit='ms'),
-                            order['symbol'], 
-                            timeframe, 
-                            "SMA 50-200 CROSS",
-                            order['side'],
-                            order['price'],
-                            order['executedQty'])
+            sendTelegramMessage('',client.SIDE_BUY+" "+coinPair+" BuyQty="+str(positionSize))  
+            if positionSize > 0:
+                try:
+                    order = client.create_order(symbol=coinPair,
+                                                side=client.SIDE_BUY,
+                                                type=client.ORDER_TYPE_MARKET,
+                                                quoteOrderQty = positionSize) #positionSize 
+                    changepos(coinPair,order,buy=True)
+                except BinanceAPIException as ea:
+                    sendTelegramMessage(eWarning, ea)
+                except BinanceOrderException as eo:
+                    sendTelegramMessage(eWarning, eo)
+                
+                #add new row to end of DataFrame
+                dforders.loc[len(dforders.index)] = [order['orderId'],coinPair, order['price'], order['executedQty'], order['side'], pd.to_datetime(order['transactTime'], unit='ms')]
+                        
+                
+                sendTelegramAlert(eEnterTrade,
+                                # order['transactTime'], 
+                                pd.to_datetime(order['transactTime'], unit='ms'),
+                                order['symbol'], 
+                                str(gTimeFrameNum)+gtimeframeTypeShort, 
+                                gStrategyName,
+                                order['side'],
+                                order['price'],
+                                order['executedQty'])
+            else:
+                sendTelegramMessage(eWarning,client.SIDE_BUY+" "+coinPair+" with qty = 0!")
+                
         else:
             print(f'{coinPair} - Buy condition not fulfilled')
-            sendTelegramMessage(eInformation,f'{coinPair} - Buy condition not fulfilled')
+            sendTelegramMessage("",f'{coinPair} - Buy condition not fulfilled')
+
+def custom_style(row):
+    bold = 'bold' if row < 0 else ''
+
+    # if row.values[-1] != "0.0":
+    #     bold = 'bold'
+    # else
+
+    # return ['background-color: %s' % color]*len(row.values)
+    return 'font-weight: bold'
 
 
-# %%
-# positionSize = calcPositionSize()
-# print("positionSize: ", positionSize)
-
-# %%
-# orders = client.get_all_orders(symbol='FTTBUSD', limit=10)
-# print(orders)
-
-# %%
-# get balance for a specific asset only (BTC)
-# print(client.get_asset_balance(asset='FTT'))
-
-# %%
-# qtd = posframe[posframe.Currency == 'BTCBUSD'].quantity.values[0]
-# qtd
-# qtd = 0.00054
-# order2 = client.create_order(symbol='BTCBUSD',
-#                                         side=Client.SIDE_SELL,
-#                                         type=Client.ORDER_TYPE_MARKET,
-#                                         quantity = qtd)
-# print(order2)
-
-# %%
-try:
+def main():
     # inform that is running
-    # now = datetime.now()
-    # dt_string = now.strftime("%d-%m-%Y %H:%M:%S")
-    sendTelegramMessage(eStart,"Binance Trader Bot - Started")
+    sendTelegramMessage(eStart,"Binance Trader Bot - Start")
 
     trader()
 
@@ -316,20 +351,28 @@ try:
     if not dforders.empty: 
         dforders.to_csv('orders', mode='a', index=False, header=False)
 
-     # sendTelegramMessage(eInformation, posframe.to_string)
-    sendTelegramMessage('', posframe.to_string())
-    
+
+    # posframe.drop('position', axis=1, inplace=True)
+    # posframe.style.applymap(custom_style)
+     
+    # send balance
+    print(posframe)
+
+    sendTelegramMessage("",posframe.to_string())
+
+    # dfi.export(posframe, 'balance.png', fontsize=8, table_conversion='matplotlib')
+    # sendTelegramPhoto()
+
+    # Todo
+    # set orders filled buy value
+    # get orders where price = 0 
+    # get filled price
+    # set price and save to csv file
+
     # inform that ended
-    sendTelegramMessage(eStop, "Binance Trader Bot - Ended")
-    
-except BinanceAPIException as e:
-    print(e.status_code, e.message)
-    sendTelegramMessage(eWarning, "Oops! "+ str(sys.exc_info()[0])+ " occurred.")
-    sendTelegramMessage(eWarning, "Error code:"+ str(e.status_code) + " - " + e.message)
-    print("Oops!", sys.exc_info()[0], "occurred.")
-except BinanceOrderException as e:
-    # error handling goes here
-    print(e)
+    sendTelegramMessage(eStop, "Binance Trader Bot - End")
+
+main()
 
 
 
