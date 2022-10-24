@@ -80,7 +80,7 @@ def sendTelegramMessage(emoji, msg):
     requests.get(url).json() # this sends the message
 
 def sendTelegramAlert(emoji, date, coin, timeframe, strategy, ordertype, value, amount):
-    lmsg = emoji + " " + str(date) + " - " + coin + " - " + strategy + " - " + timeframe + " - " + ordertype + " - " + "Value: " + str(value) + " - " + "Amount: " + str(amount)
+    lmsg = emoji + " " + str(date) + "\n" + coin + "\n" + strategy + "\n" + timeframe + "\n" + ordertype + "\n" + "Value: " + str(value) + "\n" + "Amount: " + str(amount)
     url = f"https://api.telegram.org/bot{telegramToken}/sendMessage?chat_id={telegram_chat_id}&text={lmsg}"
     requests.get(url).json() # this sends the message
 
@@ -137,13 +137,13 @@ def spot_balance():
 # spot_balance()
 
 # %%
-def calcPositionSize():
+def calcPositionSize(pStablecoin = 'BUSD'):
     # sendTelegramMessage("", "calc position size")
 
     try:
         
         # get balance from BUSD
-        stablecoin = client.get_asset_balance(asset='BUSD')
+        stablecoin = client.get_asset_balance(asset=pStablecoin)
         stablecoin = float(stablecoin['free'])
         # print(stableBalance)
 
@@ -227,9 +227,15 @@ def trader():
         applytechnicals(df)
         lastrow = df.iloc[-1]
 
+        # separate coin from stable. example coinPair=BTCUSDT coinOnly=BTC coinStable=USDT 
+        coinOnly = coinPair[:-4]
+        # print('coinOnly=',coinOnly)
+        coinStable = coinPair[-4:]
+        # print('coinStable=',coinStable)
+
         if lastrow.SlowMA > lastrow.FastMA:
-            # sendTelegramMessage("",client.SIDE_SELL+" "+coinPair) 
-            coinOnly = coinPair.replace('BUSD','')
+            # sendTelegramMessage("",client.SIDE_SELL+" "+coinPair)
+            # print('coinStable=',coinStable) 
             # was not selling because the buy order amount is <> from the balance => fees were applied and we get less than the buy order
             # thats why we need to get the current balance 
             # sendTelegramMessage("",client.SIDE_SELL+" coinOnly:"+coinOnly) 
@@ -261,6 +267,12 @@ def trader():
                                             # quantity = posframe[posframe.Currency == coinPair].quantity.values[0]
                                             quantity = sellQty
                                             )
+                    
+                    fills = order['fills']
+                    avg_price = sum([float(f['price']) * (float(f['qty']) / float(order['executedQty'])) for f in fills])
+                    avg_price = round(avg_price,8)
+                    # print('avg_price=',avg_price)
+
                     changepos(coinPair,order,buy=False)
                 except BinanceAPIException as ea:
                     sendTelegramMessage(eWarning, ea)
@@ -268,7 +280,7 @@ def trader():
                     sendTelegramMessage(eWarning, eo)
 
                 #add new row to end of DataFrame
-                dforders.loc[len(dforders.index)] = [order['orderId'],coinPair, order['price'], order['executedQty'], order['side'], pd.to_datetime(order['transactTime'], unit='ms')]
+                dforders.loc[len(dforders.index)] = [order['orderId'],coinPair, avg_price, order['executedQty'], order['side'], pd.to_datetime(order['transactTime'], unit='ms')]
                 
                 # print(order)
                 # sendTelegramMessage(eExitTrade, order)
@@ -279,7 +291,7 @@ def trader():
                                 str(gTimeFrameNum)+gtimeframeTypeShort, 
                                 gStrategyName,
                                 order['side'],
-                                order['price'],
+                                avg_price,
                                 order['executedQty'])
             else:
                 changepos(coinPair,'',buy=False)
@@ -294,16 +306,23 @@ def trader():
         applytechnicals(df)
         lastrow = df.iloc[-1]
         if lastrow.FastMA > lastrow.SlowMA:
-            positionSize = calcPositionSize()
+            positionSize = calcPositionSize(pStablecoin=coinStable)
             # sendTelegramMessage("", "calc position size 5")
             # print("positionSize: ", positionSize)
-            sendTelegramMessage('',client.SIDE_BUY+" "+coinPair+" BuyQty="+str(positionSize))  
+            sendTelegramMessage('',client.SIDE_BUY+" "+coinPair+" BuyStableQty="+str(positionSize))  
             if positionSize > 0:
                 try:
                     order = client.create_order(symbol=coinPair,
                                                 side=client.SIDE_BUY,
                                                 type=client.ORDER_TYPE_MARKET,
-                                                quoteOrderQty = positionSize) #positionSize 
+                                                quoteOrderQty = positionSize,
+                                                newOrderRespType = 'FULL') 
+                    
+                    fills = order['fills']
+                    avg_price = sum([float(f['price']) * (float(f['qty']) / float(order['executedQty'])) for f in fills])
+                    avg_price = round(avg_price,8)
+                    # print('avg_price=',avg_price)
+
                     changepos(coinPair,order,buy=True)
                 except BinanceAPIException as ea:
                     sendTelegramMessage(eWarning, ea)
@@ -311,7 +330,7 @@ def trader():
                     sendTelegramMessage(eWarning, eo)
                 
                 #add new row to end of DataFrame
-                dforders.loc[len(dforders.index)] = [order['orderId'],coinPair, order['price'], order['executedQty'], order['side'], pd.to_datetime(order['transactTime'], unit='ms')]
+                dforders.loc[len(dforders.index)] = [order['orderId'],coinPair, avg_price, order['executedQty'], order['side'], pd.to_datetime(order['transactTime'], unit='ms')]
                         
                 
                 sendTelegramAlert(eEnterTrade,
@@ -321,10 +340,10 @@ def trader():
                                 str(gTimeFrameNum)+gtimeframeTypeShort, 
                                 gStrategyName,
                                 order['side'],
-                                order['price'],
+                                avg_price,
                                 order['executedQty'])
             else:
-                sendTelegramMessage(eWarning,client.SIDE_BUY+" "+coinPair+" with qty = 0!")
+                sendTelegramMessage(eWarning,client.SIDE_BUY+" "+coinPair+" - Not enough "+coinStable+" funds!")
                 
         else:
             print(f'{coinPair} - Buy condition not fulfilled')
