@@ -50,7 +50,7 @@ gtimeframeTypeLong = "hour" # hour, day
 gStrategyName = str(gFastMA)+"/"+str(gSlowMA)+" CROSS"
 
 # percentage of balance to open position for each trade - example 0.1 = 10%
-tradepercentage = float("0.01") #0.2%
+tradepercentage = float("0.05") #0.2%
 minPositionSize = float("15.0") # minimum position size in usd
 # risk percentage per trade - example 0.01 = 1%
 risk = float("0.01")
@@ -79,8 +79,8 @@ def sendTelegramMessage(emoji, msg):
     url = f"https://api.telegram.org/bot{telegramToken}/sendMessage?chat_id={telegram_chat_id}&text={lmsg}"
     requests.get(url).json() # this sends the message
 
-def sendTelegramAlert(emoji, date, coin, timeframe, strategy, ordertype, value, amount):
-    lmsg = emoji + " " + str(date) + "\n" + coin + "\n" + strategy + "\n" + timeframe + "\n" + ordertype + "\n" + "Value: " + str(value) + "\n" + "Amount: " + str(amount)
+def sendTelegramAlert(emoji, date, coin, timeframe, strategy, ordertype, unitValue, amount, USDValue):
+    lmsg = emoji + " " + str(date) + "\n" + coin + "\n" + strategy + "\n" + timeframe + "\n" + ordertype + "\n" + "UnitValue: " + str(unitValue) + "\n" + "Amount: " + str(amount)+ "\n" + "USDvalue: " + str(USDValue)
     url = f"https://api.telegram.org/bot{telegramToken}/sendMessage?chat_id={telegram_chat_id}&text={lmsg}"
     requests.get(url).json() # this sends the message
 
@@ -292,7 +292,8 @@ def trader():
                                 gStrategyName,
                                 order['side'],
                                 avg_price,
-                                order['executedQty'])
+                                order['executedQty'],
+                                float(avg_price)*float(order['executedQty']))
             else:
                 changepos(coinPair,'',buy=False)
         else:
@@ -341,7 +342,8 @@ def trader():
                                 gStrategyName,
                                 order['side'],
                                 avg_price,
-                                order['executedQty'])
+                                order['executedQty'],
+                                positionSize)
             else:
                 sendTelegramMessage(eWarning,client.SIDE_BUY+" "+coinPair+" - Not enough "+coinStable+" funds!")
                 
