@@ -79,8 +79,11 @@ def sendTelegramMessage(emoji, msg):
     url = f"https://api.telegram.org/bot{telegramToken}/sendMessage?chat_id={telegram_chat_id}&text={lmsg}"
     requests.get(url).json() # this sends the message
 
-def sendTelegramAlert(emoji, date, coin, timeframe, strategy, ordertype, unitValue, amount, USDValue):
-    lmsg = emoji + " " + str(date) + "\n" + coin + "\n" + strategy + "\n" + timeframe + "\n" + ordertype + "\n" + "UnitValue: " + str(unitValue) + "\n" + "Amount: " + str(amount)+ "\n" + "USDvalue: " + str(USDValue)
+def sendTelegramAlert(emoji, date, coin, timeframe, strategy, ordertype, unitValue, amount, USDValue, pnlPerc = -1, pnlUSD = -1):
+    lmsg = emoji + " " + str(date) + "\n" + coin + "\n" + strategy + "\n" + timeframe + "\n" + ordertype + "\n" + "UnitValue: " + str(unitValue) + "\n" + "Amount: " + str(amount)+ "\n" + "USD: " + str(USDValue)
+    if pnlPerc != -1:
+        lmsg = lmsg + "\n"+"PnL%: "+str(pnlPerc) + "\n"+"PnL USD: "+str(pnlUSD)
+    
     url = f"https://api.telegram.org/bot{telegramToken}/sendMessage?chat_id={telegram_chat_id}&text={lmsg}"
     requests.get(url).json() # this sends the message
 
@@ -213,6 +216,40 @@ def adjustSize(coin, amount):
     return order_quantity
 
 
+def calcPnL(symbol, sellprice: float, sellqty: float):
+    with open(r"orders", 'r') as fp:
+        for l_no, line in reversed(list(enumerate(fp))):
+            # search string
+            if (symbol in line) and ("BUY" in line):
+
+                # print('string found in a file')
+                # print('Line Number:', l_no)
+                # print('Line:', line)
+                
+                # sellprice = 300
+                orderid = line.split(',')[0]
+                # print('orderid:', orderid)
+                buyprice = float(line.split(',')[4])
+                # print('Buy Price:', buyprice)
+                buyqty = float(line.split(',')[5])
+                # print('Buy qty:', buyqty)
+                # print('Sell price:', sellprice)
+                # sellqty = buyqty
+                PnLperc = ((sellprice-buyprice)/buyprice)*100
+                PnLperc = round(PnLperc, 2)
+                PnLvalue = round((sellprice*sellqty)-(buyprice*buyqty),2)
+                # print('Buy USD =', round(buyprice*buyqty,2))
+                # print('Sell USD =', round(sellprice*sellqty,2))
+                # print('PnL% =', PnLperc)
+                # print('PnL USD =', PnLvalue)
+                # don't look for next lines
+                
+                lista = [orderid, PnLperc, PnLvalue]
+                return lista
+                
+                break
+
+
 # %%
 def trader():
     # sendTelegramMessage("", "trader")
@@ -257,7 +294,7 @@ def trader():
                 sellQty = balanceQty
                 # sendTelegramMessage("",client.SIDE_SELL+" "+coinPair+" sellQty:"+str(sellQty))
             sellQty = adjustSize(coinPair, sellQty)
-            sendTelegramMessage("",client.SIDE_SELL+" "+coinPair+" sellQty="+str(sellQty))
+            # sendTelegramMessage("",client.SIDE_SELL+" "+coinPair+" sellQty="+str(sellQty))
             if sellQty > 0: 
                 
                 try:        
@@ -280,8 +317,15 @@ def trader():
                     sendTelegramMessage(eWarning, eo)
 
                 #add new row to end of DataFrame
-                dforders.loc[len(dforders.index)] = [order['orderId'],coinPair, avg_price, order['executedQty'], order['side'], pd.to_datetime(order['transactTime'], unit='ms')]
+                addPnL = calcPnL(coinPair, avg_price, order['executedQty'])
+                dforders.loc[len(dforders.index)] = [order['orderId'], pd.to_datetime(order['transactTime'], unit='ms'), coinPair, 
+                                                    order['side'], avg_price, order['executedQty'],
+                                                    addPnL[0], # buyorderid 
+                                                    addPnL[1], # PnL%
+                                                    addPnL[2]  # PnL USD
+                                                    ]
                 
+
                 # print(order)
                 # sendTelegramMessage(eExitTrade, order)
                 sendTelegramAlert(eExitTrade,
@@ -293,7 +337,10 @@ def trader():
                                 order['side'],
                                 avg_price,
                                 order['executedQty'],
-                                float(avg_price)*float(order['executedQty']))
+                                float(avg_price)*float(order['executedQty'],
+                                addPnL[1], # PnL%
+                                addPnL[2]  # PnL USD
+                                ))
             else:
                 changepos(coinPair,'',buy=False)
         else:
@@ -310,7 +357,7 @@ def trader():
             positionSize = calcPositionSize(pStablecoin=coinStable)
             # sendTelegramMessage("", "calc position size 5")
             # print("positionSize: ", positionSize)
-            sendTelegramMessage('',client.SIDE_BUY+" "+coinPair+" BuyStableQty="+str(positionSize))  
+            # sendTelegramMessage('',client.SIDE_BUY+" "+coinPair+" BuyStableQty="+str(positionSize))  
             if positionSize > 0:
                 try:
                     order = client.create_order(symbol=coinPair,
@@ -331,7 +378,9 @@ def trader():
                     sendTelegramMessage(eWarning, eo)
                 
                 #add new row to end of DataFrame
-                dforders.loc[len(dforders.index)] = [order['orderId'],coinPair, avg_price, order['executedQty'], order['side'], pd.to_datetime(order['transactTime'], unit='ms')]
+                dforders.loc[len(dforders.index)] = [order['orderId'], pd.to_datetime(order['transactTime'], unit='ms'), coinPair, 
+                                                    order['side'], avg_price, order['executedQty'],
+                                                    0,0,0]
                         
                 
                 sendTelegramAlert(eEnterTrade,
@@ -369,8 +418,7 @@ def main():
     trader()
 
     # add orders to csv file
-    if not dforders.empty: 
-        dforders.to_csv('orders', mode='a', index=False, header=False)
+    dforders.to_csv('orders', mode='a', index=False, header=False)
 
 
     # posframe.drop('position', axis=1, inplace=True)
