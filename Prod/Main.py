@@ -167,7 +167,7 @@ def calcPositionSize(pStablecoin = 'BUSD'):
 # %%
 def getdata(coinPair):
 
-    lstartDate = str(gSlowMA*gTimeFrameNum)+" "+gtimeframeTypeLong+" ago UTC" 
+    lstartDate = str(1+gSlowMA*gTimeFrameNum)+" "+gtimeframeTypeLong+" ago UTC" 
     ltimeframe = str(gTimeFrameNum)+gtimeframeTypeShort
     frame = pd.DataFrame(client.get_historical_klines(coinPair,
                                                     ltimeframe,
@@ -338,8 +338,8 @@ def trader():
                                 avg_price,
                                 order['executedQty'],
                                 float(avg_price)*float(order['executedQty'],
-                                addPnL[1], # PnL%
-                                addPnL[2]  # PnL USD
+                                str(addPnL[1]), # PnL%
+                                str(addPnL[2])  # PnL USD
                                 ))
             else:
                 changepos(coinPair,'',buy=False)
