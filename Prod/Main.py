@@ -79,10 +79,10 @@ def sendTelegramMessage(emoji, msg):
     url = f"https://api.telegram.org/bot{telegramToken}/sendMessage?chat_id={telegram_chat_id}&text={lmsg}"
     requests.get(url).json() # this sends the message
 
-def sendTelegramAlert(emoji, date, coin, timeframe, strategy, ordertype, unitValue, amount, USDValue, pnlPerc = -1, pnlUSD = -1):
-    lmsg = emoji + " " + str(date) + "\n" + coin + "\n" + strategy + "\n" + timeframe + "\n" + ordertype + "\n" + "UnitValue: " + str(unitValue) + "\n" + "Amount: " + str(amount)+ "\n" + "USD: " + str(USDValue)
-    if pnlPerc != -1:
-        lmsg = lmsg + "\n"+"PnL%: "+str(pnlPerc) + "\n"+"PnL USD: "+str(pnlUSD)
+def sendTelegramAlert(emoji, date, coin, timeframe, strategy, ordertype, unitValue, amount, USDValue, pnlPerc = '', pnlUSD = ''):
+    lmsg = emoji + " " + str(date) + "\n" + coin + "\n" + strategy + "\n" + timeframe + "\n" + ordertype + "\n" + "UnitPrice: " + str(unitValue) + "\n" + "Qty: " + str(amount)+ "\n" + "USD: " + str(USDValue)
+    if pnlPerc != '':
+        lmsg = lmsg + "\n"+"PnL%: "+str(round(float(pnlPerc),2)) + "\n"+"PnL USD: "+str(round(float(pnlUSD),2))
     
     url = f"https://api.telegram.org/bot{telegramToken}/sendMessage?chat_id={telegram_chat_id}&text={lmsg}"
     requests.get(url).json() # this sends the message
@@ -237,7 +237,8 @@ def calcPnL(symbol, sellprice: float, sellqty: float):
                 # sellqty = buyqty
                 PnLperc = ((sellprice-buyprice)/buyprice)*100
                 PnLperc = round(PnLperc, 2)
-                PnLvalue = round((sellprice*sellqty)-(buyprice*buyqty),2)
+                PnLvalue = (sellprice*sellqty)-(buyprice*buyqty) # erro!
+                PnLValue = round(PnLvalue, 2)
                 # print('Buy USD =', round(buyprice*buyqty,2))
                 # print('Sell USD =', round(sellprice*sellqty,2))
                 # print('PnL% =', PnLperc)
@@ -317,7 +318,7 @@ def trader():
                     sendTelegramMessage(eWarning, eo)
 
                 #add new row to end of DataFrame
-                addPnL = calcPnL(coinPair, avg_price, order['executedQty'])
+                addPnL = calcPnL(coinPair, float(avg_price), float(order['executedQty']))
                 dforders.loc[len(dforders.index)] = [order['orderId'], pd.to_datetime(order['transactTime'], unit='ms'), coinPair, 
                                                     order['side'], avg_price, order['executedQty'],
                                                     addPnL[0], # buyorderid 
@@ -328,7 +329,12 @@ def trader():
 
                 # print(order)
                 # sendTelegramMessage(eExitTrade, order)
-                sendTelegramAlert(eExitTrade,
+                if addPnL[2] > 0: 
+                    emojiTradeResult = eTradeWithProfit
+                else:
+                    emojiTradeResult = eTradeWithLoss
+
+                sendTelegramAlert(emojiTradeResult,
                                 # order['transactTime']
                                 pd.to_datetime(order['transactTime'], unit='ms'), 
                                 order['symbol'], 
@@ -337,10 +343,10 @@ def trader():
                                 order['side'],
                                 avg_price,
                                 order['executedQty'],
-                                float(avg_price)*float(order['executedQty'],
-                                str(addPnL[1]), # PnL%
-                                str(addPnL[2])  # PnL USD
-                                ))
+                                avg_price*float(order['executedQty']),
+                                addPnL[1], # PnL%
+                                addPnL[2]  # PnL USD
+                                )
             else:
                 changepos(coinPair,'',buy=False)
         else:
