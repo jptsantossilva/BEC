@@ -196,10 +196,11 @@ def applytechnicals(df, coinPair):
     listEMAvalues = dfBestEMA[(dfBestEMA.coinPair == coinPair) & (dfBestEMA.timeFrame == lTimeFrame)]
     
     if not listEMAvalues.empty:
-        gSlowMA = listEMAvalues.slowEMA.values[0]
         gFastMA = listEMAvalues.fastEMA.values[0]
+        gSlowMA = listEMAvalues.slowEMA.values[0]
+        
 
-    gStrategyName = str(gFastMA)+"/"+str(gSlowMA)+" EMA CROSS"
+    gStrategyName = str(gFastMA)+"/"+str(gSlowMA)+" EMA cross"
     
 
     df['FastMA'] = df['Close'].ewm(span=gFastMA, adjust=False).mean()

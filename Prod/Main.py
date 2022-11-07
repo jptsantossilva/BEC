@@ -360,7 +360,7 @@ def trader():
         applytechnicals(df)
         lastrow = df.iloc[-1]
         
-        if lastrow.FastMA > lastrow.SlowMA:
+        if (lastrow.Close > lastrow.FastMA) and (lastrow.FastMA > lastrow.SlowMA):
             positionSize = calcPositionSize(pStablecoin=coinStable)
             # sendTelegramMessage("", "calc position size 5")
             # print("positionSize: ", positionSize)
