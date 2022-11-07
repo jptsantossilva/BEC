@@ -116,6 +116,9 @@ posframe = pd.read_csv('positioncheck')
 dforders = pd.read_csv('orders', nrows=0)
 # dforders
 
+# best ema cross return
+dfBestEMA = pd.read_csv('coinpairBestEma')
+
 # %%
 # Not working properly yet
 def spot_balance():
@@ -181,10 +184,25 @@ def getdata(coinPair):
     return frame
 
 # %%
-def applytechnicals(df):
-    # df['FastSMA'] = df.Close.rolling(50).mean()
-    # df['SlowSMA'] = df.Close.rolling(200).mean()
+def applytechnicals(df, coinPair):
     
+    # update EMAs from the best EMA return ratio
+    global gFastMA
+    global gSlowMA
+    global gStrategyName
+
+    lTimeFrame = str(gTimeFrameNum)+gtimeframeTypeShort
+    
+    listEMAvalues = dfBestEMA[(dfBestEMA.coinPair == coinPair) & (dfBestEMA.timeFrame == lTimeFrame)]
+    
+    if not listEMAvalues.empty:
+        gFastMA = listEMAvalues.fastEMA.values[0]
+        gSlowMA = listEMAvalues.slowEMA.values[0]
+        
+
+    gStrategyName = str(gFastMA)+"/"+str(gSlowMA)+" EMA cross"
+    
+
     df['FastMA'] = df['Close'].ewm(span=gFastMA, adjust=False).mean()
     df['SlowMA'] = df['Close'].ewm(span=gSlowMA, adjust=False).mean()
 
@@ -262,7 +280,7 @@ def trader():
     for coinPair in listPosition1:
         # sendTelegramMessage("",coinPair) 
         df = getdata(coinPair)
-        applytechnicals(df)
+        applytechnicals(df, coinPair)
         lastrow = df.iloc[-1]
 
         # separate coin from stable. example coinPair=BTCUSDT coinOnly=BTC coinStable=USDT 
@@ -357,7 +375,7 @@ def trader():
     for coinPair in listPosition0:
         # sendTelegramMessage("",coinPair) 
         df = getdata(coinPair)
-        applytechnicals(df)
+        applytechnicals(df, coinPair)
         lastrow = df.iloc[-1]
         
         if (lastrow.Close > lastrow.FastMA) and (lastrow.FastMA > lastrow.SlowMA):
