@@ -43,8 +43,8 @@ client = Client(api_key, api_secret)
 
 # strategy
 # gTimeframe = client.KLINE_INTERVAL_1HOUR # "1h"
-gFastMA = int("8")
-gSlowMA = int("34")
+gFastMA = int("1")
+gSlowMA = int("98")
 gTimeFrameNum = int("1")
 gtimeframeTypeShort = "h" # h, D
 gtimeframeTypeLong = "hour" # hour, day
@@ -171,6 +171,25 @@ def calcPositionSize(pStablecoin = 'BUSD'):
 # %%
 def getdata(coinPair):
 
+    # update EMAs from the best EMA return ratio
+    global gFastMA
+    global gSlowMA
+    global gStrategyName
+
+    lTimeFrame = str(gTimeFrameNum)+gtimeframeTypeShort
+    
+    listEMAvalues = dfBestEMA[(dfBestEMA.coinPair == coinPair) & (dfBestEMA.timeFrame == lTimeFrame)]
+    
+    if not listEMAvalues.empty:
+        gFastMA = int(listEMAvalues.fastEMA.values[0])
+        gSlowMA = int(listEMAvalues.slowEMA.values[0])
+    else:
+        gFastMA = int("1")
+        gSlowMA = int("98")
+
+    gStrategyName = str(gFastMA)+"/"+str(gSlowMA)+" EMA cross"
+    
+
     lstartDate = str(1+gSlowMA*gTimeFrameNum)+" "+gtimeframeTypeLong+" ago UTC" 
     ltimeframe = str(gTimeFrameNum)+gtimeframeTypeShort
     frame = pd.DataFrame(client.get_historical_klines(coinPair,
@@ -186,23 +205,6 @@ def getdata(coinPair):
 # %%
 def applytechnicals(df, coinPair):
     
-    # update EMAs from the best EMA return ratio
-    global gFastMA
-    global gSlowMA
-    global gStrategyName
-
-    lTimeFrame = str(gTimeFrameNum)+gtimeframeTypeShort
-    
-    listEMAvalues = dfBestEMA[(dfBestEMA.coinPair == coinPair) & (dfBestEMA.timeFrame == lTimeFrame)]
-    
-    if not listEMAvalues.empty:
-        gFastMA = listEMAvalues.fastEMA.values[0]
-        gSlowMA = listEMAvalues.slowEMA.values[0]
-        
-
-    gStrategyName = str(gFastMA)+"/"+str(gSlowMA)+" EMA cross"
-    
-
     df['FastMA'] = df['Close'].ewm(span=gFastMA, adjust=False).mean()
     df['SlowMA'] = df['Close'].ewm(span=gSlowMA, adjust=False).mean()
 
@@ -377,8 +379,15 @@ def trader():
         df = getdata(coinPair)
         applytechnicals(df, coinPair)
         lastrow = df.iloc[-1]
+
+        # separate coin from stable. example coinPair=BTCUSDT coinOnly=BTC coinStable=USDT 
+        coinOnly = coinPair[:-4]
+        # print('coinOnly=',coinOnly)
+        coinStable = coinPair[-4:]
+        # print('coinStable=',coinStable)
         
-        if (lastrow.Close > lastrow.FastMA) and (lastrow.FastMA > lastrow.SlowMA):
+        # if (lastrow.Close > lastrow.FastMA) and (lastrow.FastMA > lastrow.SlowMA):
+        if lastrow.FastMA > lastrow.SlowMA:
             positionSize = calcPositionSize(pStablecoin=coinStable)
             # sendTelegramMessage("", "calc position size 5")
             # print("positionSize: ", positionSize)

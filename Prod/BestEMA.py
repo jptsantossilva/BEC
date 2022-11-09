@@ -21,8 +21,10 @@ client = Client(api_key, api_secret)
 # %%
 
 
-startdate = "10 Nov, 2018 UTC"
-timeframe = "1d"
+# startdate = "10 Nov, 2018 UTC"
+# startdate = "12 May, 2022 UTC"
+startdate = "4 year ago UTC"
+timeframe = "1h"
 
 # Check the program has been called with the timeframe
 # total arguments
@@ -61,8 +63,8 @@ def EMA(values, n):
 # two moving averages whose relationship determines a general trend (we only trade long when the shorter MA is above the longer one, and vice versa), 
 # and two moving averages whose cross-over with daily close prices determine the signal to enter or exit the position.
 class EmaCross(Strategy):
-    n1 = 10
-    n2 = 64
+    n1 = 1
+    n2 = 98
     # n_enter = 20
     # n_exit = 10
     
@@ -86,7 +88,8 @@ class EmaCross(Strategy):
             
             # Here, even though the operands are arrays, this
             # works by implicitly comparing the two last values
-            if (priceClose > fastMA) and (fastMA > slowMA):
+            # if (priceClose > fastMA) and (fastMA > slowMA):
+            if fastMA > slowMA:
                 # if crossover(self.data.Close, self.sma_enter):
                 self.buy()
                     
@@ -148,8 +151,8 @@ def runBackTest(coinPair):
     # bt.plot() 
 
     stats, heatmap = bt.optimize(
-    n1=range(8, 50, 2),
-    n2=range(10, 100, 2),
+    n1=range(1, 50, 2),
+    n2=range(2, 100, 2),
     constraint=lambda param: param.n1 < param.n2,
     maximize='Equity Final [$]',
     return_heatmap=True
@@ -207,6 +210,16 @@ def runBackTest(coinPair):
 # %%
 
 # stats._strategy
+
+coinpairBestEma = pd.read_csv('coinpairBestEma')
+coinpairBestEma.loc[len(coinpairBestEma.index)] = ["START DATE = "+startdate+" TIMEFRAME="+timeframe, 
+                                                        "",
+                                                        "",
+                                                        "",
+                                                        "",
+                                                        ""
+                                                    ]
+coinpairBestEma.to_csv('coinpairBestEma', index=False, header=True)
 
 # %%
 Listcoinpair = pd.read_csv('positioncheck')
