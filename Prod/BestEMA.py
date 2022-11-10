@@ -24,6 +24,7 @@ client = Client(api_key, api_secret)
 # startdate = "10 Nov, 2018 UTC"
 # startdate = "12 May, 2022 UTC"
 startdate = "4 year ago UTC"
+# startdate = "10 day ago UTC"
 timeframe = "1h"
 
 # Check the program has been called with the timeframe
@@ -151,8 +152,8 @@ def runBackTest(coinPair):
     # bt.plot() 
 
     stats, heatmap = bt.optimize(
-    n1=range(1, 50, 2),
-    n2=range(2, 100, 2),
+    n1=range(1, 100, 2),
+    n2=range(2, 200, 2),
     constraint=lambda param: param.n1 < param.n2,
     maximize='Equity Final [$]',
     return_heatmap=True
@@ -211,15 +212,15 @@ def runBackTest(coinPair):
 
 # stats._strategy
 
-coinpairBestEma = pd.read_csv('coinpairBestEma')
-coinpairBestEma.loc[len(coinpairBestEma.index)] = ["START DATE = "+startdate+" TIMEFRAME="+timeframe, 
-                                                        "",
-                                                        "",
-                                                        "",
-                                                        "",
-                                                        ""
-                                                    ]
-coinpairBestEma.to_csv('coinpairBestEma', index=False, header=True)
+# coinpairBestEma = pd.read_csv('coinpairBestEma')
+# coinpairBestEma.loc[len(coinpairBestEma.index)] = ["START DATE = "+startdate+" TIMEFRAME="+timeframe, 
+#                                                         "",
+#                                                         "",
+#                                                         "",
+#                                                         "",
+#                                                         ""
+#                                                     ]
+# coinpairBestEma.to_csv('coinpairBestEma', index=False, header=True)
 
 # %%
 Listcoinpair = pd.read_csv('positioncheck')
