@@ -207,12 +207,17 @@ def getdata(coinPair):
         gFastMA = int(listEMAvalues.fastEMA.values[0])
         gSlowMA = int(listEMAvalues.slowEMA.values[0])
     else:
-        gFastMA = int("8")
-        gSlowMA = int("34")
+        gFastMA = int("0")
+        gSlowMA = int("0")
 
     gStrategyName = str(gFastMA)+"/"+str(gSlowMA)+" EMA cross"
-    
 
+    # if bestEMA does not exist return empty dataframe in order to no use that trading pair
+    if gFastMA == 0:
+        frame = pd.DataFrame()
+        return frame
+    
+    # if best Ema exist get price data 
     lstartDate = str(1+gSlowMA*gTimeFrameNum)+" "+gtimeframeTypeLong+" ago UTC" 
     ltimeframe = str(gTimeFrameNum)+gtimeframeTypeShort
     frame = pd.DataFrame(client.get_historical_klines(coinPair,
@@ -228,8 +233,10 @@ def getdata(coinPair):
 # %%
 def applytechnicals(df, coinPair):
     
-    df['FastMA'] = df['Close'].ewm(span=gFastMA, adjust=False).mean()
-    df['SlowMA'] = df['Close'].ewm(span=gSlowMA, adjust=False).mean()
+    if gFastMA > 0: 
+        df['FastMA'] = df['Close'].ewm(span=gFastMA, adjust=False).mean()
+        df['SlowMA'] = df['Close'].ewm(span=gSlowMA, adjust=False).mean()
+
 
 
 # %%
@@ -261,7 +268,7 @@ def adjustSize(coin, amount):
 
 
 def calcPnL(symbol, sellprice: float, sellqty: float):
-    with open(r"orders", 'r') as fp:
+    with open(r"orders"+timeframe, 'r') as fp:
         for l_no, line in reversed(list(enumerate(fp))):
             # search string
             if (symbol in line) and ("BUY" in line):
@@ -305,6 +312,12 @@ def trader():
     for coinPair in listPosition1:
         # sendTelegramMessage("",coinPair) 
         df = getdata(coinPair)
+
+        if df.empty:
+            print(f'{coinPair} - {gStrategyName} - Best EMA values missing')
+            sendTelegramMessage(eWarning,f'{coinPair} - {gStrategyName} - Best EMA values missing')
+            continue
+
         applytechnicals(df, coinPair)
         lastrow = df.iloc[-1]
 
@@ -400,6 +413,12 @@ def trader():
     for coinPair in listPosition0:
         # sendTelegramMessage("",coinPair) 
         df = getdata(coinPair)
+
+        if df.empty:
+            print(f'{coinPair} - {gStrategyName} - Best EMA values missing')
+            sendTelegramMessage(eWarning,f'{coinPair} - {gStrategyName} - Best EMA values missing')
+            continue
+
         applytechnicals(df, coinPair)
         lastrow = df.iloc[-1]
 

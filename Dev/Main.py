@@ -24,9 +24,6 @@ try:
     # Binance
     api_key = os.environ.get('binance_api')
     api_secret = os.environ.get('binance_secret')
-    
-    # Telegram
-    telegramToken = os.environ.get('telegramToken') 
     telegram_chat_id = os.environ.get('telegram_chat_id')
 except KeyError: 
     print("Environment variable does not exist")
@@ -45,14 +42,39 @@ client = Client(api_key, api_secret)
 # gTimeframe = client.KLINE_INTERVAL_1HOUR # "1h"
 gFastMA = int("8")
 gSlowMA = int("34")
-gTimeFrameNum = int("1")
-gtimeframeTypeShort = "h" # h, D
-gtimeframeTypeLong = "hour" # hour, day
 gStrategyName = str(gFastMA)+"/"+str(gSlowMA)+" CROSS"
 
+# Check the program has been called with the timeframe
+# total arguments
+n = len(sys.argv)
+# print("Total arguments passed:", n)
+if n < 2:
+    print("Argument is missing")
+    timeframe = input('Enter timeframe (1d, 4h or 1h):')
+else:
+    # argv[0] in Python is always the name of the script.
+    timeframe = sys.argv[1]
+
+if timeframe == "1h":
+    gTimeFrameNum = int("1")
+    gtimeframeTypeShort = "h" # h, d
+    gtimeframeTypeLong = "hour" # hour, day
+elif timeframe == "4h":
+    gTimeFrameNum = int("4")
+    gtimeframeTypeShort = "h" # h, d
+    gtimeframeTypeLong = "hour" # hour, day
+elif timeframe == "1d":
+    gTimeFrameNum = int("1")
+    gtimeframeTypeShort = "d" # h, d
+    gtimeframeTypeLong = "day" # hour, day
+
+# Telegram
+telegramToken = os.environ.get('telegramToken'+timeframe) 
+
+
 # percentage of balance to open position for each trade - example 0.1 = 10%
-tradepercentage = float("0.05") #0.2%
-minPositionSize = float("15.0") # minimum position size in usd
+tradepercentage = float("0.05") #5%
+minPositionSize = float("20.0") # minimum position size in usd
 # risk percentage per trade - example 0.01 = 1%
 risk = float("0.01")
 
@@ -99,7 +121,7 @@ def sendTelegramPhoto(photoName='balance.png'):
 
 # %%
 # read positions csv
-posframe = pd.read_csv('positioncheck')
+posframe = pd.read_csv('positions'+timeframe)
 # posframe
 
 # Todo
@@ -113,7 +135,8 @@ posframe = pd.read_csv('positioncheck')
 # we just want the header, there is no need to get all the existing orders.
 # at the end we will append the orders to the csv
 # sendTelegramMessage("", "read orders csv")
-dforders = pd.read_csv('orders', nrows=0)
+dforders = pd.read_csv('orders'+timeframe, nrows=0)
+
 # dforders
 
 # best ema cross return
@@ -171,6 +194,30 @@ def calcPositionSize(pStablecoin = 'BUSD'):
 # %%
 def getdata(coinPair):
 
+    # update EMAs from the best EMA return ratio
+    global gFastMA
+    global gSlowMA
+    global gStrategyName
+
+    lTimeFrame = str(gTimeFrameNum)+gtimeframeTypeShort
+    
+    listEMAvalues = dfBestEMA[(dfBestEMA.coinPair == coinPair) & (dfBestEMA.timeFrame == lTimeFrame)]
+    
+    if not listEMAvalues.empty:
+        gFastMA = int(listEMAvalues.fastEMA.values[0])
+        gSlowMA = int(listEMAvalues.slowEMA.values[0])
+    else:
+        gFastMA = int("0")
+        gSlowMA = int("0")
+
+    gStrategyName = str(gFastMA)+"/"+str(gSlowMA)+" EMA cross"
+
+    # if bestEMA does not exist return empty dataframe in order to no use that trading pair
+    if gFastMA == 0:
+        frame = pd.DataFrame()
+        return frame
+    
+    # if best Ema exist get price data 
     lstartDate = str(1+gSlowMA*gTimeFrameNum)+" "+gtimeframeTypeLong+" ago UTC" 
     ltimeframe = str(gTimeFrameNum)+gtimeframeTypeShort
     frame = pd.DataFrame(client.get_historical_klines(coinPair,
@@ -186,25 +233,10 @@ def getdata(coinPair):
 # %%
 def applytechnicals(df, coinPair):
     
-    # update EMAs from the best EMA return ratio
-    global gFastMA
-    global gSlowMA
-    global gStrategyName
+    if gFastMA > 0: 
+        df['FastMA'] = df['Close'].ewm(span=gFastMA, adjust=False).mean()
+        df['SlowMA'] = df['Close'].ewm(span=gSlowMA, adjust=False).mean()
 
-    lTimeFrame = str(gTimeFrameNum)+gtimeframeTypeShort
-    
-    listEMAvalues = dfBestEMA[(dfBestEMA.coinPair == coinPair) & (dfBestEMA.timeFrame == lTimeFrame)]
-    
-    if not listEMAvalues.empty:
-        gFastMA = listEMAvalues.fastEMA.values[0]
-        gSlowMA = listEMAvalues.slowEMA.values[0]
-        
-
-    gStrategyName = str(gFastMA)+"/"+str(gSlowMA)+" EMA cross"
-    
-
-    df['FastMA'] = df['Close'].ewm(span=gFastMA, adjust=False).mean()
-    df['SlowMA'] = df['Close'].ewm(span=gSlowMA, adjust=False).mean()
 
 
 # %%
@@ -217,7 +249,7 @@ def changepos(curr, order, buy=True):
         posframe.loc[posframe.Currency == curr, 'position'] = 0
         posframe.loc[posframe.Currency == curr, 'quantity'] = 0
 
-    posframe.to_csv('positioncheck', index=False)
+    posframe.to_csv('positions'+timeframe, index=False)
 
 
 # %%
@@ -236,7 +268,7 @@ def adjustSize(coin, amount):
 
 
 def calcPnL(symbol, sellprice: float, sellqty: float):
-    with open(r"orders", 'r') as fp:
+    with open(r"orders"+timeframe, 'r') as fp:
         for l_no, line in reversed(list(enumerate(fp))):
             # search string
             if (symbol in line) and ("BUY" in line):
@@ -280,6 +312,12 @@ def trader():
     for coinPair in listPosition1:
         # sendTelegramMessage("",coinPair) 
         df = getdata(coinPair)
+
+        if df.empty:
+            print(f'{coinPair} - {gStrategyName} - Best EMA values missing')
+            sendTelegramMessage(eWarning,f'{coinPair} - {gStrategyName} - Best EMA values missing')
+            continue
+
         applytechnicals(df, coinPair)
         lastrow = df.iloc[-1]
 
@@ -368,17 +406,30 @@ def trader():
             else:
                 changepos(coinPair,'',buy=False)
         else:
-            print(f'{coinPair} - Sell condition not fulfilled')
-            sendTelegramMessage("",f'{coinPair} - Sell condition not fulfilled')
+            print(f'{coinPair} - {gStrategyName} - Sell condition not fulfilled')
+            sendTelegramMessage("",f'{coinPair} - {gStrategyName} - Sell condition not fulfilled')
 
     # check coins not in positions and BUY if conditions are fulfilled
     for coinPair in listPosition0:
         # sendTelegramMessage("",coinPair) 
         df = getdata(coinPair)
+
+        if df.empty:
+            print(f'{coinPair} - {gStrategyName} - Best EMA values missing')
+            sendTelegramMessage(eWarning,f'{coinPair} - {gStrategyName} - Best EMA values missing')
+            continue
+
         applytechnicals(df, coinPair)
         lastrow = df.iloc[-1]
+
+        # separate coin from stable. example coinPair=BTCUSDT coinOnly=BTC coinStable=USDT 
+        coinOnly = coinPair[:-4]
+        # print('coinOnly=',coinOnly)
+        coinStable = coinPair[-4:]
+        # print('coinStable=',coinStable)
         
-        if (lastrow.Close > lastrow.FastMA) and (lastrow.FastMA > lastrow.SlowMA):
+        # if (lastrow.Close > lastrow.FastMA) and (lastrow.FastMA > lastrow.SlowMA):
+        if lastrow.FastMA > lastrow.SlowMA:
             positionSize = calcPositionSize(pStablecoin=coinStable)
             # sendTelegramMessage("", "calc position size 5")
             # print("positionSize: ", positionSize)
@@ -422,8 +473,8 @@ def trader():
                 sendTelegramMessage(eWarning,client.SIDE_BUY+" "+coinPair+" - Not enough "+coinStable+" funds!")
                 
         else:
-            print(f'{coinPair} - Buy condition not fulfilled')
-            sendTelegramMessage("",f'{coinPair} - Buy condition not fulfilled')
+            print(f'{coinPair} - {gStrategyName} - Buy condition not fulfilled')
+            sendTelegramMessage("",f'{coinPair} - {gStrategyName} - Buy condition not fulfilled')
 
 
 def main():
@@ -433,7 +484,7 @@ def main():
     trader()
 
     # add orders to csv file
-    dforders.to_csv('orders', mode='a', index=False, header=False)
+    dforders.to_csv('orders'+timeframe, mode='a', index=False, header=False)
 
 
     # posframe.drop('position', axis=1, inplace=True)

@@ -64,8 +64,8 @@ def EMA(values, n):
 # two moving averages whose relationship determines a general trend (we only trade long when the shorter MA is above the longer one, and vice versa), 
 # and two moving averages whose cross-over with daily close prices determine the signal to enter or exit the position.
 class EmaCross(Strategy):
-    n1 = 1
-    n2 = 98
+    n1 = 8
+    n2 = 34
     # n_enter = 20
     # n_exit = 10
     
@@ -223,7 +223,7 @@ def runBackTest(coinPair):
 # coinpairBestEma.to_csv('coinpairBestEma', index=False, header=True)
 
 # %%
-Listcoinpair = pd.read_csv('positioncheck')
+Listcoinpair = pd.read_csv('coinpair')
 # get coin pairs only
 Listcoinpair = Listcoinpair.Currency
 # Listcoinpair
