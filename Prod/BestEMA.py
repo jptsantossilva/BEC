@@ -27,16 +27,16 @@ startdate = "4 year ago UTC"
 # startdate = "10 day ago UTC"
 timeframe = "1h"
 
-# Check the program has been called with the timeframe
-# total arguments
-n = len(sys.argv)
-# print("Total arguments passed:", n)
-if n < 2:
-    print("Argument is missing")
-    timeframe = input('Enter timeframe (1d, 4h or 1h):')
-else:
-    # argv[0] in Python is always the name of the script.
-    timeframe = sys.argv[1]
+# # Check the program has been called with the timeframe
+# # total arguments
+# n = len(sys.argv)
+# # print("Total arguments passed:", n)
+# if n < 2:
+#     print("Argument is missing")
+#     timeframe = input('Enter timeframe (1d, 4h or 1h):')
+# else:
+#     # argv[0] in Python is always the name of the script.
+#     timeframe = sys.argv[1]
 
 
     
@@ -139,7 +139,7 @@ def getdata(Symbol):
 # %%
 def runBackTest(coinPair):
 
-    print("coinPair=",coinPair)
+    print("coinPair = ",coinPair)
     df = getdata(coinPair)
     df = df.drop(['Time'], axis=1)
     # df
@@ -186,7 +186,7 @@ def runBackTest(coinPair):
     linha = coinpairBestEma.index[(coinpairBestEma.coinPair == coinPair) & (coinpairBestEma.timeFrame == timeframe)].to_list()
 
     if not linha:
-        print("There is no line with coinPair "+str(coinPair)+ " and timeframe "+str(timeframe)+". New line will be added.")
+        print("There is no line in coinpairBestEma file with coinPair "+str(coinPair)+ " and timeframe "+str(timeframe)+". New line will be added.")
         #add linha
         coinpairBestEma.loc[len(coinpairBestEma.index)] = [coinPair, 
                                                             n1,
@@ -201,7 +201,7 @@ def runBackTest(coinPair):
         coinpairBestEma.loc[linha[0],['fastEMA','slowEMA','returnPerc','BuyHoldReturnPerc']] = [n1, n2, returnPerc,BuyHoldReturnPerc]
 
     # coinpairBestEma
-    print("Saving Coin Pair to csv")
+    print("Saving Coin Pair to coinpairBestEma file")
     coinpairBestEma.to_csv('coinpairBestEma', index=False, header=True)
 
 
@@ -222,18 +222,28 @@ def runBackTest(coinPair):
 #                                                     ]
 # coinpairBestEma.to_csv('coinpairBestEma', index=False, header=True)
 
-# %%
-Listcoinpair = pd.read_csv('coinpair')
-# get coin pairs only
-Listcoinpair = Listcoinpair.Currency
-# Listcoinpair
+def addcoinpair(lTimeframe):
 
-# %%
-# run backtest for each coin pair
-for coinPair in Listcoinpair:
-    print("Backtest - Start")
-    runBackTest(coinPair)
+    result = False
+    
+    global timeframe 
+    timeframe = str(lTimeframe)
 
-print("Backtest - End")
+    Listcoinpair = pd.read_csv('addcoinpair')
+    # get coin pairs only
+    Listcoinpair = Listcoinpair.Currency
+    # Listcoinpair
+
+    # %%
+    # run backtest for each coin pair
+    for coinPair in Listcoinpair:
+        print("Backtest - "+timeframe+" - Start")
+        runBackTest(coinPair)
+
+    print("Backtest "+timeframe+" - End")
+
+    result = True
+    return result
+
 
 
