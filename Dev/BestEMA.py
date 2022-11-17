@@ -222,25 +222,18 @@ def runBackTest(coinPair):
 #                                                     ]
 # coinpairBestEma.to_csv('coinpairBestEma', index=False, header=True)
 
-def addcoinpair(lTimeframe):
+def addcoinpair(coinPair, lTimeframe):
 
     result = False
     
     global timeframe 
     timeframe = str(lTimeframe)
 
-    Listcoinpair = pd.read_csv('addcoinpair')
-    # get coin pairs only
-    Listcoinpair = Listcoinpair.Currency
-    # Listcoinpair
 
-    # %%
-    # run backtest for each coin pair
-    for coinPair in Listcoinpair:
-        print("Backtest - "+timeframe+" - Start")
-        runBackTest(coinPair)
+    print("Backtest - "+coinPair+" - "+timeframe+" - Start")
+    runBackTest(coinPair)
 
-    print("Backtest "+timeframe+" - End")
+    print("Backtest "+coinPair+" - "+timeframe+" - End")
 
     result = True
     return result
