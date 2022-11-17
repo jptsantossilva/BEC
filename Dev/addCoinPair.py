@@ -7,37 +7,14 @@ result_1d = False
 result_4h = False
 result_1h = False
 timeframe = ["1d", "4h", "1h"]
-# gFastMA = int("8")
-# gSlowMA = int("34")
-# gStrategyName = str(gFastMA)+"/"+str(gSlowMA)+" CROSS"
-
-# # environment variables
-# try:
-#     # Binance
-#     api_key = os.environ.get('binance_api')
-#     api_secret = os.environ.get('binance_secret')
-#     telegram_chat_id = os.environ.get('telegram_chat_id')
-# except KeyError: 
-#     print("Environment variable does not exist")
-
-# Binance Client
-# client = Client(api_key, api_secret)
 
 def getdata(coinPair, aTimeframeNum, aTimeframeTypeShort, aFastMA=0, aSlowMA=0):
-
-    # update EMAs from the best EMA return ratio
-    # global gFastMA
-    # global gSlowMA
-    # global gStrategyName
 
     lTimeFrame = str(aTimeframeNum)+aTimeframeTypeShort
     if aTimeframeTypeShort == "h":
         lTimeframeTypeLong = "hour"
     elif aTimeframeTypeShort == "d":
         lTimeframeTypeLong = "day"
-    
-    # gFastMA = aFastMA
-    # gSlowMA = aSlowMA
     
     gStrategyName = str(aFastMA)+"/"+str(aSlowMA)+" EMA cross"
 
@@ -71,7 +48,6 @@ def main():
     ListAddcoinpair = pd.read_csv('addcoinpair')
     # get coin pairs with no completed calculation
     ListNotCompleted = ListAddcoinpair[(ListAddcoinpair.Completed != 1)]
-    # Listcoinpair = Listcoinpair.Currency
     # Listcoinpair
     
     # insertupdate
@@ -129,9 +105,6 @@ def main():
         completedcoinpair = pd.read_csv('addcoinpair')
         completedcoinpair.loc[completedcoinpair.Currency == coinPair, 'Completed'] = 1
         completedcoinpair.Completed = completedcoinpair.Completed.astype(int)
-        # linefound = completedcoinpair.index[(completedcoinpair.Currency == coinPair)].to_list()
-        # if linefound:
-        #     completedcoinpair.loc[linefound[0],['Completed']] = ["1"]
         
         # coinpairBestEma
         print("Mark coin "+str(coinPair)+ " as Completed to addcoinpair file")
@@ -139,9 +112,7 @@ def main():
         
         #remove all coin pairs from addcoinpair file
         # dfaddcoinpair = pd.read_csv('addcoinpair', nrows=0)
-        # dfaddcoinpair.to_csv('addcoinpair', mode='w', index=False)
-    
-    
+        # dfaddcoinpair.to_csv('addcoinpair', mode='w', index=False)    
 
 if __name__ == "__main__":
     main()
