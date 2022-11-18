@@ -1,7 +1,7 @@
 # %%
 import os
 import re
-from turtle import left
+#from turtle import left
 from xml.dom import ValidationErr
 import pandas as pd
 from binance.client import Client
@@ -14,7 +14,7 @@ import time
 import sys
 import math
 import numpy as np
-import dataframe_image as dfi
+#import dataframe_image as dfi
 from numbers import Number
 from typing import Sequence
 
