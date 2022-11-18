@@ -104,7 +104,7 @@ def main():
         # mark as calc completed
         completedcoinpair = pd.read_csv('addcoinpair')
         completedcoinpair.loc[completedcoinpair.Currency == coinPair, 'Completed'] = 1
-        completedcoinpair.Completed = completedcoinpair.Completed.astype(int)
+        completedcoinpair.Completed = completedcoinpair.Completed.astype(int, errors='ignore')
         
         # coinpairBestEma
         print("Mark coin "+str(coinPair)+ " as Completed to addcoinpair file")
