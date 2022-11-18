@@ -98,13 +98,6 @@ risk = float("0.01")
 posframe = pd.read_csv('positions'+str(gTimeFrameNum)+gtimeframeTypeShort)
 # posframe
 
-# Todo
-# get top 10 relative to BTC or USD strongest coins and trade those.
-# the coins must have liquidity- choose from the top50 or 100 max from the marketcap rank 
-# Add them automatically to positioncheck.
-# remove the coins that are not so strong = not in an uptrend. example below 4H/1D 200MA
-# 
-
 # read orders csv
 # we just want the header, there is no need to get all the existing orders.
 # at the end we will append the orders to the csv
@@ -508,11 +501,6 @@ def main():
     # dfi.export(posframe, 'balance.png', fontsize=8, table_conversion='matplotlib')
     # sendTelegramPhoto()
 
-    # Todo
-    # set orders filled buy value
-    # get orders where price = 0 
-    # get filled price
-    # set price and save to csv file
 
     # inform that ended
     sendTelegramMessage(eStop, "Binance Trader Bot - End")

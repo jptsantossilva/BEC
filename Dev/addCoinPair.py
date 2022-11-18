@@ -78,7 +78,7 @@ def main():
             linha = positionsfile.index[(positionsfile.Currency == coinPair)].to_list()
 
             if not linha:
-                print("There is no line in positions"+tf+" file with coinPair "+str(coinPair)+ " and timeframe "+tf+". New line will be added.")
+                # print("There is no line in positions"+tf+" file with coinPair "+str(coinPair)+ " and timeframe "+tf+". New line will be added.")
                 
                 # check position value.
                 # position = 1 if fastEMA > slowEMA
