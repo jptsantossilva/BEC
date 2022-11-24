@@ -179,7 +179,7 @@ def runBackTest(coinPair):
     print("Return [%] = ",round(returnPerc,2))
     print("Buy & Hold Return [%] = ",round(BuyHoldReturnPerc,2))
 
-    coinpairBestEma = pd.read_csv('coinpairBestEma')
+    coinpairBestEma = pd.read_csv('coinpairBestEma.csv')
     # coinpairBestEma
     # add to file coinpair Best Ema 
     # if exist then update else add
@@ -202,7 +202,7 @@ def runBackTest(coinPair):
 
     # coinpairBestEma
     print("Saving Coin Pair to coinpairBestEma file")
-    coinpairBestEma.to_csv('coinpairBestEma', index=False, header=True)
+    coinpairBestEma.to_csv('coinpairBestEma.csv', index=False, header=True)
 
 
 # %%
@@ -212,7 +212,7 @@ def runBackTest(coinPair):
 
 # stats._strategy
 
-# coinpairBestEma = pd.read_csv('coinpairBestEma')
+# coinpairBestEma = pd.read_csv('coinpairBestEma.csv')
 # coinpairBestEma.loc[len(coinpairBestEma.index)] = ["START DATE = "+startdate+" TIMEFRAME="+timeframe, 
 #                                                         "",
 #                                                         "",
@@ -220,7 +220,7 @@ def runBackTest(coinPair):
 #                                                         "",
 #                                                         ""
 #                                                     ]
-# coinpairBestEma.to_csv('coinpairBestEma', index=False, header=True)
+# coinpairBestEma.to_csv('coinpairBestEma.csv', index=False, header=True)
 
 def addcoinpair(coinPair, lTimeframe):
 

@@ -45,7 +45,7 @@ def applytechnicals(df, aFastMA, aSlowMA):
 
 def main():
 
-    ListAddcoinpair = pd.read_csv('addcoinpair')
+    ListAddcoinpair = pd.read_csv('addcoinpair.csv')
     # get coin pairs with no completed calculation
     ListNotCompleted = ListAddcoinpair[(ListAddcoinpair.Completed != 1)]
     # Listcoinpair
@@ -59,7 +59,7 @@ def main():
             print("Add Coin pair - "+coinPair+" - "+tf+" - run successfully")
 
             #check if exists in coinpairBestEma to make sure we have stored best ema
-            dfBestEMA = pd.read_csv('coinpairBestEma')
+            dfBestEMA = pd.read_csv('coinpairBestEma.csv')
             listEMAvalues = dfBestEMA[(dfBestEMA.coinPair == coinPair) & (dfBestEMA.timeFrame == tf)]
             
             if not listEMAvalues.empty:
@@ -73,7 +73,7 @@ def main():
 
                 
             # add to positions files
-            positionsfile = pd.read_csv('positions'+tf)
+            positionsfile = pd.read_csv('positions'+tf+'.csv')
             # append if not exist 
             linha = positionsfile.index[(positionsfile.Currency == coinPair)].to_list()
 
@@ -99,20 +99,20 @@ def main():
                                                                 ,0 #qty
                                                                 ]
             
-                positionsfile.to_csv('positions'+tf, index=False)
+                positionsfile.to_csv('positions'+tf+'.csv', index=False)
 
         # mark as calc completed
-        completedcoinpair = pd.read_csv('addcoinpair')
+        completedcoinpair = pd.read_csv('addcoinpair.csv')
         completedcoinpair.loc[completedcoinpair.Currency == coinPair, 'Completed'] = 1
         completedcoinpair.Completed = completedcoinpair.Completed.astype(int, errors='ignore')
         
         # coinpairBestEma
         print("Mark coin "+str(coinPair)+ " as Completed to addcoinpair file")
-        completedcoinpair.to_csv('addcoinpair', index=False, header=True)
+        completedcoinpair.to_csv('addcoinpair.csv', index=False, header=True)
         
         #remove all coin pairs from addcoinpair file
-        # dfaddcoinpair = pd.read_csv('addcoinpair', nrows=0)
-        # dfaddcoinpair.to_csv('addcoinpair', mode='w', index=False)    
+        # dfaddcoinpair = pd.read_csv('addcoinpair.csv', nrows=0)
+        # dfaddcoinpair.to_csv('addcoinpair.csv', mode='w', index=False)    
 
 if __name__ == "__main__":
     main()

@@ -95,16 +95,16 @@ risk = float("0.01")
 
 # %%
 # read positions csv
-posframe = pd.read_csv('positions'+str(gTimeFrameNum)+gtimeframeTypeShort)
+posframe = pd.read_csv('positions'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv')
 # posframe
 
 # read orders csv
 # we just want the header, there is no need to get all the existing orders.
 # at the end we will append the orders to the csv
-dforders = pd.read_csv('orders'+str(gTimeFrameNum)+gtimeframeTypeShort, nrows=0)
+dforders = pd.read_csv('orders'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv', nrows=0)
 
 # read best ema cross
-dfBestEMA = pd.read_csv('coinpairBestEma')
+dfBestEMA = pd.read_csv('coinpairBestEma.csv')
 
 
 # %%
@@ -252,7 +252,7 @@ def changepos(curr, order, buy=True):
         posframe.loc[posframe.Currency == curr, 'position'] = 0
         posframe.loc[posframe.Currency == curr, 'quantity'] = 0
 
-    posframe.to_csv('positions'+str(gTimeFrameNum)+gtimeframeTypeShort, index=False)
+    posframe.to_csv('positions'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv', index=False)
 
 
 # %%
@@ -271,7 +271,7 @@ def adjustSize(coin, amount):
 
 
 def calcPnL(symbol, sellprice: float, sellqty: float):
-    with open(r"orders"+str(gTimeFrameNum)+gtimeframeTypeShort, 'r') as fp:
+    with open(r"orders"+str(gTimeFrameNum)+gtimeframeTypeShort+".csv", 'r') as fp:
         for l_no, line in reversed(list(enumerate(fp))):
             # search string
             if (symbol in line) and ("BUY" in line):
@@ -487,7 +487,7 @@ def main():
     trader()
 
     # add orders to csv file
-    dforders.to_csv('orders'+str(gTimeFrameNum)+gtimeframeTypeShort, mode='a', index=False, header=False)
+    dforders.to_csv('orders'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv', mode='a', index=False, header=False)
 
 
     # posframe.drop('position', axis=1, inplace=True)
