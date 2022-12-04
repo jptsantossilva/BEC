@@ -159,6 +159,8 @@ dfAccumulation= dfResult.query("MarketPhase == 'accumulation'")
 dfUnion = pd.concat([dfBullish, dfAccumulation], ignore_index=True)
 dfUnion.to_csv("coinpairByMarketPhase_"+stablecoin+"_"+timeframe+".csv")
 
+# dfBullish.style.set_properties(**{'text-align': 'left'})
+# dfAccumulation.style.set_properties(**{'text-align': 'left'})
 sendTelegramMessage(dfBullish.to_string(index=False))
 sendTelegramMessage(dfAccumulation.to_string(index=False))
 

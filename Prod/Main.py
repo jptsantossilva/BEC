@@ -315,6 +315,7 @@ def adjustSize(coin, amount):
 
 
 def calcPnL(symbol, sellprice: float, sellqty: float):
+    # open orders file to search last buy order for the coin and time frame provided on the argument.
     with open(r"orders"+str(gTimeFrameNum)+gtimeframeTypeShort+".csv", 'r') as fp:
         for l_no, line in reversed(list(enumerate(fp))):
             # search string
@@ -333,7 +334,8 @@ def calcPnL(symbol, sellprice: float, sellqty: float):
                 # print('Buy qty:', buyqty)
                 # print('Sell price:', sellprice)
                 # sellqty = buyqty
-                PnLperc = ((sellprice-buyprice)/buyprice)*100
+                # PnLperc = ((sellprice-buyprice)/buyprice)*100
+                PnLperc = (((sellprice*sellqty)-(buyprice*buyqty))/(buyprice*buyqty))*100
                 PnLperc = round(PnLperc, 2)
                 PnLvalue = (sellprice*sellqty)-(buyprice*buyqty) # erro!
                 PnLValue = round(PnLvalue, 2)
@@ -341,7 +343,7 @@ def calcPnL(symbol, sellprice: float, sellqty: float):
                 # print('Sell USD =', round(sellprice*sellqty,2))
                 # print('PnL% =', PnLperc)
                 # print('PnL USD =', PnLvalue)
-                # don't look for next lines
+                
                 
                 lista = [orderid, PnLperc, PnLvalue]
                 return lista
