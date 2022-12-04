@@ -1,3 +1,8 @@
+"""
+Gets coin pairs from addcoinpair.csv not yet calculated (completed = 0)
+and calculates best ema for 1d,4h and 1h time frames and add coinpair to positons files positions1d.csv, positions4h.csv, positions1h.csv
+"""
+
 import BestEMA
 import pandas as pd
 from binance.client import Client
@@ -55,12 +60,18 @@ def main():
     for coinPair in ListNotCompleted.Currency:
         for tf in timeframe: 
 
+            # calc BestEMA
             resultBestEma = BestEMA.addcoinpair(coinPair, tf)
             print("Add Coin pair - "+coinPair+" - "+tf+" - run successfully")
 
-            #check if exists in coinpairBestEma to make sure we have stored best ema
+            # check if exists in coinpairBestEma to make sure we have stored best ema
             dfBestEMA = pd.read_csv('coinpairBestEma.csv')
             listEMAvalues = dfBestEMA[(dfBestEMA.coinPair == coinPair) & (dfBestEMA.timeFrame == tf)]
+
+            # if return percentage of best ema is < 0 we dont want to trade that coin pair
+            if not listEMAvalues.empty:
+                if int(listEMAvalues.returnPerc.values[0]) < 0:
+                    continue
             
             if not listEMAvalues.empty:
                 fastMA = int(listEMAvalues.fastEMA.values[0])

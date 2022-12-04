@@ -1,4 +1,13 @@
-# %%
+"""
+Read position file, get coin pairs in position and check if is time to sell, get coin pairs not in position and check if its time to buy.  
+
+Gets all coin pairs from Binance, calculate market phase for each and store results in coinpairByMarketPhase_USD_1d.csv 
+Removes coins from positions files that are not in the accumulation or bullish phase.
+Adds the coins in the accumulation or bullish phase to addCoinPair.csv and calc BestEMA 
+for each coin pair on 1d,4h,1h time frame and save on positions files
+"""
+
+
 import os
 import re
 #from turtle import left
@@ -54,7 +63,9 @@ eTradeWithProfit = u'\U0001F44D' # thumbs up
 eTradeWithLoss   = u'\U0001F44E' # thumbs down
 eInformation = u'\U00002139'
 
-
+# run modes 
+# test - does not execute orders on the exchange
+# prod - execute orders on the exchange
 
 # Check the program has been called with the timeframe
 # total arguments
@@ -63,9 +74,11 @@ n = len(sys.argv)
 if n < 2:
     print("Argument is missing")
     timeframe = input('Enter timeframe (1d, 4h or 1h):')
+    runMode = input('Enter run mode (test, prod):')
 else:
     # argv[0] in Python is always the name of the script.
     timeframe = sys.argv[1]
+    runMode = sys.argv[2]
 
 if timeframe == "1h":
     gTimeFrameNum = int("1")
@@ -93,18 +106,28 @@ minPositionSize = float("20.0") # minimum position size in usd
 # not developed yet!!
 risk = float("0.01")
 
-# %%
-# read positions csv
-posframe = pd.read_csv('positions'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv')
-# posframe
+# create empty dataframes
+dfPositions = pd.DataFrame()
+dfOrders = pd.DataFrame()
+dfBestEMA = pd.DataFrame()
 
-# read orders csv
-# we just want the header, there is no need to get all the existing orders.
-# at the end we will append the orders to the csv
-dforders = pd.read_csv('orders'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv', nrows=0)
+def readCSVfiles():
 
-# read best ema cross
-dfBestEMA = pd.read_csv('coinpairBestEma.csv')
+    global dfPositions
+    global dfOrders
+    global dfBestEMA
+
+    # read positions
+    dfPositions = pd.read_csv('positions'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv')
+    # posframe
+
+    # read orders csv
+    # we just want the header, there is no need to get all the existing orders.
+    # at the end we will append the orders to the csv
+    dfOrders = pd.read_csv('orders'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv', nrows=0)
+
+    # read best ema cross
+    dfBestEMA = pd.read_csv('coinpairBestEma.csv')
 
 
 # %%
@@ -243,17 +266,38 @@ def applytechnicals(df, aFastMA, aSlowMA):
         df['SlowMA'] = df['Close'].ewm(span=aSlowMA, adjust=False).mean()
 
 # %%
-def changepos(curr, order, buy=True):
+def changepos(dfPos, curr, order, buy=True):
     # sendTelegramMessage("", "change pos")
+
     if buy:
-        posframe.loc[posframe.Currency == curr, 'position'] = 1
-        posframe.loc[posframe.Currency == curr, 'quantity'] = float(order['executedQty'])
+        dfPos.loc[dfPos['Currency'] == curr, 'position'] = 1
+        dfPos.loc[dfPos['Currency'] == curr, 'quantity'] = float(order['executedQty'])
     else:
-        posframe.loc[posframe.Currency == curr, 'position'] = 0
-        posframe.loc[posframe.Currency == curr, 'quantity'] = 0
+        dfPos.loc[dfPos['Currency'] == curr, 'position'] = 0
+        dfPos.loc[dfPos['Currency'] == curr, 'quantity'] = 0
 
-    posframe.to_csv('positions'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv', index=False)
+    dfPos.to_csv('positions'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv', index=False)
 
+def removeCoinsPosition():
+    # remove coin pairs from position file not in accumulation or bullish phase -> coinpairByMarketPhase_BUSD_1d.csv
+    
+    dfAllByMarketPhase = pd.read_csv('coinpairByMarketPhase_BUSD_1d.csv')
+    dfBullish = dfAllByMarketPhase.query("MarketPhase == 'bullish'")
+    dfAccumulation= dfAllByMarketPhase.query("MarketPhase == 'accumulation'")
+    # union accumulation and bullish results
+    dfUnion = pd.concat([dfBullish, dfAccumulation], ignore_index=True)
+    accuBullishCoinPairs = dfUnion.Coinpair.to_list()
+
+    positionsfile = pd.read_csv('positions'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv')
+
+    filter1 = (positionsfile['position'] == 1) & (positionsfile['quantity'] > 0)
+    filter2 = positionsfile['Currency'].isin(accuBullishCoinPairs)
+    positionsfile = positionsfile[filter1 | filter2]
+
+    # order by name
+    positionsfile.sort_values(by=['Currency'], inplace=True)
+
+    positionsfile.to_csv('positions'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv', index=False)
 
 # %%
 def adjustSize(coin, amount):
@@ -306,10 +350,16 @@ def calcPnL(symbol, sellprice: float, sellqty: float):
 
 # %%
 def trader():
-    # sendTelegramMessage("", "trader")
 
-    listPosition1 = posframe[posframe.position == 1].Currency
-    listPosition0 = posframe[posframe.position == 0].Currency
+    # remove coin pairs from position file not in accumulation or bullish phase -> coinpairByMarketPhase_BUSD_1d.csv
+    removeCoinsPosition()
+
+    # sendTelegramMessage("", "trader")
+    readCSVfiles()
+
+
+    listPosition1 = dfPositions[dfPositions.position == 1].Currency
+    listPosition0 = dfPositions[dfPositions.position == 0].Currency
 
     # check open positions and SELL if conditions are fulfilled 
     for coinPair in listPosition1:
@@ -345,7 +395,7 @@ def trader():
             # sendTelegramMessage("",client.SIDE_SELL+" "+coinPair+" balanceQty:"+str(balanceQty))
 
             # print("balanceQty: ",balanceQty)
-            buyOrderQty = float(posframe[posframe.Currency == coinPair].quantity.values[0])
+            buyOrderQty = float(dfPositions[dfPositions.Currency == coinPair].quantity.values[0])
             # sendTelegramMessage("",client.SIDE_SELL+" "+coinPair+" buyOrderQty:"+str(buyOrderQty))
             # print("buyOrderQty: ",buyOrderQty)
             sellQty = buyOrderQty
@@ -358,56 +408,60 @@ def trader():
             if sellQty > 0: 
                 
                 try:        
-                    order = client.create_order(symbol=coinPair,
-                                            side=client.SIDE_SELL,
-                                            type=client.ORDER_TYPE_MARKET,
-                                            # quantity = posframe[posframe.Currency == coinPair].quantity.values[0]
-                                            quantity = sellQty
-                                            )
-                    
-                    fills = order['fills']
-                    avg_price = sum([float(f['price']) * (float(f['qty']) / float(order['executedQty'])) for f in fills])
-                    avg_price = round(avg_price,8)
-                    # print('avg_price=',avg_price)
+                    if runMode == "prod":
+                        order = client.create_order(symbol=coinPair,
+                                                side=client.SIDE_SELL,
+                                                type=client.ORDER_TYPE_MARKET,
+                                                # quantity = posframe[posframe.Currency == coinPair].quantity.values[0]
+                                                quantity = sellQty
+                                                )
+                        
+                        fills = order['fills']
+                        avg_price = sum([float(f['price']) * (float(f['qty']) / float(order['executedQty'])) for f in fills])
+                        avg_price = round(avg_price,8)
+                        # print('avg_price=',avg_price)
 
-                    changepos(coinPair,order,buy=False)
+                        changepos(dfPositions, coinPair,order,buy=False)
+
                 except BinanceAPIException as ea:
                     sendTelegramMessage(eWarning, ea)
                 except BinanceOrderException as eo:
                     sendTelegramMessage(eWarning, eo)
 
                 #add new row to end of DataFrame
-                addPnL = calcPnL(coinPair, float(avg_price), float(order['executedQty']))
-                dforders.loc[len(dforders.index)] = [order['orderId'], pd.to_datetime(order['transactTime'], unit='ms'), coinPair, 
-                                                    order['side'], avg_price, order['executedQty'],
-                                                    addPnL[0], # buyorderid 
-                                                    addPnL[1], # PnL%
-                                                    addPnL[2]  # PnL USD
-                                                    ]
+                if runMode == "prod":
+                    addPnL = calcPnL(coinPair, float(avg_price), float(order['executedQty']))
+                    dfOrders.loc[len(dfOrders.index)] = [order['orderId'], pd.to_datetime(order['transactTime'], unit='ms'), coinPair, 
+                                                        order['side'], avg_price, order['executedQty'],
+                                                        addPnL[0], # buyorderid 
+                                                        addPnL[1], # PnL%
+                                                        addPnL[2]  # PnL USD
+                                                        ]
                 
 
-                # print(order)
-                # sendTelegramMessage(eExitTrade, order)
-                if addPnL[2] > 0: 
-                    emojiTradeResult = eTradeWithProfit
-                else:
-                    emojiTradeResult = eTradeWithLoss
+                    # print(order)
+                    # sendTelegramMessage(eExitTrade, order)
+                    if addPnL[2] > 0: 
+                        emojiTradeResult = eTradeWithProfit
+                    else:
+                        emojiTradeResult = eTradeWithLoss
 
-                sendTelegramAlert(emojiTradeResult,
-                                # order['transactTime']
-                                pd.to_datetime(order['transactTime'], unit='ms'), 
-                                order['symbol'], 
-                                str(gTimeFrameNum)+gtimeframeTypeShort, 
-                                gStrategyName,
-                                order['side'],
-                                avg_price,
-                                order['executedQty'],
-                                avg_price*float(order['executedQty']),
-                                addPnL[1], # PnL%
-                                addPnL[2]  # PnL USD
-                                )
+                    sendTelegramAlert(emojiTradeResult,
+                                    # order['transactTime']
+                                    pd.to_datetime(order['transactTime'], unit='ms'), 
+                                    order['symbol'], 
+                                    str(gTimeFrameNum)+gtimeframeTypeShort, 
+                                    gStrategyName,
+                                    order['side'],
+                                    avg_price,
+                                    order['executedQty'],
+                                    avg_price*float(order['executedQty']),
+                                    addPnL[1], # PnL%
+                                    addPnL[2]  # PnL USD
+                                    )
             else:
-                changepos(coinPair,'',buy=False)
+                if runMode == "prod":
+                    changepos(dfPositions, coinPair,'',buy=False)
         else:
             print(f'{coinPair} - {gStrategyName} - Sell condition not fulfilled')
             sendTelegramMessage("",f'{coinPair} - {gStrategyName} - Sell condition not fulfilled')
@@ -439,45 +493,52 @@ def trader():
             # sendTelegramMessage('',client.SIDE_BUY+" "+coinPair+" BuyStableQty="+str(positionSize))  
             if positionSize > 0:
                 try:
-                    order = client.create_order(symbol=coinPair,
-                                                side=client.SIDE_BUY,
-                                                type=client.ORDER_TYPE_MARKET,
-                                                quoteOrderQty = positionSize,
-                                                newOrderRespType = 'FULL') 
-                    
-                    fills = order['fills']
-                    avg_price = sum([float(f['price']) * (float(f['qty']) / float(order['executedQty'])) for f in fills])
-                    avg_price = round(avg_price,8)
-                    # print('avg_price=',avg_price)
+                    if runMode == "prod":
+                        order = client.create_order(symbol=coinPair,
+                                                    side=client.SIDE_BUY,
+                                                    type=client.ORDER_TYPE_MARKET,
+                                                    quoteOrderQty = positionSize,
+                                                    newOrderRespType = 'FULL') 
+                        
+                        fills = order['fills']
+                        avg_price = sum([float(f['price']) * (float(f['qty']) / float(order['executedQty'])) for f in fills])
+                        avg_price = round(avg_price,8)
+                        # print('avg_price=',avg_price)
 
-                    changepos(coinPair,order,buy=True)
+                        changepos(dfPositions, coinPair,order,buy=True)
                 except BinanceAPIException as ea:
                     sendTelegramMessage(eWarning, ea)
                 except BinanceOrderException as eo:
                     sendTelegramMessage(eWarning, eo)
                 
                 #add new row to end of DataFrame
-                dforders.loc[len(dforders.index)] = [order['orderId'], pd.to_datetime(order['transactTime'], unit='ms'), coinPair, 
-                                                    order['side'], avg_price, order['executedQty'],
-                                                    0,0,0]
-                        
-                
-                sendTelegramAlert(eEnterTrade,
-                                # order['transactTime'], 
-                                pd.to_datetime(order['transactTime'], unit='ms'),
-                                order['symbol'], 
-                                str(gTimeFrameNum)+gtimeframeTypeShort, 
-                                gStrategyName,
-                                order['side'],
-                                avg_price,
-                                order['executedQty'],
-                                positionSize)
+                if runMode == "prod":
+                    dfOrders.loc[len(dfOrders.index)] = [order['orderId'], pd.to_datetime(order['transactTime'], unit='ms'), coinPair, 
+                                                        order['side'], avg_price, order['executedQty'],
+                                                        0,0,0]
+                            
+                    
+                    sendTelegramAlert(eEnterTrade,
+                                    # order['transactTime'], 
+                                    pd.to_datetime(order['transactTime'], unit='ms'),
+                                    order['symbol'], 
+                                    str(gTimeFrameNum)+gtimeframeTypeShort, 
+                                    gStrategyName,
+                                    order['side'],
+                                    avg_price,
+                                    order['executedQty'],
+                                    positionSize)
             else:
                 sendTelegramMessage(eWarning,client.SIDE_BUY+" "+coinPair+" - Not enough "+coinStable+" funds!")
                 
         else:
             print(f'{coinPair} - {gStrategyName} - Buy condition not fulfilled')
             sendTelegramMessage("",f'{coinPair} - {gStrategyName} - Buy condition not fulfilled')
+
+    # remove coin pairs from position file not in accumulation or bullish phase -> coinpairByMarketPhase_BUSD_1d.csv
+    # this is needed here specially for 1h/4h time frames when coin is no longer on bullish or accumulation and a close position occurred
+    # and we dont want to back in position during the same day
+    removeCoinsPosition()
 
 
 def main():
@@ -487,16 +548,16 @@ def main():
     trader()
 
     # add orders to csv file
-    dforders.to_csv('orders'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv', mode='a', index=False, header=False)
+    dfOrders.to_csv('orders'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv', mode='a', index=False, header=False)
 
 
     # posframe.drop('position', axis=1, inplace=True)
     # posframe.style.applymap(custom_style)
      
     # send balance
-    print(posframe)
+    print(dfPositions)
 
-    sendTelegramMessage("",posframe.to_string())
+    sendTelegramMessage("",dfPositions.to_string())
 
     # dfi.export(posframe, 'balance.png', fontsize=8, table_conversion='matplotlib')
     # sendTelegramPhoto()

@@ -1,4 +1,10 @@
-# %%
+"""
+Gets all coin pairs from Binance, calculate market phase for each and store results in coinpairByMarketPhase_USD_1d.csv 
+Removes coins from positions files that are not in the accumulation or bullish phase.
+Adds the coins in the accumulation or bullish phase to addCoinPair.csv and calc BestEMA 
+for each coin pair on 1d,4h,1h time frame and save on positions files
+"""
+
 # %%
 import os
 from binance.client import Client
@@ -21,6 +27,10 @@ start = timeit.default_timer()
 # Binance
 api_key = os.environ.get('binance_api')
 api_secret = os.environ.get('binance_secret')
+
+# telegram
+telegramToken_MarketPhases = os.environ.get('telegramToken_MarketPhases')
+telegram_chat_id = os.environ.get('telegram_chat_id')
 
 # Binance Client
 client = Client(api_key, api_secret)
@@ -115,9 +125,14 @@ for coinPair in coinPairs:
         dfResult = df
     else:
         dfResult = pd.concat([dfResult, df])
+    
+    # print(dfResult)
 
+def sendTelegramMessage(msg):
+    lmsg = msg
+    url = f"https://api.telegram.org/bot{telegramToken_MarketPhases}/sendMessage?chat_id={telegram_chat_id}&text={lmsg}"
+    requests.get(url).json() # this sends the message
 
-# print(dfResult)
 
 
 # %%
@@ -142,6 +157,10 @@ dfBullish = dfResult.query("MarketPhase == 'bullish'")
 dfAccumulation= dfResult.query("MarketPhase == 'accumulation'")
 # union accumulation and bullish results
 dfUnion = pd.concat([dfBullish, dfAccumulation], ignore_index=True)
+dfUnion.to_csv("coinpairByMarketPhase_"+stablecoin+"_"+timeframe+".csv")
+
+sendTelegramMessage(dfBullish.to_string(index=False))
+sendTelegramMessage(dfAccumulation.to_string(index=False))
 
 positionsTimeframe = ["1d", "4h", "1h"]
 
@@ -163,11 +182,16 @@ if not dfUnion.empty:
     # add coin pairs in accumulation or bullish phase
     fileAddcoinpair = pd.read_csv('addcoinpair.csv')
 
-    # remove all with completed calculation = 1. Why? the list can get big.
-    fileAddcoinpair = fileAddcoinpair[(fileAddcoinpair["Completed"] == 0)]
+    # remove all with completed calculation = 1. Why? the list can get big. todo: fix with the idea below
+    # fileAddcoinpair = fileAddcoinpair[(fileAddcoinpair["Completed"] == 0)]
+
+    # todo! add date to each line when the last time it was calculated. if more than 30 days delete to make sure it calculates again.
+    # with current code is calculating each time it adds new coin
+    
     # add coin pairs 
     for coinPair in dfUnion.Coinpair:
-        line = fileAddcoinpair.index[(fileAddcoinpair['Currency'] == coinPair) & (fileAddcoinpair['Completed'] == 0)].to_list()
+        # line = fileAddcoinpair.index[(fileAddcoinpair['Currency'] == coinPair) & (fileAddcoinpair['Completed'] == 0)].to_list()
+        line = fileAddcoinpair.index[(fileAddcoinpair['Currency'] == coinPair)].to_list()
         if not line:
             fileAddcoinpair.loc[len(fileAddcoinpair.index)] = [coinPair
                                                                 ,0 # not completed

@@ -1,4 +1,6 @@
-# %%
+"""
+calculates best ema for the coinpair and time frame provided and store results on coinpairBestEma.csv
+"""
 
 import os
 from binance.client import Client
@@ -18,7 +20,6 @@ api_secret = os.environ.get('binance_secret')
 # %%
 client = Client(api_key, api_secret)
 
-# %%
 
 
 # startdate = "10 Nov, 2018 UTC"
@@ -27,26 +28,8 @@ startdate = "4 year ago UTC"
 # startdate = "10 day ago UTC"
 timeframe = "1h"
 
-# # Check the program has been called with the timeframe
-# # total arguments
-# n = len(sys.argv)
-# # print("Total arguments passed:", n)
-# if n < 2:
-#     print("Argument is missing")
-#     timeframe = input('Enter timeframe (1d, 4h or 1h):')
-# else:
-#     # argv[0] in Python is always the name of the script.
-#     timeframe = sys.argv[1]
 
 
-    
-# coinPair = "BTCBUSD"
-
-# %%
-# client.get_account()
-
-# %%
-# from optparse import Values
 def EMA(values, n):
     """
     Return exp moving average of `values`, at
@@ -60,18 +43,15 @@ def EMA(values, n):
 
 
 
-# we will use four moving averages in total: 
-# two moving averages whose relationship determines a general trend (we only trade long when the shorter MA is above the longer one, and vice versa), 
-# and two moving averages whose cross-over with daily close prices determine the signal to enter or exit the position.
+# we will use 2 exponencial moving averages:
+# BUY when fast ema > slow ema
+# Close position when slow ema > fast ema  
 class EmaCross(Strategy):
     n1 = 8
     n2 = 34
-    # n_enter = 20
-    # n_exit = 10
+
     
     def init(self):
-        # self.sma1 = self.I(EMA, self.data.Close, self.n1)
-        # self.sma2 = self.I(EMA, self.data.Close, self.n2)
         
         self.ma1 = self.I(EMA, self.data.Close, self.n1)
         self.ma2 = self.I(EMA, self.data.Close, self.n2)
@@ -84,32 +64,10 @@ class EmaCross(Strategy):
 
         if not self.position:
             
-            # On upwards trend, if price closes above
-            # "entry" MA, go long
-            
-            # Here, even though the operands are arrays, this
-            # works by implicitly comparing the two last values
-            # if (priceClose > fastMA) and (fastMA > slowMA):
             if fastMA > slowMA:
-                # if crossover(self.data.Close, self.sma_enter):
                 self.buy()
-                    
-            # On downwards trend, if price closes below
-            # "entry" MA, go short
-            
-            # else:
-            #     if crossover(self.sma_enter, self.data.Close):
-            #         self.sell()
-        
-        # But if we already hold a position and the price
-        # closes back below (above) "exit" MA, close the position
         
         else:
-            # if (self.position.is_long and
-            #     crossover(self.sma_exit, self.data.Close)
-            #     or
-            #     self.position.is_short and
-            #     crossover(self.data.Close, self.sma_exit)):
             if slowMA > fastMA:   
                 self.position.close()
             
@@ -119,14 +77,7 @@ class EmaCross(Strategy):
 def getdata(Symbol):
     frame = pd.DataFrame(client.get_historical_klines(Symbol,
                                                       timeframe,
-                                                      # client.KLINE_INTERVAL_1HOUR,
-                                                    #  '3 years ago UTC')
-                                                      # '1 Feb, 2019 UTC', # bear market anterior
-                                                      # '16 Nov, 2021 UTC' # inicio bear market 
-                                                      # '14 Jun, 2022 UTC'   # 20k suporte
-                                                      # '90 day ago UTC' 
                                                       startdate
-                                                      # '4000 hour ago UTC' # 4hour
                                                       ))
     
     frame = frame.iloc[:,:6] # use the first 5 columns
@@ -142,9 +93,6 @@ def runBackTest(coinPair):
     print("coinPair = ",coinPair)
     df = getdata(coinPair)
     df = df.drop(['Time'], axis=1)
-    # df
-    # df = bollinger_bands(df)
-
 
     bt = Backtest(df, EmaCross, cash=100000, commission=0.001)
     stats = bt.run()
@@ -158,14 +106,6 @@ def runBackTest(coinPair):
     maximize='Equity Final [$]',
     return_heatmap=True
     )
-
-    # heatmap.dropna(inplace=True)
-    # heatmap.droplevel
-    # drop(labels inplace=True)
-    # heatmap = heatmap[heatmap[0] > heatmap[1]]
-    # from ast import Break
-    # from doctest import BLANKLINE_MARKER
-
 
     dfbema = pd.DataFrame(heatmap.sort_values().iloc[-1:])
     n1 = dfbema.index.get_level_values(0)[0]
@@ -186,8 +126,8 @@ def runBackTest(coinPair):
     linha = coinpairBestEma.index[(coinpairBestEma.coinPair == coinPair) & (coinpairBestEma.timeFrame == timeframe)].to_list()
 
     if not linha:
-        print("There is no line in coinpairBestEma file with coinPair "+str(coinPair)+ " and timeframe "+str(timeframe)+". New line will be added.")
-        #add linha
+        # print("There is no line in coinpairBestEma file with coinPair "+str(coinPair)+ " and timeframe "+str(timeframe)+". New line will be added.")
+        # add line
         coinpairBestEma.loc[len(coinpairBestEma.index)] = [coinPair, 
                                                             n1,
                                                             n2,
@@ -197,30 +137,16 @@ def runBackTest(coinPair):
                                                         ]
     else:
         print("linha=",linha[0])
-        # update linha
+        # update line
         coinpairBestEma.loc[linha[0],['fastEMA','slowEMA','returnPerc','BuyHoldReturnPerc']] = [n1, n2, returnPerc,BuyHoldReturnPerc]
 
     # coinpairBestEma
     print("Saving Coin Pair to coinpairBestEma file")
+
+    #order by coinpair and timeframe
+    coinpairBestEma.sort_values(by=['coinPair','timeFrame'], inplace=True)
     coinpairBestEma.to_csv('coinpairBestEma.csv', index=False, header=True)
 
-
-# %%
-# heatmap.sort_values().iloc[-20:]
-
-# %%
-
-# stats._strategy
-
-# coinpairBestEma = pd.read_csv('coinpairBestEma.csv')
-# coinpairBestEma.loc[len(coinpairBestEma.index)] = ["START DATE = "+startdate+" TIMEFRAME="+timeframe, 
-#                                                         "",
-#                                                         "",
-#                                                         "",
-#                                                         "",
-#                                                         ""
-#                                                     ]
-# coinpairBestEma.to_csv('coinpairBestEma.csv', index=False, header=True)
 
 def addcoinpair(coinPair, lTimeframe):
 
