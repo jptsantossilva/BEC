@@ -65,7 +65,9 @@ for s in exchange_info['symbols']:
     if (s['symbol'].endswith(stablecoin)
         and not(s['symbol'].endswith('DOWN'+stablecoin))
         and not(s['symbol'].endswith('UP'+stablecoin))
-        and not(s['symbol'].startswith('BUSD'))
+        and not(s['symbol'] == "AUD"+stablecoin) # Australian Dollar
+        and not(s['symbol'] == "EUR"+stablecoin) # Euro
+        and not(s['symbol'] == "GBP"+stablecoin) # British pound
         and s['status'] == 'TRADING'):
             coinPairs.add(s['symbol'])
 # print(usdt)

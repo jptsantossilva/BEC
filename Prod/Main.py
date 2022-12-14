@@ -194,16 +194,19 @@ def calcPositionSize(pStablecoin = 'BUSD'):
         
         # get balance from BUSD
         stablecoin = client.get_asset_balance(asset=pStablecoin)
-        stablecoin = float(stablecoin['free'])
+        stablecoinBalance = float(stablecoin['free'])
         # print(stableBalance)
 
         # calculate position size based on the percentage per trade
-        resultado = stablecoin*tradepercentage 
+        resultado = stablecoinBalance*tradepercentage 
         resultado = round(resultado, 5)
 
         if resultado < minPositionSize:
             resultado = minPositionSize
 
+        # make sure there are enough funds otherwise abort the buy position
+        if stablecoinBalance < resultado:
+            resultado == 0
 
         return resultado
     except BinanceAPIException as e:
