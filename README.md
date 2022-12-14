@@ -16,6 +16,12 @@ EMA-Cross fully automatic trading bot for Binance Spot with Telegram integration
 - Calculates PnL for executed sell order.
 - Telegram message notifications - every time bot is executed; open position; close position; position status summary; coins in accumulation and bullish market phases
 
-## Credits
+## 📝 License
 
-[João Silva](https://github.com/jptsantossilva)
+This project is [MIT](https://github.com/jptsantossilva/Binance-Trader-EMA-Cross/blob/main/LICENSE.md) licensed.
+
+Copyright © 2022 [João Silva](https://github.com/jptsantossilva)
+
+
+
+
