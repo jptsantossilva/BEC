@@ -188,29 +188,27 @@ def spot_balance():
 
 # %%
 def calcPositionSize(pStablecoin = 'BUSD'):
-    # sendTelegramMessage("", "calc position size")
 
     try:
-        
         # get balance from BUSD
         stablecoin = client.get_asset_balance(asset=pStablecoin)
         stablecoinBalance = float(stablecoin['free'])
         # print(stableBalance)
-
-        # calculate position size based on the percentage per trade
-        resultado = stablecoinBalance*tradepercentage 
-        resultado = round(resultado, 5)
-
-        if resultado < minPositionSize:
-            resultado = minPositionSize
-
-        # make sure there are enough funds otherwise abort the buy position
-        if stablecoinBalance < resultado:
-            resultado == 0
-
-        return resultado
     except BinanceAPIException as e:
         sendTelegramMessage(eWarning, e)
+    
+    # calculate position size based on the percentage per trade
+    resultado = stablecoinBalance*tradepercentage 
+    resultado = round(resultado, 5)
+
+    if resultado < minPositionSize:
+        resultado = minPositionSize
+
+    # make sure there are enough funds otherwise abort the buy position
+    if stablecoinBalance < resultado:
+        resultado = 0
+
+    return resultado
     
     
 
