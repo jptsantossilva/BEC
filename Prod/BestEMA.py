@@ -1,3 +1,4 @@
+
 """
 calculates best ema for the coinpair and time frame provided and store results on coinpairBestEma.csv
 """
@@ -5,11 +6,13 @@ calculates best ema for the coinpair and time frame provided and store results o
 import os
 from binance.client import Client
 import pandas as pd
-import datetime as dt
-from backtesting import Backtest
-from backtesting import Strategy
+import datetime
+from backtesting import Backtest, Strategy
+from backtesting.lib import crossover
 import sys
- 
+from datetime import date, timedelta
+from dateutil.relativedelta import relativedelta
+import time
 
 # %%
 # Binance API
@@ -20,88 +23,113 @@ api_secret = os.environ.get('binance_secret')
 # %%
 client = Client(api_key, api_secret)
 
+# backtest with 4 years of price data 
+#-------------------------------------
+today = date.today() 
+# today - 6 years - 200 days
+pastdate = today - relativedelta(years=6) - relativedelta(days=200)
+# print(pastdate)
+tuple = pastdate.timetuple()
+timestamp = time.mktime(tuple)
 
-
-# startdate = "10 Nov, 2018 UTC"
+startdate = str(timestamp)
+# startdate = "15 Dec, 2018 UTC"
 # startdate = "12 May, 2022 UTC"
-startdate = "4 year ago UTC"
+# startdate = "4 year ago UTC"
 # startdate = "10 day ago UTC"
-timeframe = "1h"
+#-------------------------------------
+timeframe = ""
 
-
+# %%
 
 def EMA(values, n):
     """
     Return exp moving average of `values`, at
     each step taking into account `n` previous values.
     """
-    
     return pd.Series(values).ewm(span=n, adjust=False).mean()
 
+def SMA(values, n):
+    """
+    Return simple moving average of `values`, at
+    each step taking into account `n` previous values.
+    """
+    return pd.Series(values).rolling(n).mean()
 
-# %%
-
-
-
+#-------------------------------------
 # we will use 2 exponencial moving averages:
 # BUY when fast ema > slow ema
 # Close position when slow ema > fast ema  
+#-------------------------------------
 class EmaCross(Strategy):
-    n1 = 8
-    n2 = 34
-
+    n1 = 7
+    n2 = 8
+    nFastSMA = 50
+    nSlowSMA = 200    
     
     def init(self):
-        
-        self.ma1 = self.I(EMA, self.data.Close, self.n1)
-        self.ma2 = self.I(EMA, self.data.Close, self.n2)
-        
-    def next(self):
+        self.emaFast = self.I(EMA, self.data.Close, self.n1)
+        self.emaSlow = self.I(EMA, self.data.Close, self.n2)
+        self.sma50 = self.I(SMA, self.data.Close, self.nFastSMA)
+        self.sma200 = self.I(SMA, self.data.Close, self.nSlowSMA)
 
-        fastMA = self.ma1[-1]
-        slowMA = self.ma2[-1]
-        priceClose = self.data.Close[-1]
+    def next(self):
+        fastEMA = self.emaFast
+        slowEMA = self.emaSlow
+        SMA50 = self.sma50
+        SMA200 = self.sma200
+        priceClose = self.data.Close
+        
+        # accumulationPhase = False
+        # bullishPhase = False
+
+        accumulationPhase = (priceClose > SMA50) and (priceClose > SMA200) and (SMA50 < SMA200)
+        bullishPhase = (priceClose > SMA50) and (priceClose > SMA200) and (SMA50 > SMA200)
 
         if not self.position:
-            
-            if fastMA > slowMA:
+            if (accumulationPhase or bullishPhase) and crossover(fastEMA, slowEMA):
+            # if crossover(fastEMA, slowEMA):
                 self.buy()
         
-        else:
-            if slowMA > fastMA:   
+        else: 
+            if crossover(slowEMA, fastEMA): 
                 self.position.close()
             
 
 
 # %%
-def getdata(Symbol):
-    frame = pd.DataFrame(client.get_historical_klines(Symbol,
-                                                      timeframe,
+def getdata(pSymbol, pTimeframe):
+    frame = pd.DataFrame(client.get_historical_klines(pSymbol,
+                                                      pTimeframe,
                                                       startdate
                                                       ))
     
     frame = frame.iloc[:,:6] # use the first 5 columns
     frame.columns = ['Time','Open','High','Low','Close','Volume'] #rename columns
     frame[['Open','High','Low','Close','Volume']] = frame[['Open','High','Low','Close','Volume']].astype(float) #cast to float
-    # frame.Time = pd.to_datetime(frame.Time, unit='ms') #make human readable timestamp
-    frame.index = [dt.datetime.fromtimestamp(x/1000.0) for x in frame.Time]
+    frame.Time = pd.to_datetime(frame.Time, unit='ms') #make human readable timestamp
+    # frame.index = [dt.datetime.fromtimestamp(x/1000.0) for x in frame.Time]
+    frame = frame.set_index(pd.DatetimeIndex(frame['Time']))
+    frame = frame.drop(['Time'], axis=1)
+
     return frame
 
 # %%
 def runBackTest(coinPair):
 
-    print("coinPair = ",coinPair)
-    df = getdata(coinPair)
-    df = df.drop(['Time'], axis=1)
+    # print("coinPair = ",coinPair)
+    df = getdata(coinPair, timeframe)
+    # df = df.drop(['Time'], axis=1)
+    # print(df)
 
     bt = Backtest(df, EmaCross, cash=100000, commission=0.001)
     stats = bt.run()
-    stats
-    # bt.plot() 
+    # print(stats)
+    # bt.plot()
 
     stats, heatmap = bt.optimize(
-    n1=range(1, 100, 2),
-    n2=range(2, 200, 2),
+    n1=range(5, 100, 5),
+    n2=range(10, 200, 5),
     constraint=lambda param: param.n1 < param.n2,
     maximize='Equity Final [$]',
     return_heatmap=True
@@ -112,12 +140,14 @@ def runBackTest(coinPair):
     n2 = dfbema.index.get_level_values(1)[0]
     returnPerc = round(stats['Return [%]'],2)
     BuyHoldReturnPerc = round(stats['Buy & Hold Return [%]'],2)
+    BacktestStartDate = str(df.index[0])
 
     # lista
     print("n1=",n1)
     print("n2=",n2)
     print("Return [%] = ",round(returnPerc,2))
     print("Buy & Hold Return [%] = ",round(BuyHoldReturnPerc,2))
+    print("Backtest start date =", BacktestStartDate)
 
     coinpairBestEma = pd.read_csv('coinpairBestEma.csv')
     # coinpairBestEma
@@ -133,15 +163,16 @@ def runBackTest(coinPair):
                                                             n2,
                                                             timeframe,
                                                             returnPerc,
-                                                            BuyHoldReturnPerc
-                                                        ]
+                                                            BuyHoldReturnPerc,
+                                                            BacktestStartDate
+                                                            ]
     else:
-        print("linha=",linha[0])
+        # print("linha=",linha[0])
         # update line
-        coinpairBestEma.loc[linha[0],['fastEMA','slowEMA','returnPerc','BuyHoldReturnPerc']] = [n1, n2, returnPerc,BuyHoldReturnPerc]
+        coinpairBestEma.loc[linha[0],['fastEMA','slowEMA','returnPerc','BuyHoldReturnPerc','BacktestStartDate']] = [n1, n2, returnPerc,BuyHoldReturnPerc,BacktestStartDate]
 
     # coinpairBestEma
-    print("Saving Coin Pair to coinpairBestEma file")
+    # print("Saving Coin Pair to coinpairBestEma file")
 
     #order by coinpair and timeframe
     coinpairBestEma.sort_values(by=['coinPair','timeFrame'], inplace=True)
@@ -155,10 +186,8 @@ def addcoinpair(coinPair, lTimeframe):
     global timeframe 
     timeframe = str(lTimeframe)
 
-
     print("Backtest - "+coinPair+" - "+timeframe+" - Start")
     runBackTest(coinPair)
-
     print("Backtest "+coinPair+" - "+timeframe+" - End")
 
     result = True

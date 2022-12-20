@@ -93,14 +93,14 @@ def getdata(Symbol):
                                                       timeframe,                                        
                                                       startdate))
     
-    frame = frame.iloc[:,[0,4,6]] # columns selection
-    frame.columns = ['Time','Close','Volume'] #rename columns
-    frame[['Close','Volume']] = frame[['Close','Volume']].astype(float) #cast to float
+    frame = frame.iloc[:,[0,4]] # columns selection
+    frame.columns = ['Time','Close'] #rename columns
+    frame[['Close']] = frame[['Close']].astype(float) #cast to float
     # frame.Time = pd.to_datetime(frame.Time, unit='ms') #make human readable timestamp
     frame['Coinpair'] = Symbol
     frame.index = [datetime.fromtimestamp(x/1000.0) for x in frame.Time]
     
-    frame = frame[['Coinpair','Close','Volume']]
+    frame = frame[['Coinpair','Close']]
     return frame
 
 # %%
@@ -181,23 +181,25 @@ if not dfUnion.empty:
         positionsfile.to_csv('positions'+tf+'.csv', index=False)
     #------------------------
 
+
     # add coin pairs in accumulation or bullish phase
     fileAddcoinpair = pd.read_csv('addcoinpair.csv')
 
-    # remove all with completed calculation = 1. Why? the list can get big. todo: fix with the idea below
-    # fileAddcoinpair = fileAddcoinpair[(fileAddcoinpair["Completed"] == 0)]
+    # remove the coins that are not anymore on the accumulation or bullish phases 
+    # and next time the coin goes into these phases will calc again the best ema
+    filter1 = fileAddcoinpair['Completed'] == 0
+    filter2 = fileAddcoinpair['Currency'].isin(accuBullishCoinPairs)
+    fileAddcoinpair = fileAddcoinpair[filter1 | filter2]  
 
-    # todo! add date to each line when the last time it was calculated. if more than 30 days delete to make sure it calculates again.
-    # with current code is calculating each time it adds new coin
-    
-    # add coin pairs 
+    # add coin pairs
     for coinPair in dfUnion.Coinpair:
-        # line = fileAddcoinpair.index[(fileAddcoinpair['Currency'] == coinPair) & (fileAddcoinpair['Completed'] == 0)].to_list()
-        line = fileAddcoinpair.index[(fileAddcoinpair['Currency'] == coinPair)].to_list()
-        if not line:
-            fileAddcoinpair.loc[len(fileAddcoinpair.index)] = [coinPair
-                                                                ,0 # not completed
-                                                                ]
+        # line = fileAddcoinpair.index[(fileAddcoinpair['Currency'] == coinPair)].to_list()
+        exists = coinPair in fileAddcoinpair['Currency'].values
+        if not exists:
+            dfAdd = pd.DataFrame({'Currency': [coinPair],
+                                    'Completed' : [0],
+                                    'Date' : [str(date.today())]})
+            fileAddcoinpair = pd.concat([fileAddcoinpair, dfAdd], ignore_index = True, axis = 0)
 
     fileAddcoinpair.to_csv('addcoinpair.csv', index=False)
     #------------------------

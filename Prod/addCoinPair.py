@@ -1,19 +1,21 @@
 """
 Gets coin pairs from addcoinpair.csv not yet calculated (completed = 0)
-and calculates best ema for 1d,4h and 1h time frames and add coinpair to positons files positions1d.csv, positions4h.csv, positions1h.csv
+and calculates best ema for 1d, 4h and 1h time frames and then adds 
+coinpair to positons files positions1d.csv, positions4h.csv, positions1h.csv
 """
 
 import BestEMA
 import pandas as pd
 from binance.client import Client
 import os
+from datetime import date
 
 result_1d = False
 result_4h = False
 result_1h = False
 timeframe = ["1d", "4h", "1h"]
 
-def getdata(coinPair, aTimeframeNum, aTimeframeTypeShort, aFastMA=0, aSlowMA=0):
+def getdata(coinPair, aTimeframeNum, aTimeframeTypeShort, aSlowSMA=200):
 
     lTimeFrame = str(aTimeframeNum)+aTimeframeTypeShort
     if aTimeframeTypeShort == "h":
@@ -21,15 +23,15 @@ def getdata(coinPair, aTimeframeNum, aTimeframeTypeShort, aFastMA=0, aSlowMA=0):
     elif aTimeframeTypeShort == "d":
         lTimeframeTypeLong = "day"
     
-    gStrategyName = str(aFastMA)+"/"+str(aSlowMA)+" EMA cross"
+    # gStrategyName = str(aFastMA)+"/"+str(aSlowMA)+" EMA cross"
 
     # if bestEMA does not exist return empty dataframe in order to no use that trading pair
-    if aFastMA == 0:
-        frame = pd.DataFrame()
-        return frame
+    # if aFastMA == 0:
+    #     frame = pd.DataFrame()
+    #     return frame
     
     # if best Ema exist get price data 
-    lstartDate = str(1+aSlowMA*aTimeframeNum)+" "+lTimeframeTypeLong+" ago UTC" 
+    lstartDate = str(aSlowSMA*aTimeframeNum)+" "+lTimeframeTypeLong+" ago UTC" 
     ltimeframe = str(aTimeframeNum)+aTimeframeTypeShort
     frame = pd.DataFrame(BestEMA.client.get_historical_klines(coinPair,
                                                     ltimeframe,
@@ -45,8 +47,10 @@ def getdata(coinPair, aTimeframeNum, aTimeframeTypeShort, aFastMA=0, aSlowMA=0):
 def applytechnicals(df, aFastMA, aSlowMA):
     
     if aFastMA > 0: 
-        df['FastMA'] = df['Close'].ewm(span=aFastMA, adjust=False).mean()
-        df['SlowMA'] = df['Close'].ewm(span=aSlowMA, adjust=False).mean()
+        df['FastEMA'] = df['Close'].ewm(span=aFastMA, adjust=False).mean()
+        df['SlowEMA'] = df['Close'].ewm(span=aSlowMA, adjust=False).mean()
+        df['SMA50']  = df['Close'].rolling(50).mean()
+        df['SMA200'] = df['Close'].rolling(200).mean()
 
 def main():
 
@@ -74,11 +78,11 @@ def main():
                     continue
             
             if not listEMAvalues.empty:
-                fastMA = int(listEMAvalues.fastEMA.values[0])
-                slowMA = int(listEMAvalues.slowEMA.values[0])
+                fastEMA = int(listEMAvalues.fastEMA.values[0])
+                slowEMA = int(listEMAvalues.slowEMA.values[0])
             else:
-                fastMA = 0
-                slowMA = 0
+                fastEMA = 0
+                slowEMA = 0
                 print("Warning: there is no line in coinpairBestEma file with coinPair "+str(coinPair)+ " and timeframe "+str(tf)+". ")
                 continue
 
@@ -96,10 +100,16 @@ def main():
                 # position = 0 if slowEMA > fastEMA
                 timeframeNum = int(tf[0])
                 timeframeType = str(tf[1])
-                df = getdata(coinPair, timeframeNum, timeframeType, fastMA, slowMA)
-                applytechnicals(df, fastMA, slowMA)
+
+                df = getdata(coinPair, timeframeNum, timeframeType)
+                applytechnicals(df, fastEMA, slowEMA)
+                # print(df)
                 lastrow = df.iloc[-1]
-                if lastrow.FastMA > lastrow.SlowMA:
+
+                accumulationPhase = (lastrow.Close > lastrow.SMA50) and (lastrow.Close > lastrow.SMA200) and (lastrow.SMA50 < lastrow.SMA200)
+                bullishPhase = (lastrow.Close > lastrow.SMA50) and (lastrow.Close > lastrow.SMA200) and (lastrow.SMA50 > lastrow.SMA200)
+
+                if (accumulationPhase or bullishPhase) and (lastrow.FastEMA > lastrow.SlowEMA):
                     position = 1
                 else:
                     position = 0
@@ -115,6 +125,7 @@ def main():
         # mark as calc completed
         completedcoinpair = pd.read_csv('addcoinpair.csv')
         completedcoinpair.loc[completedcoinpair.Currency == coinPair, 'Completed'] = 1
+        completedcoinpair.loc[completedcoinpair.Currency == coinPair, 'Date'] = str(date.today())        
         completedcoinpair.Completed = completedcoinpair.Completed.astype(int, errors='ignore')
         
         # coinpairBestEma

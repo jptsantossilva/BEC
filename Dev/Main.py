@@ -26,6 +26,7 @@ import numpy as np
 #import dataframe_image as dfi
 from numbers import Number
 from typing import Sequence
+from backtesting.lib import crossover
 
 # %%
 # environment variables
@@ -188,7 +189,6 @@ def spot_balance():
 
 # %%
 def calcPositionSize(pStablecoin = 'BUSD'):
-    # sendTelegramMessage("", "calc position size")
 
     try:
         
@@ -196,21 +196,22 @@ def calcPositionSize(pStablecoin = 'BUSD'):
         stablecoin = client.get_asset_balance(asset=pStablecoin)
         stablecoinBalance = float(stablecoin['free'])
         # print(stableBalance)
-
-        # calculate position size based on the percentage per trade
-        resultado = stablecoinBalance*tradepercentage 
-        resultado = round(resultado, 5)
-
-        if resultado < minPositionSize:
-            resultado = minPositionSize
-
-        # make sure there are enough funds otherwise abort the buy position
-        if stablecoinBalance < resultado:
-            resultado == 0
-
-        return resultado
     except BinanceAPIException as e:
         sendTelegramMessage(eWarning, e)
+        
+    # calculate position size based on the percentage per trade
+    resultado = stablecoinBalance*tradepercentage 
+    resultado = round(resultado, 5)
+
+    if resultado < minPositionSize:
+        resultado = minPositionSize
+
+    # make sure there are enough funds otherwise abort the buy position
+    if stablecoinBalance < resultado:
+        resultado = 0
+
+    return resultado
+    
     
     
 
@@ -249,7 +250,9 @@ def getdata(coinPair, aTimeframeNum, aTimeframeTypeShort, aFastMA=0, aSlowMA=0):
         return frame
     
     # if best Ema exist get price data 
-    lstartDate = str(1+gSlowMA*aTimeframeNum)+" "+lTimeframeTypeLong+" ago UTC" 
+    # lstartDate = str(1+gSlowMA*aTimeframeNum)+" "+lTimeframeTypeLong+" ago UTC"
+    sma200 = 200
+    lstartDate = str(sma200*aTimeframeNum)+" "+lTimeframeTypeLong+" ago UTC" 
     ltimeframe = str(aTimeframeNum)+aTimeframeTypeShort
     frame = pd.DataFrame(client.get_historical_klines(coinPair,
                                                     ltimeframe,
@@ -265,8 +268,10 @@ def getdata(coinPair, aTimeframeNum, aTimeframeTypeShort, aFastMA=0, aSlowMA=0):
 def applytechnicals(df, aFastMA, aSlowMA):
     
     if aFastMA > 0: 
-        df['FastMA'] = df['Close'].ewm(span=aFastMA, adjust=False).mean()
-        df['SlowMA'] = df['Close'].ewm(span=aSlowMA, adjust=False).mean()
+        df['FastEMA'] = df['Close'].ewm(span=aFastMA, adjust=False).mean()
+        df['SlowEMA'] = df['Close'].ewm(span=aSlowMA, adjust=False).mean()
+        df['SMA50']  = df['Close'].rolling(50).mean()
+        df['SMA200'] = df['Close'].rolling(200).mean()
 
 # %%
 def changepos(dfPos, curr, order, buy=True):
@@ -366,7 +371,9 @@ def trader():
     listPosition1 = dfPositions[dfPositions.position == 1].Currency
     listPosition0 = dfPositions[dfPositions.position == 0].Currency
 
+    # ------------------------------------------------------------
     # check open positions and SELL if conditions are fulfilled 
+    # ------------------------------------------------------------
     for coinPair in listPosition1:
         # sendTelegramMessage("",coinPair) 
         df = getdata(coinPair, gTimeFrameNum, gtimeframeTypeShort)
@@ -377,7 +384,7 @@ def trader():
             continue
 
         applytechnicals(df, gFastMA, gSlowMA)
-        lastrow = df.iloc[-1]
+        # lastrow = df.iloc[-1]
 
         # separate coin from stable. example coinPair=BTCUSDT coinOnly=BTC coinStable=USDT 
         coinOnly = coinPair[:-4]
@@ -385,7 +392,8 @@ def trader():
         coinStable = coinPair[-4:]
         # print('coinStable=',coinStable)
 
-        if lastrow.SlowMA > lastrow.FastMA:
+        # if lastrow.SlowMA > lastrow.FastMA:
+        if crossover(df.SlowEMA, df.FastEMA): 
             # sendTelegramMessage("",client.SIDE_SELL+" "+coinPair)
             # print('coinStable=',coinStable) 
             # was not selling because the buy order amount is <> from the balance => fees were applied and we get less than the buy order
@@ -471,7 +479,9 @@ def trader():
             print(f'{coinPair} - {gStrategyName} - Sell condition not fulfilled')
             sendTelegramMessage("",f'{coinPair} - {gStrategyName} - Sell condition not fulfilled')
 
+    # ------------------------------------------------------------------
     # check coins not in positions and BUY if conditions are fulfilled
+    # ------------------------------------------------------------------
     for coinPair in listPosition0:
         # sendTelegramMessage("",coinPair) 
         df = getdata(coinPair, gTimeFrameNum, gtimeframeTypeShort)
@@ -489,9 +499,12 @@ def trader():
         # print('coinOnly=',coinOnly)
         coinStable = coinPair[-4:]
         # print('coinStable=',coinStable)
+
+        accumulationPhase = (lastrow.Close > lastrow.SMA50) and (lastrow.Close > lastrow.SMA200) and (lastrow.SMA50 < lastrow.SMA200)
+        bullishPhase = (lastrow.Close > lastrow.SMA50) and (lastrow.Close > lastrow.SMA200) and (lastrow.SMA50 > lastrow.SMA200)
         
-        # if (lastrow.Close > lastrow.FastMA) and (lastrow.FastMA > lastrow.SlowMA):
-        if lastrow.FastMA > lastrow.SlowMA:
+        # if lastrow.FastMA > lastrow.SlowMA:
+        if (accumulationPhase or bullishPhase) and crossover(df.FastEMA, df.SlowEMA):
             positionSize = calcPositionSize(pStablecoin=coinStable)
             # sendTelegramMessage("", "calc position size 5")
             # print("positionSize: ", positionSize)
