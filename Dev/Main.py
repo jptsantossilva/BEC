@@ -264,7 +264,9 @@ def getdata(coinPair, aTimeframeNum, aTimeframeTypeShort, aFastMA=0, aSlowMA=0):
     frame.Time = pd.to_datetime(frame.Time, unit='ms')
     return frame
 
-# %%
+#-----------------------------------------------------------------------
+# calculates moving averages 
+#-----------------------------------------------------------------------
 def applytechnicals(df, aFastMA, aSlowMA):
     
     if aFastMA > 0: 
@@ -272,19 +274,33 @@ def applytechnicals(df, aFastMA, aSlowMA):
         df['SlowEMA'] = df['Close'].ewm(span=aSlowMA, adjust=False).mean()
         df['SMA50']  = df['Close'].rolling(50).mean()
         df['SMA200'] = df['Close'].rolling(200).mean()
+#-----------------------------------------------------------------------
 
-# %%
-def changepos(dfPos, curr, order, buy=True):
-    # sendTelegramMessage("", "change pos")
+#-----------------------------------------------------------------------
+# Update positions files 
+#-----------------------------------------------------------------------
+def changepos(dfPos, curr, order, typePos, buyPrice=0, currentPrice=0):
 
-    if buy:
+    # type = buy, sell or updatePnL
+
+    if typePos == "buy":
         dfPos.loc[dfPos['Currency'] == curr, 'position'] = 1
         dfPos.loc[dfPos['Currency'] == curr, 'quantity'] = float(order['executedQty'])
-    else:
+        dfPos.loc[dfPos['Currency'] == curr, 'buyPrice'] = float(order['buyPrice'])
+    elif typePos == "sell":
         dfPos.loc[dfPos['Currency'] == curr, 'position'] = 0
         dfPos.loc[dfPos['Currency'] == curr, 'quantity'] = 0
+    elif typePos == "updatePnL":
+        pos = dfPos.loc[dfPos['Currency'] == curr]
+        if len(pos) > 0:
+            lBuyPrice = pos['buyPrice'].values[0]
+            if not math.isnan(lBuyPrice) and (lBuyPrice > 0):
+                PnLperc = ((currentPrice-lBuyPrice)/lBuyPrice)*100
+                PnLperc = round(PnLperc, 2)
+                dfPos.loc[dfPos['Currency'] == curr, ['currentPrice','PnLperc']] = [currentPrice,PnLperc]
 
     dfPos.to_csv('positions'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv', index=False)
+#-----------------------------------------------------------------------
 
 def removeCoinsPosition():
     # remove coin pairs from position file not in accumulation or bullish phase -> coinpairByMarketPhase_BUSD_1d.csv
@@ -364,11 +380,12 @@ def trader():
     # remove coin pairs from position file not in accumulation or bullish phase -> coinpairByMarketPhase_BUSD_1d.csv
     removeCoinsPosition()
 
-    # sendTelegramMessage("", "trader")
+    # read position, orders and bestEma files
     readCSVfiles()
 
-
+    # list of coins in position - SELL
     listPosition1 = dfPositions[dfPositions.position == 1].Currency
+    # list of coins in position - BUY
     listPosition0 = dfPositions[dfPositions.position == 0].Currency
 
     # ------------------------------------------------------------
@@ -388,36 +405,21 @@ def trader():
 
         # separate coin from stable. example coinPair=BTCUSDT coinOnly=BTC coinStable=USDT 
         coinOnly = coinPair[:-4]
-        # print('coinOnly=',coinOnly)
         coinStable = coinPair[-4:]
-        # print('coinStable=',coinStable)
 
         # if lastrow.SlowMA > lastrow.FastMA:
         if crossover(df.SlowEMA, df.FastEMA): 
-            # sendTelegramMessage("",client.SIDE_SELL+" "+coinPair)
-            # print('coinStable=',coinStable) 
-            # was not selling because the buy order amount is <> from the balance => fees were applied and we get less than the buy order
-            # thats why we need to get the current balance 
-            # sendTelegramMessage("",client.SIDE_SELL+" coinOnly:"+coinOnly) 
-            # balanceQty = client.get_asset_balance(asset=coinOnly)['free']
             try:
                 balanceQty = float(client.get_asset_balance(asset=coinOnly)['free'])  
             except BinanceAPIException as ea:
                 sendTelegramMessage(eWarning, ea)
 
-            # sendTelegramMessage("",client.SIDE_SELL+" "+coinPair+" balanceQty:"+str(balanceQty))
-
-            # print("balanceQty: ",balanceQty)
             buyOrderQty = float(dfPositions[dfPositions.Currency == coinPair].quantity.values[0])
-            # sendTelegramMessage("",client.SIDE_SELL+" "+coinPair+" buyOrderQty:"+str(buyOrderQty))
-            # print("buyOrderQty: ",buyOrderQty)
             sellQty = buyOrderQty
-            # sendTelegramMessage("",client.SIDE_SELL+" "+coinPair+" sellQty: "+str(sellQty))
             if balanceQty < buyOrderQty:
                 sellQty = balanceQty
-                # sendTelegramMessage("",client.SIDE_SELL+" "+coinPair+" sellQty:"+str(sellQty))
             sellQty = adjustSize(coinPair, sellQty)
-            # sendTelegramMessage("",client.SIDE_SELL+" "+coinPair+" sellQty="+str(sellQty))
+
             if sellQty > 0: 
                 
                 try:        
@@ -425,16 +427,16 @@ def trader():
                         order = client.create_order(symbol=coinPair,
                                                 side=client.SIDE_SELL,
                                                 type=client.ORDER_TYPE_MARKET,
-                                                # quantity = posframe[posframe.Currency == coinPair].quantity.values[0]
                                                 quantity = sellQty
                                                 )
                         
                         fills = order['fills']
                         avg_price = sum([float(f['price']) * (float(f['qty']) / float(order['executedQty'])) for f in fills])
                         avg_price = round(avg_price,8)
-                        # print('avg_price=',avg_price)
 
-                        changepos(dfPositions, coinPair,order,buy=False)
+                        # update position file with the sell order
+                        # changepos(dfPositions, coinPair,'',buy=False)
+                        changepos(dfPositions, coinPair, '', typePos="sell")
 
                 except BinanceAPIException as ea:
                     sendTelegramMessage(eWarning, ea)
@@ -474,10 +476,20 @@ def trader():
                                     )
             else:
                 if runMode == "prod":
-                    changepos(dfPositions, coinPair,'',buy=False)
+                    # if there is no qty on balance to sell we set the qty on positions file to zero
+                    # this can happen if we sell on the exchange (for example, due to a pump) before the bot sells it. 
+                    # changepos(dfPositions, coinPair,'',buy=False)
+                    changepos(dfPositions, coinPair, '', typePos="sell")
         else:
             print(f'{coinPair} - {gStrategyName} - Sell condition not fulfilled')
             sendTelegramMessage("",f'{coinPair} - {gStrategyName} - Sell condition not fulfilled')
+            
+            # set current PnL
+            lastrow = df.iloc[-1]
+            currentPrice = lastrow.Close
+            # changepos(dfPositions, coinPair,'',buy=False)
+            changepos(dfPositions, coinPair, '', typePos="updatePnL", currentPrice=currentPrice)
+
 
     # ------------------------------------------------------------------
     # check coins not in positions and BUY if conditions are fulfilled
@@ -523,7 +535,10 @@ def trader():
                         avg_price = round(avg_price,8)
                         # print('avg_price=',avg_price)
 
-                        changepos(dfPositions, coinPair,order,buy=True)
+                        # update positions file with the buy order
+                        # changepos(dfPositions, coinPair,order,buy=True,buyPrice=avg_price)
+                        changepos(dfPositions, coinPair, order, typePos="buy", buyPrice=avg_price)
+
                 except BinanceAPIException as ea:
                     sendTelegramMessage(eWarning, ea)
                 except BinanceOrderException as eo:

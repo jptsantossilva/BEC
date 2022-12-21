@@ -1,4 +1,4 @@
-Currency,position,quantity
+Currency,position,quantity,buyPrice,currentPrice,PnLperc
 BNXBUSD,1,0.846
 INJBUSD,1,81.3
 MASKBUSD,1,38.0

@@ -1,4 +1,4 @@
-Currency,position,quantity
+Currency,position,quantity,buyPrice,currentPrice,PnLperc
 BNXBUSD,1,0.852
 BTCBUSD,1,0.00746
 CHZBUSD,1,671.0
