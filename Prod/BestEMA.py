@@ -26,8 +26,8 @@ client = Client(api_key, api_secret)
 # backtest with 4 years of price data 
 #-------------------------------------
 today = date.today() 
-# today - 6 years - 200 days
-pastdate = today - relativedelta(years=6) - relativedelta(days=200)
+# today - 4 years - 200 days
+pastdate = today - relativedelta(years=4) - relativedelta(days=200)
 # print(pastdate)
 tuple = pastdate.timetuple()
 timestamp = time.mktime(tuple)

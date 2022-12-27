@@ -117,7 +117,10 @@ def main():
                 #add line
                 positionsfile.loc[len(positionsfile.index)] = [coinPair 
                                                                 ,position
-                                                                ,0 #qty
+                                                                ,0 # qty
+                                                                ,0 # buyPrice
+                                                                ,0 # currentPrice
+                                                                ,0 # PnLperc
                                                                 ]
             
                 positionsfile.to_csv('positions'+tf+'.csv', index=False)

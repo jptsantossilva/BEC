@@ -286,7 +286,7 @@ def changepos(dfPos, curr, order, typePos, buyPrice=0, currentPrice=0):
     if typePos == "buy":
         dfPos.loc[dfPos['Currency'] == curr, 'position'] = 1
         dfPos.loc[dfPos['Currency'] == curr, 'quantity'] = float(order['executedQty'])
-        dfPos.loc[dfPos['Currency'] == curr, 'buyPrice'] = float(order['buyPrice'])
+        dfPos.loc[dfPos['Currency'] == curr, 'buyPrice'] = float(buyPrice)
     elif typePos == "sell":
         dfPos.loc[dfPos['Currency'] == curr, 'position'] = 0
         dfPos.loc[dfPos['Currency'] == curr, 'quantity'] = 0

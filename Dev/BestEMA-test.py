@@ -202,7 +202,7 @@ def addcoinpair(coinPair, lTimeframe):
 
 
 # %%
-addcoinpair("ETHUSDT", "1d")
+addcoinpair("FETBUSD", "1h")
 
 
 
