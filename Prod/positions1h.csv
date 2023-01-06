@@ -1,12 +1,1 @@
-Currency,position,quantity
-ANTBUSD,0,0.0
-BANDBUSD,1,10.2
-CTXCBUSD,1,123.0
-DEGOBUSD,1,11.06
-EURBUSD,1,121.6
-FXSBUSD,0,0.0
-GBPBUSD,1,99.7
-LTCBUSD,0,0.0
-TVKBUSD,1,0.0
-TWTBUSD,0,0.0
-XMRBUSD,1,0.0
+Currency,position,quantity,buyPrice,currentPrice,PnLperc
