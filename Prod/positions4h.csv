@@ -1,13 +1,1 @@
-Currency,position,quantity
-ANTBUSD,0,0.0
-BANDBUSD,0,0.0
-CTXCBUSD,1,0.0
-DEGOBUSD,1,11.04
-DOGEBUSD,1,1296.0
-FXSBUSD,1,3.4
-LTCBUSD,0,0.0
-MATICBUSD,1,92.6
-PAXGBUSD,1,0.0802
-TVKBUSD,1,0.0
-TWTBUSD,0,0.0
-XMRBUSD,1,0.0
+Currency,position,quantity,buyPrice,currentPrice,PnLperc
