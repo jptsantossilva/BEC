@@ -133,25 +133,45 @@ def readCSVfiles():
 
 # %%
 def sendTelegramMessage(emoji, msg):
+
     if not emoji:
         lmsg = msg
     else:
         lmsg = emoji+" "+msg
-    url = f"https://api.telegram.org/bot{telegramToken}/sendMessage?chat_id={telegram_chat_id}&text={lmsg}"
-    requests.get(url).json() # this sends the message
+
+    # To fix the issues with dataframes alignments, the message is sent as HTML and wraped with <pre> tag
+    # Text in a <pre> element is displayed in a fixed-width font, and the text preserves both spaces and line breaks
+    lmsg = "<pre>"+lmsg+"</pre>"
+
+    params = {
+    "chat_id": telegram_chat_id,
+    "text": lmsg,
+    "parse_mode": "HTML",
+    }
+    
+    resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegramToken), params=params).json()
+
 
 def sendTelegramAlert(emoji, date, coin, timeframe, strategy, ordertype, unitValue, amount, USDValue, pnlPerc = '', pnlUSD = ''):
     lmsg = emoji + " " + str(date) + "\n" + coin + "\n" + strategy + "\n" + timeframe + "\n" + ordertype + "\n" + "UnitPrice: " + str(unitValue) + "\n" + "Qty: " + str(amount)+ "\n" + "USD: " + str(USDValue)
     if pnlPerc != '':
         lmsg = lmsg + "\n"+"PnL%: "+str(round(float(pnlPerc),2)) + "\n"+"PnL USD: "+str(round(float(pnlUSD),2))
+
+    # To fix the issues with dataframes alignments, the message is sent as HTML and wraped with <pre> tag
+    # Text in a <pre> element is displayed in a fixed-width font, and the text preserves both spaces and line breaks
+    lmsg = "<pre>"+lmsg+"</pre>"
+
+    params = {
+    "chat_id": telegram_chat_id,
+    "text": lmsg,
+    "parse_mode": "HTML",
+    }
     
-    url = f"https://api.telegram.org/bot{telegramToken}/sendMessage?chat_id={telegram_chat_id}&text={lmsg}"
-    requests.get(url).json() # this sends the message
+    resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegramToken), params=params).json()
 
     # if is a closed position send also to telegram of closed positions
     if emoji in [eTradeWithProfit, eTradeWithLoss]:
-        url = f"https://api.telegram.org/bot{telegramToken_ClosedPosition}/sendMessage?chat_id={telegram_chat_id}&text={lmsg}"
-        requests.get(url).json() # this sends the message
+        resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegramToken_ClosedPosition), params=params).json()
 
 def sendTelegramPhoto(photoName='balance.png'):
     # get current dir
@@ -284,12 +304,9 @@ def changepos(dfPos, curr, order, typePos, buyPrice=0, currentPrice=0):
     # type = buy, sell or updatePnL
 
     if typePos == "buy":
-        dfPos.loc[dfPos['Currency'] == curr, 'position'] = 1
-        dfPos.loc[dfPos['Currency'] == curr, 'quantity'] = float(order['executedQty'])
-        dfPos.loc[dfPos['Currency'] == curr, 'buyPrice'] = float(buyPrice)
+        dfPos.loc[dfPos['Currency'] == curr, ['position','quantity','buyPrice']] = [1,float(order['executedQty']),float(buyPrice)]
     elif typePos == "sell":
-        dfPos.loc[dfPos['Currency'] == curr, 'position'] = 0
-        dfPos.loc[dfPos['Currency'] == curr, 'quantity'] = 0
+        dfPos.loc[dfPos['Currency'] == curr, ['position','quantity','buyPrice','currentPrice','PnLperc']] = [0,0,0,0,0]
     elif typePos == "updatePnL":
         pos = dfPos.loc[dfPos['Currency'] == curr]
         if len(pos) > 0:

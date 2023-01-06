@@ -13,12 +13,13 @@ import sys
 from datetime import date, timedelta
 from dateutil.relativedelta import relativedelta
 import time
+from binance.exceptions import BinanceAPIException
+import requests
 
 # %%
 # Binance API
 api_key = os.environ.get('binance_api')
 api_secret = os.environ.get('binance_secret')
-
 
 # %%
 client = Client(api_key, api_secret)
@@ -40,7 +41,24 @@ startdate = str(timestamp)
 #-------------------------------------
 timeframe = ""
 
+# telegram
+telegramToken_errors = os.environ.get('telegramToken_errors')
+telegram_chat_id = os.environ.get('telegram_chat_id')
+
 # %%
+def sendTelegramMessage(msg):
+    
+    # To fix the issues with dataframes alignments, the message is sent as HTML and wraped with <pre> tag
+    # Text in a <pre> element is displayed in a fixed-width font, and the text preserves both spaces and line breaks
+    lmsg = "<pre>"+msg+"</pre>"
+
+    params = {
+    "chat_id": telegram_chat_id,
+    "text": lmsg,
+    "parse_mode": "HTML",
+    }
+    
+    resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegramToken_errors), params=params).json()
 
 def EMA(values, n):
     """
@@ -117,8 +135,58 @@ def getdata(pSymbol, pTimeframe):
 # %%
 def runBackTest(coinPair):
 
+    coinOnly = coinPair[:-4]
+    coinStable = coinPair[-4:]
+
     # print("coinPair = ",coinPair)
-    df = getdata(coinPair, timeframe)
+    # df = getdata(coinPair, timeframe)
+
+    # get historical data from BUSD and USDT and use the one with more data 
+    dfStable1 = pd.DataFrame()
+    dfStable2 = pd.DataFrame()
+
+    iniBUSD = 0
+    iniUSDT = 0
+    
+    try:
+        dfStableBUSD = getdata(coinOnly+"BUSD", timeframe)
+    except BinanceAPIException as e:
+        msg = "BinanceAPIException - " + str(e.status_code) + " - " + e.message+ " - " +coinOnly+"BUSD"
+        print(msg)
+        sendTelegramMessage(msg)
+    
+    if not dfStableBUSD.empty:
+        ini1 = dfStableBUSD.index[0]
+
+    try:
+        dfStableUSDT = getdata(coinOnly+"USDT", timeframe) 
+    except BinanceAPIException as e:
+        msg = "BinanceAPIException - " + str(e.status_code) + " - " + e.message + " - " +coinOnly+"USDT"
+        print(msg)
+        sendTelegramMessage(msg)
+
+    if not dfStableUSDT.empty:
+        ini2 = dfStableUSDT.index[0]
+
+    # get start date and use the older one
+    if dfStableBUSD.empty and dfStableUSDT.empty:
+        # print("Both wrong")
+        return
+    elif dfStableBUSD.empty and not dfStableUSDT.empty:
+        # print("choose ini2")
+        df = dfStableUSDT.copy()
+    elif not dfStableBUSD.empty and dfStableUSDT.empty:
+        # print("choose ini1")
+        df = dfStableBUSD.copy()
+    elif ini1 > ini2:
+        # USDT has more history
+        print("USDT pair has more history data")
+        df = dfStableUSDT.copy()
+    else:
+        # BUSD has more history
+        print("BUSD pair has more history data")
+        df = dfStableBUSD.copy()
+
     # df = df.drop(['Time'], axis=1)
     # print(df)
 

@@ -131,9 +131,18 @@ for coinPair in coinPairs:
     # print(dfResult)
 
 def sendTelegramMessage(msg):
-    lmsg = msg
-    url = f"https://api.telegram.org/bot{telegramToken_MarketPhases}/sendMessage?chat_id={telegram_chat_id}&text={lmsg}"
-    requests.get(url).json() # this sends the message
+    
+    # To fix the issues with dataframes alignments, the message is sent as HTML and wraped with <pre> tag
+    # Text in a <pre> element is displayed in a fixed-width font, and the text preserves both spaces and line breaks
+    lmsg = "<pre>"+msg+"</pre>"
+
+    params = {
+    "chat_id": telegram_chat_id,
+    "text": lmsg,
+    "parse_mode": "HTML",
+    }
+    
+    resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegramToken_MarketPhases), params=params).json()
 
 
 

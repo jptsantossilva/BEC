@@ -44,13 +44,13 @@ def getdata(coinPair, aTimeframeNum, aTimeframeTypeShort, aSlowSMA=200):
     return frame
 
 # %%
-def applytechnicals(df, aFastMA, aSlowMA):
+# def applytechnicals(df, aFastMA, aSlowMA):
     
-    if aFastMA > 0: 
-        df['FastEMA'] = df['Close'].ewm(span=aFastMA, adjust=False).mean()
-        df['SlowEMA'] = df['Close'].ewm(span=aSlowMA, adjust=False).mean()
-        df['SMA50']  = df['Close'].rolling(50).mean()
-        df['SMA200'] = df['Close'].rolling(200).mean()
+#     if aFastMA > 0: 
+#         df['FastEMA'] = df['Close'].ewm(span=aFastMA, adjust=False).mean()
+#         df['SlowEMA'] = df['Close'].ewm(span=aSlowMA, adjust=False).mean()
+#         df['SMA50']  = df['Close'].rolling(50).mean()
+#         df['SMA200'] = df['Close'].rolling(200).mean()
 
 def main():
 
@@ -95,24 +95,32 @@ def main():
             if not linha:
                 # print("There is no line in positions"+tf+" file with coinPair "+str(coinPair)+ " and timeframe "+tf+". New line will be added.")
                 
-                # check position value.
-                # position = 1 if fastEMA > slowEMA
-                # position = 0 if slowEMA > fastEMA
-                timeframeNum = int(tf[0])
-                timeframeType = str(tf[1])
+                # ------------------------------------
+                # Code below was used when condition FastEMA>SlowEMA, but since we are now using crossover, 
+                # this issues does not exist anymore, and so there is no need to calculate fast and slow ema position 
+                # to check value for position, 1 or 0.  
+                # ------------------------------------
+                ## check position value.
+                ## position = 1 if fastEMA > slowEMA
+                ## position = 0 if slowEMA > fastEMA
+                # timeframeNum = int(tf[0])
+                # timeframeType = str(tf[1])
 
-                df = getdata(coinPair, timeframeNum, timeframeType)
-                applytechnicals(df, fastEMA, slowEMA)
-                # print(df)
-                lastrow = df.iloc[-1]
+                # df = getdata(coinPair, timeframeNum, timeframeType)
+                # applytechnicals(df, fastEMA, slowEMA)
+                # # print(df)
+                # lastrow = df.iloc[-1]
 
-                accumulationPhase = (lastrow.Close > lastrow.SMA50) and (lastrow.Close > lastrow.SMA200) and (lastrow.SMA50 < lastrow.SMA200)
-                bullishPhase = (lastrow.Close > lastrow.SMA50) and (lastrow.Close > lastrow.SMA200) and (lastrow.SMA50 > lastrow.SMA200)
+                # accumulationPhase = (lastrow.Close > lastrow.SMA50) and (lastrow.Close > lastrow.SMA200) and (lastrow.SMA50 < lastrow.SMA200)
+                # bullishPhase = (lastrow.Close > lastrow.SMA50) and (lastrow.Close > lastrow.SMA200) and (lastrow.SMA50 > lastrow.SMA200)
 
-                if (accumulationPhase or bullishPhase) and (lastrow.FastEMA > lastrow.SlowEMA):
-                    position = 1
-                else:
-                    position = 0
+                # if (accumulationPhase or bullishPhase) and (lastrow.FastEMA > lastrow.SlowEMA):
+                #     position = 1
+                # else:
+                #     position = 0
+                # ------------------------------------
+
+                position = 0
 
                 #add line
                 positionsfile.loc[len(positionsfile.index)] = [coinPair 
