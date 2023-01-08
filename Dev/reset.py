@@ -1,7 +1,6 @@
 
 import pandas as pd
 
-
 # reset csv files
 
 #orders
@@ -24,4 +23,13 @@ dfPositions.to_csv('positions1h.csv', index=False)
 dfAddCoinPair = pd.read_csv('addcoinpair.csv', nrows=0)
 dfAddCoinPair.to_csv('addcoinpair.csv', index=False)
 
-# run coinpairByMarketPhase.py 1d BUSD
+# coinpairBestEma - best ema values
+dfAddCoinPair = pd.read_csv('coinpairBestEma.csv', nrows=0)
+dfAddCoinPair.to_csv('coinpairBestEma.csv', index=False)
+
+# blacklist - coins not to trade
+dfBlacklist = pd.read_csv('blacklist.csv', nrows=0)
+dfBlacklist.to_csv('blacklist.csv', index=False)
+
+# run in terminal
+# python3 coinpairByMarketPhase.py 1d BUSD
