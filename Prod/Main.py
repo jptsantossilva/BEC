@@ -10,7 +10,6 @@ for each coin pair on 1d,4h,1h time frame and save on positions files
 
 import os
 import re
-#from turtle import left
 from xml.dom import ValidationErr
 import pandas as pd
 from binance.client import Client
@@ -533,7 +532,7 @@ def trader():
         bullishPhase = (lastrow.Close > lastrow.SMA50) and (lastrow.Close > lastrow.SMA200) and (lastrow.SMA50 > lastrow.SMA200)
         
         # if lastrow.FastMA > lastrow.SlowMA:
-        if ((accumulationPhase or bullishPhase) and crossover(df.FastEMA, df.SlowEMA)):
+        if (accumulationPhase or bullishPhase) and crossover(df.FastEMA, df.SlowEMA):
             positionSize = calcPositionSize(pStablecoin=coinStable)
             # sendTelegramMessage("", "calc position size 5")
             # print("positionSize: ", positionSize)
