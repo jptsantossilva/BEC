@@ -142,8 +142,8 @@ def runBackTest(coinPair):
     # df = getdata(coinPair, timeframe)
 
     # get historical data from BUSD and USDT and use the one with more data 
-    dfStable1 = pd.DataFrame()
-    dfStable2 = pd.DataFrame()
+    dfStableBUSD = pd.DataFrame()
+    dfStableUSDT = pd.DataFrame()
 
     iniBUSD = 0
     iniUSDT = 0
@@ -153,7 +153,8 @@ def runBackTest(coinPair):
     except BinanceAPIException as e:
         msg = "BinanceAPIException - " + str(e.status_code) + " - " + e.message+ " - " +coinOnly+"BUSD"
         print(msg)
-        sendTelegramMessage(msg)
+        if e.status_code != 400: # ignore message of invalid symbol. Occurs when symbol does not have BUSD pair
+            sendTelegramMessage(msg)
     
     if not dfStableBUSD.empty:
         ini1 = dfStableBUSD.index[0]
@@ -163,7 +164,8 @@ def runBackTest(coinPair):
     except BinanceAPIException as e:
         msg = "BinanceAPIException - " + str(e.status_code) + " - " + e.message + " - " +coinOnly+"USDT"
         print(msg)
-        sendTelegramMessage(msg)
+        if e.status_code != 400: # ignore message of invalid symbol. Occurs when symbol does not have USDT pair
+            sendTelegramMessage(msg)
 
     if not dfStableUSDT.empty:
         ini2 = dfStableUSDT.index[0]
