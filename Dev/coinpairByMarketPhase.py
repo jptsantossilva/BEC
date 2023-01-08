@@ -52,10 +52,11 @@ if timeframe == "1d": startdate = "200 day ago UTC"
 elif timeframe == "8h": startdate = str(8*200)+" hour ago UTC"
 elif timeframe == "4h": startdate = str(4*200)+" hour ago UTC"
 
-# %%
-tickers = client.get_ticker()
-dfTickers = pd.DataFrame(tickers)
-# dfTickers
+# read coins in blacklist to not trade
+dfBlacklist = pd.read_csv('blacklist.csv')
+dfBlacklist['Currency'] = dfBlacklist['Currency'].astype(str)+stablecoin
+# put the blacklist in a set
+blacklist = set(dfBlacklist["Currency"].unique())
 
 # %%
 exchange_info = client.get_exchange_info()
@@ -70,12 +71,12 @@ for s in exchange_info['symbols']:
         and not(s['symbol'] == "GBP"+stablecoin) # British pound
         and s['status'] == 'TRADING'):
             coinPairs.add(s['symbol'])
-# print(usdt)
+
+# from the coinPairs to trade, exclude coins from Blacklist
+coinPairs -= blacklist
+
 coinPairs = sorted(coinPairs)
 print(str(len(coinPairs))+" coins found")
-
-# %%
-# exchange_info['symbols']
 
 # %%
 def SMA(values, n):
@@ -249,18 +250,6 @@ else:
 # dfBearish = dfResult.query("MarketPhase == 'bearish'")
 # print("\nCoins in Bearish Market Phase")
 # print(dfBearish)
-
-# # get yesterday results and merge 
-# # Yesterday date
-# yesterdayDate = date.today() - timedelta(days = 1)
-# # print("Yesterday was: ", yesterday.strftime('%Y%m%d'))
-# yesterdayDate = yesterdayDate.strftime('%Y%m%d')
-# dfResultYesterday = pd.read_csv("coinListByMarketPhases_"+stablecoin+"_"+timeframe+"_"+yesterdayDate)
-# # filter by accumulation and bullish
-# dfYesterdayAccumulation = dfResultYesterday.query("MarketPhase == 'accumulation'")
-# dfYesterdayBullish = dfResultYesterday.query("MarketPhase == 'bullish'")
-
-# pd.merge(dfBullish, dfYesterdayBullish, on="Coinpair", how="outer", indicator=True)
 
 stop = timeit.default_timer()
 print("END")
