@@ -4,6 +4,10 @@ EMA-Cross fully automatic trading bot for Binance Spot with Telegram integration
 ## Installation
 [Installation instructions](https://docs.google.com/document/d/1ERtxjcdrznMWXragmBh5ZimIn6_PGn2sde0j_x4CktA/edit?usp=sharing)
 
+## Backtest results
+Check [here](https://github.com/jptsantossilva/Binance-Trading-bot-EMA-Cross/blob/main/Prod/coinpairBestEma%20Full%20List.csv) the returns in % using last 4 years of backtest data. Results from 9th january 2023.
+
+
 
 ## Features
 - Runs 1D, 4H and 1H timeframes independently.
