@@ -116,11 +116,11 @@ stake_amount_type = "unlimited"
 
 # tradable percentage of the balance
 # for example: if you want to run 3 bot instances (1h, 4h and 1D), you can set the percentage of the total balance to be allocated to each of the bots.
-tradable_balance_ratio = 0.33 # 33%
+tradable_balance_ratio = 1 # 1=100% ; 0.5=50%
 
 # max number of open trades
 # if tradable balance = 1000 and max_open_positions = 10, the stake_amount = 1000/10 = 100 
-max_open_positions = 10
+max_open_positions = 34
 
 # minimum position size in usd
 minPositionSize = float("20.0") 
@@ -213,20 +213,30 @@ def send_telegram_photo(photoName='balance.png'):
 
 def get_num_open_positions():
     try:
-        df_open_positions = pd.read_csv('positions'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv')
-        df_open_positions = df_open_positions[df_open_positions.position == 1].Currency
-        return len(df_open_positions)
+        # df_open_positions_1h = pd.read_csv('positions'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv')
+        df_open_positions_1h = pd.read_csv('positions1h.csv')
+        df_open_positions_1h = df_open_positions_1h[df_open_positions_1h.position == 1].Currency
+
+        df_open_positions_4h = pd.read_csv('positions4h.csv')
+        df_open_positions_4h = df_open_positions_4h[df_open_positions_4h.position == 1].Currency
+
+        df_open_positions_1d = pd.read_csv('positions1d.csv')
+        df_open_positions_1d = df_open_positions_1d[df_open_positions_1d.position == 1].Currency
+
+        total_open_positions = len(df_open_positions_1h) +len(df_open_positions_4h) +len(df_open_positions_1d)
+        return total_open_positions
 
     except Exception as e:
         msg = "get_num_open_positions - There was an error: "
         print(msg, e)
-        send_telegram_message(eWarning, msg+e)
+        send_telegram_message(eWarning, msg+str(e))
         return -1
     
 def calc_stake_amount(coin = 'BUSD'):
     if stake_amount_type == "unlimited":
         num_open_positions = get_num_open_positions()
 
+        # if error occurred
         if num_open_positions == -1:
             return 0
         if num_open_positions >= max_open_positions:
@@ -237,11 +247,11 @@ def calc_stake_amount(coin = 'BUSD'):
         except BinanceAPIException as e:
             msg = "calc_stake_amount - There was an error: "
             print(msg, e)
-            send_telegram_message(eWarning, msg+e)
+            send_telegram_message(eWarning, msg+str(e))
         except Exception as e:
             msg = "calc_stake_amount - There was an error: "
             print(msg, e)
-            send_telegram_message(eWarning, msg+e)
+            send_telegram_message(eWarning, msg+str(e))
     
         tradable_balance = balance*tradable_balance_ratio 
         stake_amount = int(tradable_balance/(max_open_positions-num_open_positions))
@@ -340,9 +350,9 @@ def get_data(coinPair, aTimeframeNum, aTimeframeTypeShort, aFastMA=0, aSlowMA=0)
         frame.Time = pd.to_datetime(frame.Time, unit='ms')
         return frame
     except Exception as e:
-        msg = "getdata - There was an error: "
+        msg = f"getdata - {coinPair} -  There was an error: "
         print(msg, e)
-        send_telegram_message(eWarning, msg+e)
+        send_telegram_message(eWarning, msg+str(e))
         frame = pd.DataFrame()
         return frame 
 
@@ -385,7 +395,7 @@ def change_pos(dfPos, curr, order, typePos, buyPrice=0, currentPrice=0):
     except Exception as e:
         msg = "change_pos - There was an error: "
         print(msg, e)
-        send_telegram_message(eWarning, msg+e)
+        send_telegram_message(eWarning, msg+str(e))
         pass
 #-----------------------------------------------------------------------
 
@@ -467,7 +477,7 @@ def calc_pnl(symbol, sellprice: float, sellqty: float):
     except Exception as e:
         msg = "calc_pnl - There was an error: "
         print(msg, e)
-        send_telegram_message(eWarning, msg+e)
+        send_telegram_message(eWarning, msg+str(e))
         return []
 
 def get_open_positions(df):
@@ -477,7 +487,7 @@ def get_open_positions(df):
 
     except Exception as e:
         msg = "get_open_positions - There was an error: "
-        print(msg, e)
+        print(msg, str(e))
         # sendTelegramMessage(eWarning, msg+e)
         return -1
 
@@ -521,12 +531,12 @@ def trader():
             except BinanceAPIException as e:
                 msg = "balanceQty - There was an error: "
                 print(msg, e)
-                send_telegram_message(eWarning, msg+e)
+                send_telegram_message(eWarning, msg+str(e))
                 continue
             except Exception as e:
                 msg = "balanceQty - There was an error: "
                 print(msg, e)
-                send_telegram_message(eWarning, msg+e)
+                send_telegram_message(eWarning, msg+str(e))
                 continue            
 
             buyOrderQty = float(dfPositions[dfPositions.Currency == coinPair].quantity.values[0])
@@ -556,15 +566,15 @@ def trader():
                 except BinanceAPIException as e:
                     msg = "SELL create_order - There was an error: "
                     print(msg, e)
-                    send_telegram_message(eWarning, msg+e)
+                    send_telegram_message(eWarning, msg+str(e))
                 except BinanceOrderException as e:
                     msg = "SELL create_order - There was an error: "
                     print(msg, e)
-                    send_telegram_message(eWarning, msg+e)
+                    send_telegram_message(eWarning, msg+str(e))
                 except Exception as e:
                     msg = "SELL create_order - There was an error: "
                     print(msg, e)
-                    send_telegram_message(eWarning, msg+e)
+                    send_telegram_message(eWarning, msg+str(e))
 
                 #add new row to end of DataFrame
                 if runMode == "prod":
@@ -636,11 +646,15 @@ def trader():
         coinStable = coinPair[-4:]
         # print('coinStable=',coinStable)
 
-        accumulationPhase = (lastrow.Close > lastrow.SMA50) and (lastrow.Close > lastrow.SMA200) and (lastrow.SMA50 < lastrow.SMA200)
-        bullishPhase = (lastrow.Close > lastrow.SMA50) and (lastrow.Close > lastrow.SMA200) and (lastrow.SMA50 > lastrow.SMA200)
+        # since the coin pair by marketphase is already choosing the coins in bullish and accumulation phase on daily time frame 
+        # I think there is no need to verify if we are in those market phases in lower timeframes, 4h and 1h, otherwise we will loose some oportunities
+        # because the sma 50 and 200 is more lagging indicator than the ema
+        # accumulationPhase = (lastrow.Close > lastrow.SMA50) and (lastrow.Close > lastrow.SMA200) and (lastrow.SMA50 < lastrow.SMA200)
+        # bullishPhase = (lastrow.Close > lastrow.SMA50) and (lastrow.Close > lastrow.SMA200) and (lastrow.SMA50 > lastrow.SMA200)
         
-        # if lastrow.FastMA > lastrow.SlowMA:
-        if (accumulationPhase or bullishPhase) and crossover(df.FastEMA, df.SlowEMA):
+        # if (accumulationPhase or bullishPhase) and crossover(df.FastEMA, df.SlowEMA):
+
+        if crossover(df.FastEMA, df.SlowEMA):
             positionSize = calc_stake_amount(coin=coinStable)
             # sendTelegramMessage("", "calc position size 5")
             # print("positionSize: ", positionSize)
@@ -667,20 +681,20 @@ def trader():
                         except BinanceAPIException as e:
                             msg = "BUY create_order - There was an error: "
                             print(msg, e)
-                            send_telegram_message(eWarning, msg+e)
+                            send_telegram_message(eWarning, msg+str(e))
                         except BinanceOrderException as e:
                             msg = "BUY create_order - There was an error: "
                             print(msg, e)
-                            send_telegram_message(eWarning, msg+e)
+                            send_telegram_message(eWarning, msg+str(e))
                         except Exception as e:
                             msg = "BUY create_order - There was an error: "
                             print(msg, e)
-                            send_telegram_message(eWarning, msg+e)
+                            send_telegram_message(eWarning, msg+str(e))
 
-                except BinanceAPIException as ea:
-                    send_telegram_message(eWarning, ea)
-                except BinanceOrderException as eo:
-                    send_telegram_message(eWarning, eo)
+                except BinanceAPIException as e:
+                    send_telegram_message(eWarning, str(e))
+                except BinanceOrderException as e:
+                    send_telegram_message(eWarning, str(e))
                 
                 #add new row to end of DataFrame
                 if runMode == "prod":
@@ -702,7 +716,7 @@ def trader():
             
             elif positionSize == -2:
                 num_open_positions = get_num_open_positions()
-                send_telegram_message(eWarning,client.SIDE_BUY+" "+coinPair+" - Max open positions ("+str(num_open_positions)+") already occupied!")
+                send_telegram_message(eWarning,client.SIDE_BUY+" "+coinPair+" - Max open positions ("+str(num_open_positions)+"/"+str(max_open_positions)+") already occupied!")
             else:
                 send_telegram_message(eWarning,client.SIDE_BUY+" "+coinPair+" - Not enough "+coinStable+" funds!")
                 
@@ -725,7 +739,7 @@ def main():
     except Exception as e:
         msg = "Trader - There was an error: "
         print(msg, e)
-        send_telegram_message(eWarning, msg+e)
+        send_telegram_message(eWarning, msg+str(e))
         pass
 
 

@@ -77,7 +77,7 @@ def SMA(values, n):
 #-------------------------------------
 # we will use 2 exponencial moving averages:
 # BUY when fast ema > slow ema
-# Close position when slow ema > fast ema  
+# SELL when slow ema > fast ema  
 #-------------------------------------
 class EmaCross(Strategy):
     n1 = 7

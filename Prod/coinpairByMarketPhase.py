@@ -17,6 +17,7 @@ import numpy as np
 import sys
 import timeit
 import addCoinPair
+import utils
 
 # %%
 # %%
@@ -90,19 +91,27 @@ def applytechnicals(df):
 
 # %%
 def getdata(Symbol):
-    frame = pd.DataFrame(client.get_historical_klines(Symbol,
-                                                      timeframe,                                        
-                                                      startdate))
-    
-    frame = frame.iloc[:,[0,4]] # columns selection
-    frame.columns = ['Time','Close'] #rename columns
-    frame[['Close']] = frame[['Close']].astype(float) #cast to float
-    # frame.Time = pd.to_datetime(frame.Time, unit='ms') #make human readable timestamp
-    frame['Coinpair'] = Symbol
-    frame.index = [datetime.fromtimestamp(x/1000.0) for x in frame.Time]
-    
-    frame = frame[['Coinpair','Close']]
-    return frame
+    try:
+         
+        frame = pd.DataFrame(client.get_historical_klines(Symbol,
+                                                        timeframe,                                        
+                                                        startdate))
+        
+        frame = frame.iloc[:,[0,4]] # columns selection
+        frame.columns = ['Time','Close'] #rename columns
+        frame[['Close']] = frame[['Close']].astype(float) #cast to float
+        # frame.Time = pd.to_datetime(frame.Time, unit='ms') #make human readable timestamp
+        frame['Coinpair'] = Symbol
+        frame.index = [datetime.fromtimestamp(x/1000.0) for x in frame.Time]
+        
+        frame = frame[['Coinpair','Close']]
+        return frame
+    except Exception as e:
+        msg = "getdata - {Symbol} -  There was an error: "
+        print(msg, e)
+        utils.send_telegram_message(msg+str(e))
+        frame = pd.DataFrame()
+        return frame 
 
 # %%
 dfResult = pd.DataFrame()
@@ -131,20 +140,43 @@ for coinPair in coinPairs:
     
     # print(dfResult)
 
-def sendTelegramMessage(msg):
-    
-    # To fix the issues with dataframes alignments, the message is sent as HTML and wraped with <pre> tag
-    # Text in a <pre> element is displayed in a fixed-width font, and the text preserves both spaces and line breaks
-    lmsg = "<pre>"+msg+"</pre>"
+# def sendTelegramMessage(msg):
 
-    params = {
-    "chat_id": telegram_chat_id,
-    "text": lmsg,
-    "parse_mode": "HTML",
-    }
-    
-    resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegramToken_MarketPhases), params=params).json()
+#     max_limit = 4096
+#     additional_characters = "<pre> </pre>Part [10/99]"
+#     num_additional_characters = len(additional_characters)
+#     max_limit = 4096 - num_additional_characters 
 
+#     if len(msg+additional_characters) > max_limit:
+#         # Split the message into multiple parts
+#         message_parts = [msg[i:i+max_limit] for i in range(0, len(msg), max_limit)]
+#         n_parts = len(message_parts)
+#         for i, part in enumerate(message_parts):
+#             print(f'Part [{i+1}/{n_parts}]\n{part}')
+            
+#             lmsg = "<pre>Part ["+str(i+1)+"/"+str(n_parts)+"]\n"+part+"</pre>"
+#             params = {
+#             "chat_id": telegram_chat_id,
+#             "text": lmsg,
+#             "parse_mode": "HTML",
+#             }
+        
+#             resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegramToken_MarketPhases), params=params).json()
+            
+#     else:
+#         # Message is within the maximum limit
+        
+#         # To fix the issues with dataframes alignments, the message is sent as HTML and wraped with <pre> tag
+#         # Text in a <pre> element is displayed in a fixed-width font, and the text preserves both spaces and line breaks
+#         lmsg = "<pre>"+msg+"</pre>"
+
+#         params = {
+#         "chat_id": telegram_chat_id,
+#         "text": lmsg,
+#         "parse_mode": "HTML",
+#         }
+    
+#         resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegramToken_MarketPhases), params=params).json()
 
 
 # %%
@@ -171,8 +203,8 @@ dfAccumulation= dfResult.query("MarketPhase == 'accumulation'")
 dfUnion = pd.concat([dfBullish, dfAccumulation], ignore_index=True)
 dfUnion.to_csv("coinpairByMarketPhase_"+stablecoin+"_"+timeframe+".csv")
 
-sendTelegramMessage(dfBullish.to_string(index=False))
-sendTelegramMessage(dfAccumulation.to_string(index=False))
+utils.sendTelegramMessage(dfBullish.to_string(index=False))
+utils.sendTelegramMessage(dfAccumulation.to_string(index=False))
 
 positionsTimeframe = ["1d", "4h", "1h"]
 
