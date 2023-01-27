@@ -646,15 +646,15 @@ def trader():
         coinStable = coinPair[-4:]
         # print('coinStable=',coinStable)
 
+        # if we wanna be more agressive we can use the following approach:
         # since the coin pair by marketphase is already choosing the coins in bullish and accumulation phase on daily time frame 
-        # I think there is no need to verify if we are in those market phases in lower timeframes, 4h and 1h, otherwise we will loose some oportunities
-        # because the sma 50 and 200 is more lagging indicator than the ema
-        # accumulationPhase = (lastrow.Close > lastrow.SMA50) and (lastrow.Close > lastrow.SMA200) and (lastrow.SMA50 < lastrow.SMA200)
-        # bullishPhase = (lastrow.Close > lastrow.SMA50) and (lastrow.Close > lastrow.SMA200) and (lastrow.SMA50 > lastrow.SMA200)
+        # we can pass the verification of those market phases in lower timeframes, 4h and 1h, otherwise we will loose some oportunities
+        # to be more conservative = use the same approach as the backtesting and keep those market phase verification in lower timeframes
+        accumulationPhase = (lastrow.Close > lastrow.SMA50) and (lastrow.Close > lastrow.SMA200) and (lastrow.SMA50 < lastrow.SMA200)
+        bullishPhase = (lastrow.Close > lastrow.SMA50) and (lastrow.Close > lastrow.SMA200) and (lastrow.SMA50 > lastrow.SMA200)
         
-        # if (accumulationPhase or bullishPhase) and crossover(df.FastEMA, df.SlowEMA):
-
-        if crossover(df.FastEMA, df.SlowEMA):
+        if (accumulationPhase or bullishPhase) and crossover(df.FastEMA, df.SlowEMA):
+        # if crossover(df.FastEMA, df.SlowEMA):
             positionSize = calc_stake_amount(coin=coinStable)
             # sendTelegramMessage("", "calc position size 5")
             # print("positionSize: ", positionSize)
