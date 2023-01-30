@@ -137,8 +137,16 @@ def read_csv_files():
     global dfBestEMA
 
     # read positions
-    dfPositions = pd.read_csv('positions'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv')
-    # posframe
+    try:
+        filename = 'positions'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv'
+        dfPositions = pd.read_csv(filename)
+    except FileNotFoundError:
+        print("Error: The file "+filename+" could not be found.")
+    except PermissionError:
+        print("Error: You do not have permission to write to the file "+filename+".")
+    except Exception as e:
+        # Log the error message for debugging purposes
+        print(f'An unexpected error occurred: {str(e)}')
 
     # read orders csv
     # we just want the header, there is no need to get all the existing orders.

@@ -26,8 +26,13 @@ import numpy as np
 from numbers import Number
 from typing import Sequence
 from backtesting.lib import crossover
+import logging
 
-# %%
+
+# use log file to store error messages
+logging.basicConfig(filename='error.log', level=logging.ERROR,
+                    format='%(asctime)s %(message)s', datefmt='%Y/%m/%d %I:%M:%S %p')
+
 # environment variables
 try:
     # Binance
@@ -89,19 +94,6 @@ elif timeframe == "1d":
     gtimeframeTypeShort = "d" # h, d
     gtimeframeTypeLong = "day" # hour, day
 
-# try:
-#     if timeframe == "1h":
-#         telegram_chat_id = os.environ.get('telegram_chat_id_1h')
-#     elif timeframe == "4h":
-#         telegram_chat_id = os.environ.get('telegram_chat_id_4h')
-#     elif timeframe == "1d":
-#         telegram_chat_id = os.environ.get('telegram_chat_id_1d')
-
-#     telegram_chat_ClosedPositions = os.environ.get('telegram_chat_ClosedPositions')
-# except KeyError: 
-#     print("Environment variable does not exist - telegram_chat_id")
-
-
 # Telegram
 telegramToken = os.environ.get('telegramToken'+str(gTimeFrameNum)+gtimeframeTypeShort) 
 telegramToken_ClosedPosition = os.environ.get('telegramToken_ClosedPositions') 
@@ -116,37 +108,52 @@ stake_amount_type = "unlimited"
 
 # tradable percentage of the balance
 # for example: if you want to run 3 bot instances (1h, 4h and 1D), you can set the percentage of the total balance to be allocated to each of the bots.
-tradable_balance_ratio = 1 # 100%
+tradable_balance_ratio = 1 # 1=100% ; 0.5=50%
 
 # max number of open trades
 # if tradable balance = 1000 and max_open_positions = 10, the stake_amount = 1000/10 = 100 
-max_open_positions = 20
+max_open_positions = 34
 
 # minimum position size in usd
 minPositionSize = float("20.0") 
 
 # create empty dataframes
-dfPositions = pd.DataFrame()
-dfOrders = pd.DataFrame()
-dfBestEMA = pd.DataFrame()
+df_positions = pd.DataFrame()
+df_orders    = pd.DataFrame()
+df_best_ema  = pd.DataFrame()
 
 def read_csv_files():
 
-    global dfPositions
-    global dfOrders
-    global dfBestEMA
+    global df_positions
+    global df_orders
+    global df_best_ema
 
-    # read positions
-    dfPositions = pd.read_csv('positions'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv')
-    # posframe
+    
+    try:
+        # read positions
+        filename = 'positions'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv'
+        df_positions = pd.read_csv(filename)
 
-    # read orders csv
-    # we just want the header, there is no need to get all the existing orders.
-    # at the end we will append the orders to the csv
-    dfOrders = pd.read_csv('orders'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv', nrows=0)
+        # read orders csv
+        # we just want the header, there is no need to get all the existing orders.
+        # at the end we will append the orders to the csv
+        filename = 'orders'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv'
+        df_orders = pd.read_csv(filename, nrows=0)
 
-    # read best ema cross
-    dfBestEMA = pd.read_csv('coinpairBestEma.csv')
+        # read best ema cross
+        filename = 'coinpairBestEma.csv'
+        df_best_ema = pd.read_csv(filename)
+
+    except FileNotFoundError:
+        print("Error: The file "+filename+" could not be found.")
+        logging.exception("Error: The file "+filename+" could not be found.")
+    except PermissionError:
+        print("Error: You do not have permission to write to the file "+filename+".")
+        logging.exception("Error: You do not have permission to write to the file "+filename+".")
+    except Exception as e:
+        # Log the error message for debugging purposes
+        print(f'An unexpected error occurred: {str(e)}')
+        logging.exception("Error: You do not have permission to write to the file "+filename+".")
 
 
 # %%
@@ -319,7 +326,7 @@ def get_data(coinPair, aTimeframeNum, aTimeframeTypeShort, aFastMA=0, aSlowMA=0)
             gFastMA = aFastMA
             gSlowMA = aSlowMA
         else:
-            listEMAvalues = dfBestEMA[(dfBestEMA.coinPair == coinPair) & (dfBestEMA.timeFrame == lTimeFrame)]
+            listEMAvalues = df_best_ema[(df_best_ema.coinPair == coinPair) & (df_best_ema.timeFrame == lTimeFrame)]
 
             if not listEMAvalues.empty:
                 gFastMA = int(listEMAvalues.fastEMA.values[0])
@@ -501,9 +508,9 @@ def trader():
     read_csv_files()
 
     # list of coins in position - SELL
-    listPosition1 = dfPositions[dfPositions.position == 1].Currency
+    listPosition1 = df_positions[df_positions.position == 1].Currency
     # list of coins in position - BUY
-    listPosition0 = dfPositions[dfPositions.position == 0].Currency
+    listPosition0 = df_positions[df_positions.position == 0].Currency
 
     # ------------------------------------------------------------
     # check open positions and SELL if conditions are fulfilled 
@@ -539,7 +546,7 @@ def trader():
                 send_telegram_message(eWarning, msg+str(e))
                 continue            
 
-            buyOrderQty = float(dfPositions[dfPositions.Currency == coinPair].quantity.values[0])
+            buyOrderQty = float(df_positions[df_positions.Currency == coinPair].quantity.values[0])
             sellQty = buyOrderQty
             if balanceQty < buyOrderQty:
                 sellQty = balanceQty
@@ -560,8 +567,8 @@ def trader():
                         avg_price = round(avg_price,8)
 
                         # update position file with the sell order
-                        # changepos(dfPositions, coinPair,'',buy=False)
-                        change_pos(dfPositions, coinPair, '', typePos="sell")
+                        # changepos(df_positions, coinPair,'',buy=False)
+                        change_pos(df_positions, coinPair, '', typePos="sell")
 
                 except BinanceAPIException as e:
                     msg = "SELL create_order - There was an error: "
@@ -580,7 +587,7 @@ def trader():
                 if runMode == "prod":
                     addPnL = calc_pnl(coinPair, float(avg_price), float(order['executedQty']))
                     if addPnL:
-                        dfOrders.loc[len(dfOrders.index)] = [order['orderId'], pd.to_datetime(order['transactTime'], unit='ms'), coinPair, 
+                        df_orders.loc[len(df_orders.index)] = [order['orderId'], pd.to_datetime(order['transactTime'], unit='ms'), coinPair, 
                                                             order['side'], avg_price, order['executedQty'],
                                                             addPnL[0], # buyorderid 
                                                             addPnL[1], # PnL%
@@ -612,8 +619,8 @@ def trader():
                 if runMode == "prod":
                     # if there is no qty on balance to sell we set the qty on positions file to zero
                     # this can happen if we sell on the exchange (for example, due to a pump) before the bot sells it. 
-                    # changepos(dfPositions, coinPair,'',buy=False)
-                    change_pos(dfPositions, coinPair, '', typePos="sell")
+                    # changepos(df_positions, coinPair,'',buy=False)
+                    change_pos(df_positions, coinPair, '', typePos="sell")
         else:
             print(f'{coinPair} - {gStrategyName} - Sell condition not fulfilled')
             send_telegram_message("",f'{coinPair} - {gStrategyName} - Sell condition not fulfilled')
@@ -621,8 +628,8 @@ def trader():
             # set current PnL
             lastrow = df.iloc[-1]
             currentPrice = lastrow.Close
-            # changepos(dfPositions, coinPair,'',buy=False)
-            change_pos(dfPositions, coinPair, '', typePos="updatePnL", currentPrice=currentPrice)
+            # changepos(df_positions, coinPair,'',buy=False)
+            change_pos(df_positions, coinPair, '', typePos="updatePnL", currentPrice=currentPrice)
 
 
     # ------------------------------------------------------------------
@@ -646,15 +653,15 @@ def trader():
         coinStable = coinPair[-4:]
         # print('coinStable=',coinStable)
 
+        # if we wanna be more agressive we can use the following approach:
         # since the coin pair by marketphase is already choosing the coins in bullish and accumulation phase on daily time frame 
-        # I think there is no need to verify if we are in those market phases in lower timeframes, 4h and 1h, otherwise we will loose some oportunities
-        # because the sma 50 and 200 is more lagging indicator than the ema
-        # accumulationPhase = (lastrow.Close > lastrow.SMA50) and (lastrow.Close > lastrow.SMA200) and (lastrow.SMA50 < lastrow.SMA200)
-        # bullishPhase = (lastrow.Close > lastrow.SMA50) and (lastrow.Close > lastrow.SMA200) and (lastrow.SMA50 > lastrow.SMA200)
+        # we can pass the verification of those market phases in lower timeframes, 4h and 1h, otherwise we will loose some oportunities
+        # to be more conservative = use the same approach as the backtesting and keep those market phase verification in lower timeframes
+        accumulationPhase = (lastrow.Close > lastrow.SMA50) and (lastrow.Close > lastrow.SMA200) and (lastrow.SMA50 < lastrow.SMA200)
+        bullishPhase = (lastrow.Close > lastrow.SMA50) and (lastrow.Close > lastrow.SMA200) and (lastrow.SMA50 > lastrow.SMA200)
         
-        # if (accumulationPhase or bullishPhase) and crossover(df.FastEMA, df.SlowEMA):
-
-        if crossover(df.FastEMA, df.SlowEMA):
+        if (accumulationPhase or bullishPhase) and crossover(df.FastEMA, df.SlowEMA):
+        # if crossover(df.FastEMA, df.SlowEMA):
             positionSize = calc_stake_amount(coin=coinStable)
             # sendTelegramMessage("", "calc position size 5")
             # print("positionSize: ", positionSize)
@@ -675,8 +682,8 @@ def trader():
                             # print('avg_price=',avg_price)
 
                             # update positions file with the buy order
-                            # changepos(dfPositions, coinPair,order,buy=True,buyPrice=avg_price)
-                            change_pos(dfPositions, coinPair, order, typePos="buy", buyPrice=avg_price)
+                            # changepos(df_positions, coinPair,order,buy=True,buyPrice=avg_price)
+                            change_pos(df_positions, coinPair, order, typePos="buy", buyPrice=avg_price)
                         
                         except BinanceAPIException as e:
                             msg = "BUY create_order - There was an error: "
@@ -698,7 +705,7 @@ def trader():
                 
                 #add new row to end of DataFrame
                 if runMode == "prod":
-                    dfOrders.loc[len(dfOrders.index)] = [order['orderId'], pd.to_datetime(order['transactTime'], unit='ms'), coinPair, 
+                    df_orders.loc[len(df_orders.index)] = [order['orderId'], pd.to_datetime(order['transactTime'], unit='ms'), coinPair, 
                                                         order['side'], avg_price, order['executedQty'],
                                                         0,0,0]
                             
@@ -744,14 +751,14 @@ def main():
 
 
     # add orders to csv file
-    dfOrders.to_csv('orders'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv', mode='a', index=False, header=False)
+    df_orders.to_csv('orders'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv', mode='a', index=False, header=False)
 
 
     # posframe.drop('position', axis=1, inplace=True)
     # posframe.style.applymap(custom_style)
      
     # positions summary
-    df_current_positions = get_open_positions(dfPositions)
+    df_current_positions = get_open_positions(df_positions)
     if df_current_positions.empty:
         print("Result: no open positions yet")
         send_telegram_message("","Result: no open positions")
