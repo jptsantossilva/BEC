@@ -79,7 +79,7 @@ def main():
 
     list = ListNotCompleted.drop(columns = ['Completed','Date'])
     telegram.send_telegram_message(telegram.telegramToken_market_phases, "", "Calculating best EMA for the following coins:")
-    telegram.send_telegram_message(telegram.telegramToken_market_phases, "", list.to_string(index=False)) 
+    telegram.send_telegram_message(telegram.telegramToken_market_phases, "", list.to_string(index=False, header = False)) 
     
     # insertupdate
     # calc BestEMA for each coin pair and each time frame and save on positions files

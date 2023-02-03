@@ -29,6 +29,7 @@ from backtesting.lib import crossover
 import logging
 import telegram
 import timeit
+import yaml
 
 # calculate program run time
 start = timeit.default_timer()
@@ -76,8 +77,34 @@ elif timeframe == "1d":
 
     telegramToken = telegram.telegramToken_1d
 
-# inform that is running
+# inform that started
 telegram.send_telegram_message(telegramToken, telegram.eStart, "Binance Trader Bot - Start")
+
+# get settings from config file
+try:
+    with open("config.yaml", "r") as file:
+        config = yaml.safe_load(file)
+
+    stake_amount_type      = config["stake_amount_type"]
+    max_number_of_open_positions   = config["max_number_of_open_positions"]
+    tradable_balance_ratio = config["tradable_balance_ratio"]
+    min_position_size      = config["min_position_size"]
+
+except FileNotFoundError as e:
+    msg = "Error: The file config.yaml could not be found."
+    msg = msg + " " + sys._getframe(  ).f_code.co_name+" - "+repr(e)
+    print(msg)
+    logging.exception(msg)
+    telegram.send_telegram_message(telegram.telegramToken_errors, telegram.eWarning, msg)
+    sys.exit(msg) 
+
+except yaml.YAMLError as e:
+    msg = "Error: There was an issue with the YAML file."
+    msg = msg + " " + sys._getframe(  ).f_code.co_name+" - "+repr(e)
+    print(msg)
+    logging.exception(msg)
+    telegram.send_telegram_message(telegram.telegramToken_errors, telegram.eWarning, msg)
+    sys.exit(msg) 
 
 # environment variables
 try:
@@ -90,6 +117,7 @@ except KeyError as e:
     print(msg)
     logging.exception(msg)
     telegram.send_telegram_message(telegram.telegramToken_errors, telegram.eWarning, msg)
+    sys.exit(msg) 
 
 # constants
 
@@ -97,34 +125,7 @@ except KeyError as e:
 # gTimeframe = client.KLINE_INTERVAL_1HOUR # "1h"
 gFastMA = int("8")
 gSlowMA = int("34")
-gStrategyName = str(gFastMA)+"/"+str(gSlowMA)+" CROSS"
-
-# # Telegram
-# try:
-#     telegramToken = os.environ.get('telegramToken'+str(gTimeFrameNum)+gtimeframeTypeShort)
-# except KeyError as e: 
-#     msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
-#     print(msg)
-#     logging.exception(msg) 
-
-# stake_amount = amount of stake the bot will use for each trade 
-# if stake_amount = "unlimited", this configuration will allow increasing/decreasing stakes depending on the performance
-# of the bot (lower stake if the bot is losing, higher stakes if the bot has a winning record since higher balances are available), 
-# and will result in profit compounding.
-stake_amount_type = "unlimited"
-# or if a static number is defined, that is the amount per trade
-# stake_amount_type = 500
-
-# tradable percentage of the balance
-# for example: if you want to run 3 bot instances (1h, 4h and 1D), you can set the percentage of the total balance to be allocated to each of the bots.
-tradable_balance_ratio = 1 # 1=100% ; 0.5=50%
-
-# max number of open trades
-# if tradable balance = 1000 and max_open_positions = 10, the stake_amount = 1000/10 = 100 
-max_open_positions = 34
-
-# minimum position size in usd
-minPositionSize = float("20.0") 
+gStrategyName = str(gFastMA)+"/"+str(gSlowMA)+" EMA CROSS"
 
 # create empty dataframes
 df_positions = pd.DataFrame()
@@ -137,7 +138,6 @@ def read_csv_files():
     global df_orders
     global df_best_ema
 
-    
     try:
         # read positions
         filename = 'positions'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv'
@@ -208,7 +208,7 @@ def calc_stake_amount(coin = 'BUSD'):
         # if error occurred
         if num_open_positions == -1:
             return 0
-        if num_open_positions >= max_open_positions:
+        if num_open_positions >= max_number_of_open_positions:
             return -2 
 
         try:
@@ -225,11 +225,11 @@ def calc_stake_amount(coin = 'BUSD'):
             telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
     
         tradable_balance = balance*tradable_balance_ratio 
-        stake_amount = int(tradable_balance/(max_open_positions-num_open_positions))
+        stake_amount = int(tradable_balance/(max_number_of_open_positions-num_open_positions))
         
         # make sure the size is >= the minimum size
-        if stake_amount < minPositionSize:
-            stake_amount = minPositionSize
+        if stake_amount < min_position_size:
+            stake_amount = min_position_size
 
         # make sure there are enough funds otherwise abort the buy position
         if balance < stake_amount:
@@ -669,7 +669,7 @@ def trader():
             
             elif positionSize == -2:
                 num_open_positions = get_num_open_positions()
-                telegram.send_telegram_message(telegramToken, telegram.eInformation, client.SIDE_BUY+" "+coinPair+" - Max open positions ("+str(num_open_positions)+"/"+str(max_open_positions)+") already occupied!")
+                telegram.send_telegram_message(telegramToken, telegram.eInformation, client.SIDE_BUY+" "+coinPair+" - Max open positions ("+str(num_open_positions)+"/"+str(max_number_of_open_positions)+") already occupied!")
             else:
                 telegram.send_telegram_message(telegramToken, telegram.eInformation, client.SIDE_BUY+" "+coinPair+" - Not enough "+coinStable+" funds!")
                 
@@ -715,7 +715,7 @@ def main():
 
     if stake_amount_type == "unlimited":
         num_open_positions = get_num_open_positions()
-        msg = f"{str(num_open_positions)}/{str(max_open_positions)} positions occupied"
+        msg = f"{str(num_open_positions)}/{str(max_number_of_open_positions)} positions occupied"
         print(msg)
         telegram.send_telegram_message(telegramToken, "", msg=msg)
 
