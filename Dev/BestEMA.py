@@ -15,14 +15,36 @@ from dateutil.relativedelta import relativedelta
 import time
 from binance.exceptions import BinanceAPIException
 import requests
+import telegram
+import logging
 
-# %%
-# Binance API
-api_key = os.environ.get('binance_api')
-api_secret = os.environ.get('binance_secret')
+# log file to store error messages
+log_filename = "coinpairByMarketPhase.log"
+logging.basicConfig(filename=log_filename, level=logging.INFO,
+                    format='%(asctime)s %(message)s', datefmt='%Y-%m-%d %I:%M:%S %p -')
 
-# %%
-client = Client(api_key, api_secret)
+# Binance
+# environment variables
+try:
+    # Binance
+    api_key = os.environ.get('binance_api')
+    api_secret = os.environ.get('binance_secret')
+
+except KeyError as e: 
+    msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
+    print(msg)
+    logging.exception(msg)
+    telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eWarning, msg)
+
+# Binance Client
+try:
+    client = Client(api_key, api_secret)
+except Exception as e:
+    msg = "Error connecting to Binance. "+ repr(e)
+    print(msg)
+    logging.exception(msg)
+    telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eWarning, msg)
+    sys.exit(msg) 
 
 # backtest with 4 years of price data 
 #-------------------------------------
@@ -40,25 +62,6 @@ startdate = str(timestamp)
 # startdate = "10 day ago UTC"
 #-------------------------------------
 timeframe = ""
-
-# telegram
-telegramToken_errors = os.environ.get('telegramToken_errors')
-telegram_chat_id = os.environ.get('telegram_chat_id')
-
-# %%
-def sendTelegramMessage(msg):
-    
-    # To fix the issues with dataframes alignments, the message is sent as HTML and wraped with <pre> tag
-    # Text in a <pre> element is displayed in a fixed-width font, and the text preserves both spaces and line breaks
-    lmsg = "<pre>"+msg+"</pre>"
-
-    params = {
-    "chat_id": telegram_chat_id,
-    "text": lmsg,
-    "parse_mode": "HTML",
-    }
-    
-    resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegramToken_errors), params=params).json()
 
 def EMA(values, n):
     """
@@ -117,77 +120,80 @@ class EmaCross(Strategy):
 
 # %%
 def getdata(pSymbol, pTimeframe):
-    frame = pd.DataFrame(client.get_historical_klines(pSymbol,
-                                                      pTimeframe,
-                                                      startdate
-                                                      ))
-    
-    frame = frame.iloc[:,:6] # use the first 5 columns
-    frame.columns = ['Time','Open','High','Low','Close','Volume'] #rename columns
-    frame[['Open','High','Low','Close','Volume']] = frame[['Open','High','Low','Close','Volume']].astype(float) #cast to float
-    frame.Time = pd.to_datetime(frame.Time, unit='ms') #make human readable timestamp
-    # frame.index = [dt.datetime.fromtimestamp(x/1000.0) for x in frame.Time]
-    frame = frame.set_index(pd.DatetimeIndex(frame['Time']))
-    frame = frame.drop(['Time'], axis=1)
+    try:
+        frame = pd.DataFrame(client.get_historical_klines(pSymbol,
+                                                        pTimeframe,
+                                                        startdate
+                                                        ))
+        
+        frame = frame.iloc[:,:6] # use the first 5 columns
+        frame.columns = ['Time','Open','High','Low','Close','Volume'] #rename columns
+        frame[['Open','High','Low','Close','Volume']] = frame[['Open','High','Low','Close','Volume']].astype(float) #cast to float
+        frame.Time = pd.to_datetime(frame.Time, unit='ms') #make human readable timestamp
+        # frame.index = [dt.datetime.fromtimestamp(x/1000.0) for x in frame.Time]
+        frame = frame.set_index(pd.DatetimeIndex(frame['Time']))
+        frame = frame.drop(['Time'], axis=1)
 
-    return frame
+        return frame
+    except Exception as e:
+        msg = sys._getframe(  ).f_code.co_name+" - "+pSymbol+" - "+repr(e)
+        print(msg)
+        telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eWarning, msg)
+        frame = pd.DataFrame()
+        return frame 
 
-# %%
-def runBackTest(coinPair):
+def runBackTest(coin_pair):
 
-    coinOnly = coinPair[:-4]
-    coinStable = coinPair[-4:]
+
+    if coin_pair.endswith("BTC"):
+        coinOnly = coin_pair[:-3]
+        coinStable = coin_pair[-3:]
+    elif coin_pair.endswith(("BUSD","USDT")):    
+        coinOnly = coin_pair[:-4]
+        coinStable = coin_pair[-4:]
 
     # print("coinPair = ",coinPair)
     # df = getdata(coinPair, timeframe)
 
+    if coin_pair.endswith("BTC"):
+        df = getdata(coin_pair, timeframe)
+
     # get historical data from BUSD and USDT and use the one with more data 
-    dfStableBUSD = pd.DataFrame()
-    dfStableUSDT = pd.DataFrame()
-
-    iniBUSD = 0
-    iniUSDT = 0
+    elif coin_pair.endswith(("BUSD","USDT")):
+        dfStableBUSD = pd.DataFrame()
+        dfStableUSDT = pd.DataFrame()
     
-    try:
+        iniBUSD = 0
+        iniUSDT = 0
+        
         dfStableBUSD = getdata(coinOnly+"BUSD", timeframe)
-    except BinanceAPIException as e:
-        msg = "BinanceAPIException - " + str(e.status_code) + " - " + e.message+ " - " +coinOnly+"BUSD"
-        print(msg)
-        if e.status_code != 400: # ignore message of invalid symbol. Occurs when symbol does not have BUSD pair
-            sendTelegramMessage(msg)
-    
-    if not dfStableBUSD.empty:
-        ini1 = dfStableBUSD.index[0]
+            
+        if not dfStableBUSD.empty:
+            ini1 = dfStableBUSD.index[0]
 
-    try:
         dfStableUSDT = getdata(coinOnly+"USDT", timeframe) 
-    except BinanceAPIException as e:
-        msg = "BinanceAPIException - " + str(e.status_code) + " - " + e.message + " - " +coinOnly+"USDT"
-        print(msg)
-        if e.status_code != 400: # ignore message of invalid symbol. Occurs when symbol does not have USDT pair
-            sendTelegramMessage(msg)
 
-    if not dfStableUSDT.empty:
-        ini2 = dfStableUSDT.index[0]
+        if not dfStableUSDT.empty:
+            ini2 = dfStableUSDT.index[0]
 
-    # get start date and use the older one
-    if dfStableBUSD.empty and dfStableUSDT.empty:
-        # print("Both wrong")
-        return
-    elif dfStableBUSD.empty and not dfStableUSDT.empty:
-        # print("choose ini2")
-        df = dfStableUSDT.copy()
-    elif not dfStableBUSD.empty and dfStableUSDT.empty:
-        # print("choose ini1")
-        df = dfStableBUSD.copy()
-    elif ini1 > ini2:
-        # USDT has more history
-        print("USDT pair has more history data")
-        df = dfStableUSDT.copy()
-    else:
-        # BUSD has more history
-        print("BUSD pair has more history data")
-        df = dfStableBUSD.copy()
+        # get start date and use the older one
+        if dfStableBUSD.empty and dfStableUSDT.empty:
+            # print("Both wrong")
+            return
+        elif dfStableBUSD.empty and not dfStableUSDT.empty:
+            # print("choose ini2")
+            df = dfStableUSDT.copy()
+        elif not dfStableBUSD.empty and dfStableUSDT.empty:
+            # print("choose ini1")
+            df = dfStableBUSD.copy()
+        elif ini1 > ini2:
+            # USDT has more history
+            print("USDT pair has more history data")
+            df = dfStableUSDT.copy()
+        else:
+            # BUSD has more history
+            print("BUSD pair has more history data")
+            df = dfStableBUSD.copy()
 
     # df = df.drop(['Time'], axis=1)
     # print(df)
@@ -219,34 +225,42 @@ def runBackTest(coinPair):
     print("Buy & Hold Return [%] = ",round(BuyHoldReturnPerc,2))
     print("Backtest start date =", BacktestStartDate)
 
-    coinpairBestEma = pd.read_csv('coinpairBestEma.csv')
-    # coinpairBestEma
-    # add to file coinpair Best Ema 
-    # if exist then update else add
-    linha = coinpairBestEma.index[(coinpairBestEma.coinPair == coinPair) & (coinpairBestEma.timeFrame == timeframe)].to_list()
+    try:
+        filename = 'coinpairBestEma.csv'
+        coinpairBestEma = pd.read_csv(filename)
+        # coinpairBestEma
+        # add to file coinpair Best Ema 
+        # if exist then update else add
+        linha = coinpairBestEma.index[(coinpairBestEma.coinPair == coin_pair) & (coinpairBestEma.timeFrame == timeframe)].to_list()
 
-    if not linha:
-        # print("There is no line in coinpairBestEma file with coinPair "+str(coinPair)+ " and timeframe "+str(timeframe)+". New line will be added.")
-        # add line
-        coinpairBestEma.loc[len(coinpairBestEma.index)] = [coinPair, 
-                                                            n1,
-                                                            n2,
-                                                            timeframe,
-                                                            returnPerc,
-                                                            BuyHoldReturnPerc,
-                                                            BacktestStartDate
-                                                            ]
-    else:
-        # print("linha=",linha[0])
-        # update line
-        coinpairBestEma.loc[linha[0],['fastEMA','slowEMA','returnPerc','BuyHoldReturnPerc','BacktestStartDate']] = [n1, n2, returnPerc,BuyHoldReturnPerc,BacktestStartDate]
+        if not linha:
+            # print("There is no line in coinpairBestEma file with coinPair "+str(coinPair)+ " and timeframe "+str(timeframe)+". New line will be added.")
+            # add line
+            coinpairBestEma.loc[len(coinpairBestEma.index)] = [coin_pair, 
+                                                                n1,
+                                                                n2,
+                                                                timeframe,
+                                                                returnPerc,
+                                                                BuyHoldReturnPerc,
+                                                                BacktestStartDate
+                                                                ]
+        else:
+            # print("linha=",linha[0])
+            # update line
+            coinpairBestEma.loc[linha[0],['fastEMA','slowEMA','returnPerc','BuyHoldReturnPerc','BacktestStartDate']] = [n1, n2, returnPerc,BuyHoldReturnPerc,BacktestStartDate]
 
-    # coinpairBestEma
-    # print("Saving Coin Pair to coinpairBestEma file")
+        # coinpairBestEma
+        # print("Saving Coin Pair to coinpairBestEma file")
 
-    #order by coinpair and timeframe
-    coinpairBestEma.sort_values(by=['coinPair','timeFrame'], inplace=True)
-    coinpairBestEma.to_csv('coinpairBestEma.csv', index=False, header=True)
+        #order by coinpair and timeframe
+        coinpairBestEma.sort_values(by=['coinPair','timeFrame'], inplace=True)
+        coinpairBestEma.to_csv(filename, index=False, header=True)
+
+    except Exception as e:
+        msg = sys._getframe(  ).f_code.co_name+f" - {filename} - " + repr(e)
+        print(msg)
+        logging.exception(msg)
+        telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eWarning, msg)
 
 
 def addcoinpair(coinPair, lTimeframe):
@@ -256,12 +270,22 @@ def addcoinpair(coinPair, lTimeframe):
     global timeframe 
     timeframe = str(lTimeframe)
 
-    print("Backtest - "+coinPair+" - "+timeframe+" - Start")
-    runBackTest(coinPair)
-    print("Backtest "+coinPair+" - "+timeframe+" - End")
+    try:
+        print("Backtest - "+coinPair+" - "+timeframe+" - Start")
+        runBackTest(coinPair)
+        print("Backtest "+coinPair+" - "+timeframe+" - End")
 
-    result = True
-    return result
+        result = True
+        return result
+    
+    except Exception as e:
+        msg = sys._getframe(  ).f_code.co_name+f" - " + repr(e)
+        print(msg)
+        logging.exception(msg)
+        telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eWarning, msg)
+        
+        return False
+    
 
 
 

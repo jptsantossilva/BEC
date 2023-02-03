@@ -9,6 +9,14 @@ import pandas as pd
 from binance.client import Client
 import os
 from datetime import date
+import sys
+import logging
+import telegram
+
+# log file to store error messages
+log_filename = "addCoinPair.log"
+logging.basicConfig(filename=log_filename, level=logging.INFO,
+                    format='%(asctime)s %(message)s', datefmt='%Y-%m-%d %I:%M:%S %p -')
 
 result_1d = False
 result_4h = False
@@ -54,10 +62,24 @@ timeframe = ["1d", "4h", "1h"]
 
 def main():
 
-    ListAddcoinpair = pd.read_csv('addcoinpair.csv')
+    try:
+        filename = 'addcoinpair.csv'
+        ListAddcoinpair = pd.read_csv(filename)
+    except Exception as e:
+        msg = sys._getframe(  ).f_code.co_name+f" - {filename} - " + repr(e)
+        print(msg)
+        logging.exception(msg)
+        telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eWarning, msg) 
+        sys.exit(msg)
+        
+
     # get coin pairs with no completed calculation
     ListNotCompleted = ListAddcoinpair[(ListAddcoinpair.Completed != 1)]
     # Listcoinpair
+
+    list = ListNotCompleted.drop(columns = ['Completed','Date'])
+    telegram.send_telegram_message(telegram.telegramToken_market_phases, "", "Calculating best EMA for the following coins:")
+    telegram.send_telegram_message(telegram.telegramToken_market_phases, "", list.to_string(index=False, header = False)) 
     
     # insertupdate
     # calc BestEMA for each coin pair and each time frame and save on positions files
@@ -69,7 +91,15 @@ def main():
             print("Add Coin pair - "+coinPair+" - "+tf+" - run successfully")
 
             # check if exists in coinpairBestEma to make sure we have stored best ema
-            dfBestEMA = pd.read_csv('coinpairBestEma.csv')
+            try:
+                filename = 'coinpairBestEma.csv'
+                dfBestEMA = pd.read_csv(filename)
+            except Exception as e:
+                msg = sys._getframe(  ).f_code.co_name+f" - {filename} - " + repr(e)
+                print(msg)
+                logging.exception(msg)
+                telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eWarning, msg)  
+
             listEMAvalues = dfBestEMA[(dfBestEMA.coinPair == coinPair) & (dfBestEMA.timeFrame == tf)]
 
             # if return percentage of best ema is < 0 we dont want to trade that coin pair
@@ -83,65 +113,84 @@ def main():
             else:
                 fastEMA = 0
                 slowEMA = 0
-                print("Warning: there is no line in coinpairBestEma file with coinPair "+str(coinPair)+ " and timeframe "+str(tf)+". ")
+                msg = "Warning: there is no line in coinpairBestEma file with coinPair "+str(coinPair)+ " and timeframe "+str(tf)+". "
+                print(msg)
+                # telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eWarning, msg)
                 continue
 
                 
             # add to positions files
-            positionsfile = pd.read_csv('positions'+tf+'.csv')
-            # append if not exist 
-            linha = positionsfile.index[(positionsfile.Currency == coinPair)].to_list()
-
-            if not linha:
-                # print("There is no line in positions"+tf+" file with coinPair "+str(coinPair)+ " and timeframe "+tf+". New line will be added.")
-                
-                # ------------------------------------
-                # Code below was used when condition FastEMA>SlowEMA, but since we are now using crossover, 
-                # this issues does not exist anymore, and so there is no need to calculate fast and slow ema position 
-                # to check value for position, 1 or 0.  
-                # ------------------------------------
-                ## check position value.
-                ## position = 1 if fastEMA > slowEMA
-                ## position = 0 if slowEMA > fastEMA
-                # timeframeNum = int(tf[0])
-                # timeframeType = str(tf[1])
-
-                # df = getdata(coinPair, timeframeNum, timeframeType)
-                # applytechnicals(df, fastEMA, slowEMA)
-                # # print(df)
-                # lastrow = df.iloc[-1]
-
-                # accumulationPhase = (lastrow.Close > lastrow.SMA50) and (lastrow.Close > lastrow.SMA200) and (lastrow.SMA50 < lastrow.SMA200)
-                # bullishPhase = (lastrow.Close > lastrow.SMA50) and (lastrow.Close > lastrow.SMA200) and (lastrow.SMA50 > lastrow.SMA200)
-
-                # if (accumulationPhase or bullishPhase) and (lastrow.FastEMA > lastrow.SlowEMA):
-                #     position = 1
-                # else:
-                #     position = 0
-                # ------------------------------------
-
-                position = 0
-
-                #add line
-                positionsfile.loc[len(positionsfile.index)] = [coinPair 
-                                                                ,position
-                                                                ,0 # qty
-                                                                ,0 # buyPrice
-                                                                ,0 # currentPrice
-                                                                ,0 # PnLperc
-                                                                ]
+            try:
+                filename = 'positions'+tf+'.csv'
+                positionsfile = pd.read_csv(filename)
             
-                positionsfile.to_csv('positions'+tf+'.csv', index=False)
+
+                # append if not exist 
+                linha = positionsfile.index[(positionsfile.Currency == coinPair)].to_list()
+
+                if not linha:
+                    # print("There is no line in positions"+tf+" file with coinPair "+str(coinPair)+ " and timeframe "+tf+". New line will be added.")
+                    
+                    # ------------------------------------
+                    # Code below was used when condition FastEMA>SlowEMA, but since we are now using crossover, 
+                    # this issues does not exist anymore, and so there is no need to calculate fast and slow ema position 
+                    # to check value for position, 1 or 0.  
+                    # ------------------------------------
+                    ## check position value.
+                    ## position = 1 if fastEMA > slowEMA
+                    ## position = 0 if slowEMA > fastEMA
+                    # timeframeNum = int(tf[0])
+                    # timeframeType = str(tf[1])
+
+                    # df = getdata(coinPair, timeframeNum, timeframeType)
+                    # applytechnicals(df, fastEMA, slowEMA)
+                    # # print(df)
+                    # lastrow = df.iloc[-1]
+
+                    # accumulationPhase = (lastrow.Close > lastrow.SMA50) and (lastrow.Close > lastrow.SMA200) and (lastrow.SMA50 < lastrow.SMA200)
+                    # bullishPhase = (lastrow.Close > lastrow.SMA50) and (lastrow.Close > lastrow.SMA200) and (lastrow.SMA50 > lastrow.SMA200)
+
+                    # if (accumulationPhase or bullishPhase) and (lastrow.FastEMA > lastrow.SlowEMA):
+                    #     position = 1
+                    # else:
+                    #     position = 0
+                    # ------------------------------------
+
+                    position = 0
+
+                    #add line
+                    positionsfile.loc[len(positionsfile.index)] = [coinPair 
+                                                                    ,position
+                                                                    ,0 # qty
+                                                                    ,0 # buyPrice
+                                                                    ,0 # currentPrice
+                                                                    ,0 # PnLperc
+                                                                    ]
+                    
+                    positionsfile.to_csv(filename, index=False)
+            except Exception as e:
+                msg = sys._getframe(  ).f_code.co_name+f" - {filename} - " + repr(e)
+                print(msg)
+                logging.exception(msg)
+                telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eWarning, msg)
 
         # mark as calc completed
-        completedcoinpair = pd.read_csv('addcoinpair.csv')
-        completedcoinpair.loc[completedcoinpair.Currency == coinPair, 'Completed'] = 1
-        completedcoinpair.loc[completedcoinpair.Currency == coinPair, 'Date'] = str(date.today())        
-        completedcoinpair.Completed = completedcoinpair.Completed.astype(int, errors='ignore')
-        
-        # coinpairBestEma
-        print("Mark coin "+str(coinPair)+ " as Completed to addcoinpair file")
-        completedcoinpair.to_csv('addcoinpair.csv', index=False, header=True)
+        try:
+            filename = 'addcoinpair.csv'
+            completedcoinpair = pd.read_csv(filename)
+            completedcoinpair.loc[completedcoinpair.Currency == coinPair, 'Completed'] = 1
+            completedcoinpair.loc[completedcoinpair.Currency == coinPair, 'Date'] = str(date.today())        
+            completedcoinpair.Completed = completedcoinpair.Completed.astype(int, errors='ignore')
+            
+            # coinpairBestEma
+            print("Mark coin "+str(coinPair)+ " as Completed to addcoinpair file")
+            completedcoinpair.to_csv(filename, index=False, header=True)
+
+        except Exception as e:
+            msg = sys._getframe(  ).f_code.co_name+f" - {filename} - " + repr(e)
+            print(msg)
+            logging.exception(msg)
+            telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eWarning, msg)
         
         #remove all coin pairs from addcoinpair file
         # dfaddcoinpair = pd.read_csv('addcoinpair.csv', nrows=0)

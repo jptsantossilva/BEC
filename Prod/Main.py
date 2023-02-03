@@ -26,42 +26,17 @@ import numpy as np
 from numbers import Number
 from typing import Sequence
 from backtesting.lib import crossover
+import logging
+import telegram
+import timeit
 
-# %%
-# environment variables
-try:
-    # Binance
-    api_key = os.environ.get('binance_api')
-    api_secret = os.environ.get('binance_secret')
-    telegram_chat_id = os.environ.get('telegram_chat_id')
-except KeyError: 
-    print("Environment variable does not exist")
+# calculate program run time
+start = timeit.default_timer()
 
-# Binance Client
-client = Client(api_key, api_secret)
-
-# %%
-# constants
-
-# strategy
-# gTimeframe = client.KLINE_INTERVAL_1HOUR # "1h"
-gFastMA = int("8")
-gSlowMA = int("34")
-gStrategyName = str(gFastMA)+"/"+str(gSlowMA)+" CROSS"
-
-# emoji
-eStart   = u'\U000025B6'
-eStop    = u'\U000023F9'
-eWarning = u'\U000026A0'
-eEnterTrade = u'\U0001F91E' #crossfingers
-eExitTrade  = u'\U0001F91E' #crossfingers
-eTradeWithProfit = u'\U0001F44D' # thumbs up
-eTradeWithLoss   = u'\U0001F44E' # thumbs down
-eInformation = u'\U00002139'
-
-# run modes 
-# test - does not execute orders on the exchange
-# prod - execute orders on the exchange
+# log file to store error messages
+log_filename = "main.log"
+logging.basicConfig(filename=log_filename, level=logging.INFO,
+                    format='%(asctime)s %(message)s', datefmt='%Y-%m-%d %I:%M:%S %p -')
 
 # Check the program has been called with the timeframe
 # total arguments
@@ -74,37 +49,63 @@ if n < 2:
 else:
     # argv[0] in Python is always the name of the script.
     timeframe = sys.argv[1]
+
+    # run modes 
+    # test - does not execute orders on the exchange
+    # prod - execute orders on the exchange
     runMode = sys.argv[2]
 
 if timeframe == "1h":
     gTimeFrameNum = int("1")
     gtimeframeTypeShort = "h" # h, d
     gtimeframeTypeLong = "hour" # hour, day
+
+    telegramToken = telegram.telegramToken_1h
+
 elif timeframe == "4h":
     gTimeFrameNum = int("4")
     gtimeframeTypeShort = "h" # h, d
     gtimeframeTypeLong = "hour" # hour, day
+
+    telegramToken = telegram.telegramToken_4h
+
 elif timeframe == "1d":
     gTimeFrameNum = int("1")
     gtimeframeTypeShort = "d" # h, d
     gtimeframeTypeLong = "day" # hour, day
 
+    telegramToken = telegram.telegramToken_1d
+
+# inform that is running
+telegram.send_telegram_message(telegramToken, telegram.eStart, "Binance Trader Bot - Start")
+
+# environment variables
+try:
+    # Binance
+    api_key = os.environ.get('binance_api')
+    api_secret = os.environ.get('binance_secret')
+
+except KeyError as e: 
+    msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
+    print(msg)
+    logging.exception(msg)
+    telegram.send_telegram_message(telegram.telegramToken_errors, telegram.eWarning, msg)
+
+# constants
+
+# strategy
+# gTimeframe = client.KLINE_INTERVAL_1HOUR # "1h"
+gFastMA = int("8")
+gSlowMA = int("34")
+gStrategyName = str(gFastMA)+"/"+str(gSlowMA)+" CROSS"
+
+# # Telegram
 # try:
-#     if timeframe == "1h":
-#         telegram_chat_id = os.environ.get('telegram_chat_id_1h')
-#     elif timeframe == "4h":
-#         telegram_chat_id = os.environ.get('telegram_chat_id_4h')
-#     elif timeframe == "1d":
-#         telegram_chat_id = os.environ.get('telegram_chat_id_1d')
-
-#     telegram_chat_ClosedPositions = os.environ.get('telegram_chat_ClosedPositions')
-# except KeyError: 
-#     print("Environment variable does not exist - telegram_chat_id")
-
-
-# Telegram
-telegramToken = os.environ.get('telegramToken'+str(gTimeFrameNum)+gtimeframeTypeShort) 
-telegramToken_ClosedPosition = os.environ.get('telegramToken_ClosedPositions') 
+#     telegramToken = os.environ.get('telegramToken'+str(gTimeFrameNum)+gtimeframeTypeShort)
+# except KeyError as e: 
+#     msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
+#     print(msg)
+#     logging.exception(msg) 
 
 # stake_amount = amount of stake the bot will use for each trade 
 # if stake_amount = "unlimited", this configuration will allow increasing/decreasing stakes depending on the performance
@@ -126,98 +127,57 @@ max_open_positions = 34
 minPositionSize = float("20.0") 
 
 # create empty dataframes
-dfPositions = pd.DataFrame()
-dfOrders = pd.DataFrame()
-dfBestEMA = pd.DataFrame()
+df_positions = pd.DataFrame()
+df_orders    = pd.DataFrame()
+df_best_ema  = pd.DataFrame()
 
 def read_csv_files():
 
-    global dfPositions
-    global dfOrders
-    global dfBestEMA
+    global df_positions
+    global df_orders
+    global df_best_ema
 
-    # read positions
+    
     try:
+        # read positions
         filename = 'positions'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv'
-        dfPositions = pd.read_csv(filename)
-    except FileNotFoundError:
-        print("Error: The file "+filename+" could not be found.")
-    except PermissionError:
-        print("Error: You do not have permission to write to the file "+filename+".")
+        df_positions = pd.read_csv(filename)
+
+        # read orders csv
+        # we just want the header, there is no need to get all the existing orders.
+        # at the end we will append the orders to the csv
+        filename = 'orders'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv'
+        df_orders = pd.read_csv(filename, nrows=0)
+
+        # read best ema cross
+        filename = 'coinpairBestEma.csv'
+        df_best_ema = pd.read_csv(filename)
+
+    except FileNotFoundError as e:
+        msg = sys._getframe(  ).f_code.co_name+f" - {filename} - " + repr(e)
+        print(msg)
+        logging.exception(msg)
+        telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)         
+    except PermissionError as e:
+        msg = sys._getframe(  ).f_code.co_name+f" - {filename} - " + repr(e)
+        print(msg)
+        logging.exception(msg)
+        telegram.send_telegram_message(telegramToken, telegram.eWarning, msg) 
     except Exception as e:
-        # Log the error message for debugging purposes
-        print(f'An unexpected error occurred: {str(e)}')
+        msg = sys._getframe(  ).f_code.co_name+f" - {filename} - " + repr(e)
+        print(msg)
+        logging.exception(msg)
+        telegram.send_telegram_message(telegramToken, telegram.eWarning, msg) 
 
-    # read orders csv
-    # we just want the header, there is no need to get all the existing orders.
-    # at the end we will append the orders to the csv
-    dfOrders = pd.read_csv('orders'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv', nrows=0)
-
-    # read best ema cross
-    dfBestEMA = pd.read_csv('coinpairBestEma.csv')
-
-
-# %%
-def send_telegram_message(emoji, msg):
-
-    if not emoji:
-        lmsg = msg
-    else:
-        lmsg = emoji+" "+msg
-
-    # To fix the issues with dataframes alignments, the message is sent as HTML and wraped with <pre> tag
-    # Text in a <pre> element is displayed in a fixed-width font, and the text preserves both spaces and line breaks
-    lmsg = "<pre>"+lmsg+"</pre>"
-
-    params = {
-    "chat_id": telegram_chat_id,
-    "text": lmsg,
-    "parse_mode": "HTML",
-    }
-    
-    try:
-        resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegramToken), params=params).json()
-    except Exception as e:
-        msg = "sendTelegramMessage - There was an error: "
-        print(msg, e)
-        # send_telegram_message(eWarning, msg+e)
-        pass 
-
-
-def send_telegram_alert(emoji, date, coin, timeframe, strategy, ordertype, unitValue, amount, USDValue, pnlPerc = '', pnlUSD = ''):
-    lmsg = emoji + " " + str(date) + "\n" + coin + "\n" + strategy + "\n" + timeframe + "\n" + ordertype + "\n" + "UnitPrice: " + str(unitValue) + "\n" + "Qty: " + str(amount)+ "\n" + "USD: " + str(USDValue)
-    if pnlPerc != '':
-        lmsg = lmsg + "\n"+"PnL%: "+str(round(float(pnlPerc),2)) + "\n"+"PnL USD: "+str(round(float(pnlUSD),2))
-
-    # To fix the issues with dataframes alignments, the message is sent as HTML and wraped with <pre> tag
-    # Text in a <pre> element is displayed in a fixed-width font, and the text preserves both spaces and line breaks
-    lmsg = "<pre>"+lmsg+"</pre>"
-
-    params = {
-    "chat_id": telegram_chat_id,
-    "text": lmsg,
-    "parse_mode": "HTML",
-    }
-    
-    resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegramToken), params=params).json()
-
-    # if is a closed position send also to telegram of closed positions
-    if emoji in [eTradeWithProfit, eTradeWithLoss]:
-        params = {
-        "chat_id": telegram_chat_id,
-        "text": lmsg,
-        "parse_mode": "HTML",
-        }
-        resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegramToken_ClosedPosition), params=params).json()
-
-def send_telegram_photo(photoName='balance.png'):
-    # get current dir
-    cwd = os.getcwd()
-    limg = cwd+"/"+photoName
-    # print(limg)
-    oimg = open(limg, 'rb')
-    url = f"https://api.telegram.org/bot{telegramToken}/sendPhoto?chat_id={telegram_chat_id}"
-    requests.post(url, files={'photo':oimg}) # this sends the message
+# Binance Client
+try:
+    client = Client(api_key, api_secret)
+except Exception as e:
+        msg = "Error connecting to Binance. "+ repr(e)
+        print(msg)
+        logging.exception(msg)
+        telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
+        sys.exit(msg) 
 
 def get_num_open_positions():
     try:
@@ -235,9 +195,10 @@ def get_num_open_positions():
         return total_open_positions
 
     except Exception as e:
-        msg = "get_num_open_positions - There was an error: "
-        print(msg, e)
-        send_telegram_message(eWarning, msg+str(e))
+        msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
+        print(msg)
+        logging.exception(msg)
+        telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
         return -1
     
 def calc_stake_amount(coin = 'BUSD'):
@@ -253,13 +214,15 @@ def calc_stake_amount(coin = 'BUSD'):
         try:
             balance = float(client.get_asset_balance(asset=coin)['free'])
         except BinanceAPIException as e:
-            msg = "calc_stake_amount - There was an error: "
-            print(msg, e)
-            send_telegram_message(eWarning, msg+str(e))
+            msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
+            print(msg)
+            logging.exception(msg)
+            telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
         except Exception as e:
-            msg = "calc_stake_amount - There was an error: "
-            print(msg, e)
-            send_telegram_message(eWarning, msg+str(e))
+            msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
+            print(msg)
+            logging.exception(msg)
+            telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
     
         tradable_balance = balance*tradable_balance_ratio 
         stake_amount = int(tradable_balance/(max_open_positions-num_open_positions))
@@ -277,38 +240,8 @@ def calc_stake_amount(coin = 'BUSD'):
         return stake_amount_type
     else:
         return 0
-
-# def calcPositionSize(pStablecoin = 'BUSD'):
-
-#     try:
-        
-#         # get balance from BUSD
-#         stablecoin = client.get_asset_balance(asset=pStablecoin)
-#         stablecoinBalance = float(stablecoin['free'])
-#         # print(stableBalance)
-#     except BinanceAPIException as e:
-#         msg = "calcPositionSize - There was an error: "
-#         print(msg, e)
-#         sendTelegramMessage(eWarning, msg+e)
-#     except Exception as e:
-#         msg = "calcPositionSize - There was an error: "
-#         print(msg, e)
-#         sendTelegramMessage(eWarning, msg+e)
-        
-#     # calculate position size based on the percentage per trade
-#     # resultado = stablecoinBalance*tradepercentage 
-#     # resultado = round(resultado, 5)
-
-#     if resultado < minPositionSize:
-#         resultado = minPositionSize
-
-#     # make sure there are enough funds otherwise abort the buy position
-#     if stablecoinBalance < resultado:
-#         resultado = 0
-
-#     return resultado
     
-# %%
+
 def get_data(coinPair, aTimeframeNum, aTimeframeTypeShort, aFastMA=0, aSlowMA=0):
 
     try:
@@ -327,7 +260,7 @@ def get_data(coinPair, aTimeframeNum, aTimeframeTypeShort, aFastMA=0, aSlowMA=0)
             gFastMA = aFastMA
             gSlowMA = aSlowMA
         else:
-            listEMAvalues = dfBestEMA[(dfBestEMA.coinPair == coinPair) & (dfBestEMA.timeFrame == lTimeFrame)]
+            listEMAvalues = df_best_ema[(df_best_ema.coinPair == coinPair) & (df_best_ema.timeFrame == lTimeFrame)]
 
             if not listEMAvalues.empty:
                 gFastMA = int(listEMAvalues.fastEMA.values[0])
@@ -358,9 +291,9 @@ def get_data(coinPair, aTimeframeNum, aTimeframeTypeShort, aFastMA=0, aSlowMA=0)
         frame.Time = pd.to_datetime(frame.Time, unit='ms')
         return frame
     except Exception as e:
-        msg = f"getdata - {coinPair} -  There was an error: "
-        print(msg, e)
-        send_telegram_message(eWarning, msg+str(e))
+        msg = sys._getframe(  ).f_code.co_name+" - "+coinPair+" - "+repr(e)
+        print(msg)
+        telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
         frame = pd.DataFrame()
         return frame 
 
@@ -401,10 +334,10 @@ def change_pos(dfPos, curr, order, typePos, buyPrice=0, currentPrice=0):
         dfPos.to_csv('positions'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv', index=False)
 
     except Exception as e:
-        msg = "change_pos - There was an error: "
-        print(msg, e)
-        send_telegram_message(eWarning, msg+str(e))
-        pass
+        msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
+        print(msg)
+        telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
+        
 #-----------------------------------------------------------------------
 
 def remove_coins_position():
@@ -483,9 +416,9 @@ def calc_pnl(symbol, sellprice: float, sellqty: float):
                     break
 
     except Exception as e:
-        msg = "calc_pnl - There was an error: "
-        print(msg, e)
-        send_telegram_message(eWarning, msg+str(e))
+        msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
+        print(msg)
+        telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
         return []
 
 def get_open_positions(df):
@@ -494,9 +427,9 @@ def get_open_positions(df):
         return df_open_positions
 
     except Exception as e:
-        msg = "get_open_positions - There was an error: "
-        print(msg, str(e))
-        # sendTelegramMessage(eWarning, msg+e)
+        msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
+        print(msg)
+        telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
         return -1
 
 # %%
@@ -509,9 +442,9 @@ def trader():
     read_csv_files()
 
     # list of coins in position - SELL
-    listPosition1 = dfPositions[dfPositions.position == 1].Currency
+    listPosition1 = df_positions[df_positions.position == 1].Currency
     # list of coins in position - BUY
-    listPosition0 = dfPositions[dfPositions.position == 0].Currency
+    listPosition0 = df_positions[df_positions.position == 0].Currency
 
     # ------------------------------------------------------------
     # check open positions and SELL if conditions are fulfilled 
@@ -521,8 +454,9 @@ def trader():
         df = get_data(coinPair, gTimeFrameNum, gtimeframeTypeShort)
 
         if df.empty:
-            print(f'{coinPair} - {gStrategyName} - Best EMA values missing')
-            send_telegram_message(eWarning,f'{coinPair} - {gStrategyName} - Best EMA values missing')
+            msg = f'{coinPair} - {gStrategyName} - Best EMA values missing'
+            print(msg)
+            telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
             continue
 
         apply_technicals(df, gFastMA, gSlowMA)
@@ -537,17 +471,17 @@ def trader():
             try:
                 balanceQty = float(client.get_asset_balance(asset=coinOnly)['free'])  
             except BinanceAPIException as e:
-                msg = "balanceQty - There was an error: "
-                print(msg, e)
-                send_telegram_message(eWarning, msg+str(e))
+                msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
+                print(msg)
+                telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
                 continue
             except Exception as e:
-                msg = "balanceQty - There was an error: "
-                print(msg, e)
-                send_telegram_message(eWarning, msg+str(e))
+                msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
+                print(msg)
+                telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
                 continue            
 
-            buyOrderQty = float(dfPositions[dfPositions.Currency == coinPair].quantity.values[0])
+            buyOrderQty = float(df_positions[df_positions.Currency == coinPair].quantity.values[0])
             sellQty = buyOrderQty
             if balanceQty < buyOrderQty:
                 sellQty = balanceQty
@@ -568,27 +502,27 @@ def trader():
                         avg_price = round(avg_price,8)
 
                         # update position file with the sell order
-                        # changepos(dfPositions, coinPair,'',buy=False)
-                        change_pos(dfPositions, coinPair, '', typePos="sell")
+                        # changepos(df_positions, coinPair,'',buy=False)
+                        change_pos(df_positions, coinPair, '', typePos="sell")
 
                 except BinanceAPIException as e:
-                    msg = "SELL create_order - There was an error: "
-                    print(msg, e)
-                    send_telegram_message(eWarning, msg+str(e))
+                    msg = "SELL create_order - "+repr(e)
+                    print(msg)
+                    telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
                 except BinanceOrderException as e:
-                    msg = "SELL create_order - There was an error: "
-                    print(msg, e)
-                    send_telegram_message(eWarning, msg+str(e))
+                    msg = "SELL create_order - "+repr(e)
+                    print(msg)
+                    telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
                 except Exception as e:
-                    msg = "SELL create_order - There was an error: "
-                    print(msg, e)
-                    send_telegram_message(eWarning, msg+str(e))
+                    msg = "SELL create_order - "+repr(e)
+                    print(msg)
+                    telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
 
                 #add new row to end of DataFrame
                 if runMode == "prod":
                     addPnL = calc_pnl(coinPair, float(avg_price), float(order['executedQty']))
                     if addPnL:
-                        dfOrders.loc[len(dfOrders.index)] = [order['orderId'], pd.to_datetime(order['transactTime'], unit='ms'), coinPair, 
+                        df_orders.loc[len(df_orders.index)] = [order['orderId'], pd.to_datetime(order['transactTime'], unit='ms'), coinPair, 
                                                             order['side'], avg_price, order['executedQty'],
                                                             addPnL[0], # buyorderid 
                                                             addPnL[1], # PnL%
@@ -597,13 +531,10 @@ def trader():
                 
 
                         # print(order)
-                        # sendTelegramMessage(eExitTrade, order)
+                
                         if addPnL[2] > 0: 
-                            emojiTradeResult = eTradeWithProfit
-                        else:
-                            emojiTradeResult = eTradeWithLoss
-
-                        send_telegram_alert(emojiTradeResult,
+                            # trade with profit
+                            telegram.send_telegram_alert(telegramToken, telegram.eTradeWithProfit,
                                         # order['transactTime']
                                         pd.to_datetime(order['transactTime'], unit='ms'), 
                                         order['symbol'], 
@@ -616,21 +547,39 @@ def trader():
                                         addPnL[1], # PnL%
                                         addPnL[2]  # PnL USD
                                         )
+                        else:
+                            # trade with loss
+                            telegram.send_telegram_alert(telegramToken, telegram.eTradeWithLoss,
+                                        # order['transactTime']
+                                        pd.to_datetime(order['transactTime'], unit='ms'), 
+                                        order['symbol'], 
+                                        str(gTimeFrameNum)+gtimeframeTypeShort, 
+                                        gStrategyName,
+                                        order['side'],
+                                        avg_price,
+                                        order['executedQty'],
+                                        avg_price*float(order['executedQty']),
+                                        addPnL[1], # PnL%
+                                        addPnL[2]  # PnL USD
+                                        )
+
+                        
             else:
                 if runMode == "prod":
                     # if there is no qty on balance to sell we set the qty on positions file to zero
                     # this can happen if we sell on the exchange (for example, due to a pump) before the bot sells it. 
-                    # changepos(dfPositions, coinPair,'',buy=False)
-                    change_pos(dfPositions, coinPair, '', typePos="sell")
+                    # changepos(df_positions, coinPair,'',buy=False)
+                    change_pos(df_positions, coinPair, '', typePos="sell")
         else:
-            print(f'{coinPair} - {gStrategyName} - Sell condition not fulfilled')
-            send_telegram_message("",f'{coinPair} - {gStrategyName} - Sell condition not fulfilled')
+            msg = f'{coinPair} - {gStrategyName} - Sell condition not fulfilled'
+            print(msg)
+            telegram.send_telegram_message(telegramToken, "", msg)
             
             # set current PnL
             lastrow = df.iloc[-1]
             currentPrice = lastrow.Close
-            # changepos(dfPositions, coinPair,'',buy=False)
-            change_pos(dfPositions, coinPair, '', typePos="updatePnL", currentPrice=currentPrice)
+            # changepos(df_positions, coinPair,'',buy=False)
+            change_pos(df_positions, coinPair, '', typePos="updatePnL", currentPrice=currentPrice)
 
 
     # ------------------------------------------------------------------
@@ -641,8 +590,9 @@ def trader():
         df = get_data(coinPair, gTimeFrameNum, gtimeframeTypeShort)
 
         if df.empty:
-            print(f'{coinPair} - {gStrategyName} - Best EMA values missing')
-            send_telegram_message(eWarning,f'{coinPair} - {gStrategyName} - Best EMA values missing')
+            msg = f'{coinPair} - {gStrategyName} - Best EMA values missing'
+            print(msg)
+            telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
             continue
 
         apply_technicals(df, gFastMA, gSlowMA)
@@ -668,50 +618,45 @@ def trader():
             # print("positionSize: ", positionSize)
             # sendTelegramMessage('',client.SIDE_BUY+" "+coinPair+" BuyStableQty="+str(positionSize))  
             if positionSize > 0:
-                try:
-                    if runMode == "prod":
-                        try:
-                            order = client.create_order(symbol=coinPair,
-                                                        side=client.SIDE_BUY,
-                                                        type=client.ORDER_TYPE_MARKET,
-                                                        quoteOrderQty = positionSize,
-                                                        newOrderRespType = 'FULL') 
-                            
-                            fills = order['fills']
-                            avg_price = sum([float(f['price']) * (float(f['qty']) / float(order['executedQty'])) for f in fills])
-                            avg_price = round(avg_price,8)
-                            # print('avg_price=',avg_price)
-
-                            # update positions file with the buy order
-                            # changepos(dfPositions, coinPair,order,buy=True,buyPrice=avg_price)
-                            change_pos(dfPositions, coinPair, order, typePos="buy", buyPrice=avg_price)
+                
+                if runMode == "prod":
+                    try:
+                        order = client.create_order(symbol=coinPair,
+                                                    side=client.SIDE_BUY,
+                                                    type=client.ORDER_TYPE_MARKET,
+                                                    quoteOrderQty = positionSize,
+                                                    newOrderRespType = 'FULL') 
                         
-                        except BinanceAPIException as e:
-                            msg = "BUY create_order - There was an error: "
-                            print(msg, e)
-                            send_telegram_message(eWarning, msg+str(e))
-                        except BinanceOrderException as e:
-                            msg = "BUY create_order - There was an error: "
-                            print(msg, e)
-                            send_telegram_message(eWarning, msg+str(e))
-                        except Exception as e:
-                            msg = "BUY create_order - There was an error: "
-                            print(msg, e)
-                            send_telegram_message(eWarning, msg+str(e))
+                        fills = order['fills']
+                        avg_price = sum([float(f['price']) * (float(f['qty']) / float(order['executedQty'])) for f in fills])
+                        avg_price = round(avg_price,8)
+                        # print('avg_price=',avg_price)
 
-                except BinanceAPIException as e:
-                    send_telegram_message(eWarning, str(e))
-                except BinanceOrderException as e:
-                    send_telegram_message(eWarning, str(e))
+                        # update positions file with the buy order
+                        # changepos(df_positions, coinPair,order,buy=True,buyPrice=avg_price)
+                        change_pos(df_positions, coinPair, order, typePos="buy", buyPrice=avg_price)
+                    
+                    except BinanceAPIException as e:
+                        msg = "BUY create_order - "+repr(e)
+                        print(msg)
+                        telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
+                    except BinanceOrderException as e:
+                        msg = "BUY create_order - "+repr(e)
+                        print(msg)
+                        telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
+                    except Exception as e:
+                        msg = "BUY create_order - "+repr(e)
+                        print(msg)
+                        telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
                 
                 #add new row to end of DataFrame
                 if runMode == "prod":
-                    dfOrders.loc[len(dfOrders.index)] = [order['orderId'], pd.to_datetime(order['transactTime'], unit='ms'), coinPair, 
+                    df_orders.loc[len(df_orders.index)] = [order['orderId'], pd.to_datetime(order['transactTime'], unit='ms'), coinPair, 
                                                         order['side'], avg_price, order['executedQty'],
                                                         0,0,0]
                             
                     
-                    send_telegram_alert(eEnterTrade,
+                    telegram.send_telegram_alert(telegramToken, telegram.eEnterTrade,
                                     # order['transactTime'], 
                                     pd.to_datetime(order['transactTime'], unit='ms'),
                                     order['symbol'], 
@@ -724,13 +669,14 @@ def trader():
             
             elif positionSize == -2:
                 num_open_positions = get_num_open_positions()
-                send_telegram_message(eWarning,client.SIDE_BUY+" "+coinPair+" - Max open positions ("+str(num_open_positions)+"/"+str(max_open_positions)+") already occupied!")
+                telegram.send_telegram_message(telegramToken, telegram.eInformation, client.SIDE_BUY+" "+coinPair+" - Max open positions ("+str(num_open_positions)+"/"+str(max_open_positions)+") already occupied!")
             else:
-                send_telegram_message(eWarning,client.SIDE_BUY+" "+coinPair+" - Not enough "+coinStable+" funds!")
+                telegram.send_telegram_message(telegramToken, telegram.eInformation, client.SIDE_BUY+" "+coinPair+" - Not enough "+coinStable+" funds!")
                 
         else:
-            print(f'{coinPair} - {gStrategyName} - Buy condition not fulfilled')
-            send_telegram_message("",f'{coinPair} - {gStrategyName} - Buy condition not fulfilled')
+            msg = f'{coinPair} - {gStrategyName} - Buy condition not fulfilled'
+            print(msg)
+            telegram.send_telegram_message(telegramToken, "", msg)
 
     # remove coin pairs from position file not in accumulation or bullish phase -> coinpairByMarketPhase_BUSD_1d.csv
     # this is needed here specially for 1h/4h time frames when coin is no longer on bullish or accumulation and a close position occurred
@@ -739,39 +685,50 @@ def trader():
 
 
 def main():
-    # inform that is running
-    send_telegram_message(eStart,"Binance Trader Bot - Start")
 
     try:
         trader()
     except Exception as e:
-        msg = "Trader - There was an error: "
-        print(msg, e)
-        send_telegram_message(eWarning, msg+str(e))
+        msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
+        print(msg)
+        telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
         pass
 
 
     # add orders to csv file
-    dfOrders.to_csv('orders'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv', mode='a', index=False, header=False)
+    df_orders.to_csv('orders'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv', mode='a', index=False, header=False)
 
 
     # posframe.drop('position', axis=1, inplace=True)
     # posframe.style.applymap(custom_style)
      
     # positions summary
-    df_current_positions = get_open_positions(dfPositions)
+    df_current_positions = get_open_positions(df_positions)
+    df_current_positions.drop(columns=['position'], inplace=True)
+    df_current_positions.reset_index(drop=True, inplace=True) # gives consecutive numbers to each row
     if df_current_positions.empty:
         print("Result: no open positions yet")
-        send_telegram_message("","Result: no open positions")
+        telegram.send_telegram_message(telegramToken, "", "Result: no open positions")
     else:
         print(df_current_positions)
-        send_telegram_message("",df_current_positions.to_string())
+        telegram.send_telegram_message(telegramToken, "", df_current_positions.to_string())
+
+    if stake_amount_type == "unlimited":
+        num_open_positions = get_num_open_positions()
+        msg = f"{str(num_open_positions)}/{str(max_open_positions)} positions occupied"
+        print(msg)
+        telegram.send_telegram_message(telegramToken, "", msg=msg)
 
     # dfi.export(posframe, 'balance.png', fontsize=8, table_conversion='matplotlib')
-    # sendTelegramPhoto()
+    # sendTelegramPhoto() 
 
     # inform that ended
-    send_telegram_message(eStop, "Binance Trader Bot - End")
+    telegram.send_telegram_message(telegramToken, telegram.eStop, "Binance Trader Bot - End")
+
+    stop = timeit.default_timer()
+    msg = 'Execution Time (s): '+str(round(stop - start,1))
+    print(msg)
+    telegram.send_telegram_message(telegramToken, telegram.eStop, msg)
 
 if __name__ == "__main__":
     main()
