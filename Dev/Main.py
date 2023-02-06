@@ -460,14 +460,14 @@ def trader():
             continue
 
         apply_technicals(df, gFastMA, gSlowMA)
-        # lastrow = df.iloc[-1]
+        lastrow = df.iloc[-1]
 
         # separate coin from stable. example coinPair=BTCUSDT coinOnly=BTC coinStable=USDT 
         coinOnly = coinPair[:-4]
         coinStable = coinPair[-4:]
 
-        # if lastrow.SlowMA > lastrow.FastMA:
-        if crossover(df.SlowEMA, df.FastEMA): 
+        if lastrow.SlowEMA > lastrow.FastEMA:
+        # if crossover(df.SlowEMA, df.FastEMA): 
             try:
                 balanceQty = float(client.get_asset_balance(asset=coinOnly)['free'])  
             except BinanceAPIException as e:
