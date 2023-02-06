@@ -26,7 +26,7 @@ Check [here](https://github.com/jptsantossilva/Binance-Trading-bot-EMA-Cross/blo
 
 This project is [MIT](https://github.com/jptsantossilva/Binance-Trader-EMA-Cross/blob/main/LICENSE.md) licensed.
 
-Copyright © 2022 [João Silva](https://github.com/jptsantossilva)
+Copyright © 2023 [João Silva](https://github.com/jptsantossilva)
 
 
 
