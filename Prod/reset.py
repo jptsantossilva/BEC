@@ -1,5 +1,6 @@
 
 import pandas as pd
+import os
 
 # reset csv files
 
@@ -30,6 +31,23 @@ dfAddCoinPair.to_csv('coinpairBestEma.csv', index=False)
 # blacklist - coins not to trade
 dfBlacklist = pd.read_csv('blacklist.csv', nrows=0)
 dfBlacklist.to_csv('blacklist.csv', index=False)
+
+# clean log files
+filename = "main.log"
+if os.path.exists(filename):
+  os.remove(filename)
+else:
+  print(f"The file {filename} does not exist")
+with open(filename, 'w'):
+    pass
+
+filename = "coinpairByMarketPhase.log"
+if os.path.exists(filename):
+  os.remove(filename)
+else:
+  print(f"The file {filename} does not exist")
+with open(filename, 'w'):
+    pass
 
 # run in terminal
 # python3 coinpairByMarketPhase.py 1d BUSD
