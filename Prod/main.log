@@ -1,0 +1,390 @@
+2023-02-04 02:58:07 AM - send_telegram_message - An Http Error occurred:HTTPError('400 Client Error: Bad Request for url: https://api.telegram.org/bot5889130031:AAHuojesIxu8m1NYCcSUW9kBVg1iKKfUkVU/sendMessage?chat_id=1144450791&text=%3Cpre%3E%E2%9A%A0+getdata+-+USTCUSDT+-+BinanceAPIException%28%3CResponse+%5B400%5D%3E%2C+400%2C+%27%7B%22code%22%3A-1121%2C%22msg%22%3A%22Invalid+symbol.%22%7D%27%29%3C%2Fpre%3E&parse_mode=HTML')
+Traceback (most recent call last):
+  File "/home/joaosilva/Documents/GitHub/Binance-Trader/Prod/BestEMA.py", line 124, in getdata
+    frame = pd.DataFrame(client.get_historical_klines(pSymbol,
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/binance/client.py", line 934, in get_historical_klines
+    return self._historical_klines(
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/binance/client.py", line 973, in _historical_klines
+    first_valid_ts = self._get_earliest_valid_timestamp(symbol, interval, klines_type)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/binance/client.py", line 904, in _get_earliest_valid_timestamp
+    kline = self._klines(
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/binance/client.py", line 883, in _klines
+    return self.get_klines(**params)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/binance/client.py", line 868, in get_klines
+    return self._get('klines', data=params, version=self.PRIVATE_API_VERSION)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/binance/client.py", line 371, in _get
+    return self._request_api('get', path, signed, version, **kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/binance/client.py", line 334, in _request_api
+    return self._request(method, uri, signed, **kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/binance/client.py", line 315, in _request
+    return self._handle_response(self.response)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/binance/client.py", line 324, in _handle_response
+    raise BinanceAPIException(response, response.status_code, response.text)
+binance.exceptions.BinanceAPIException: APIError(code=-1121): Invalid symbol.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/joaosilva/Documents/GitHub/Binance-Trader/Prod/telegram.py", line 129, in send_telegram_message
+    resp.raise_for_status()
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/models.py", line 1021, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 400 Client Error: Bad Request for url: https://api.telegram.org/bot5889130031:AAHuojesIxu8m1NYCcSUW9kBVg1iKKfUkVU/sendMessage?chat_id=1144450791&text=%3Cpre%3E%E2%9A%A0+getdata+-+USTCUSDT+-+BinanceAPIException%28%3CResponse+%5B400%5D%3E%2C+400%2C+%27%7B%22code%22%3A-1121%2C%22msg%22%3A%22Invalid+symbol.%22%7D%27%29%3C%2Fpre%3E&parse_mode=HTML
+2023-02-04 02:58:16 AM - send_telegram_message - An Http Error occurred:HTTPError('400 Client Error: Bad Request for url: https://api.telegram.org/bot5889130031:AAHuojesIxu8m1NYCcSUW9kBVg1iKKfUkVU/sendMessage?chat_id=1144450791&text=%3Cpre%3E%E2%9A%A0+getdata+-+USTCUSDT+-+BinanceAPIException%28%3CResponse+%5B400%5D%3E%2C+400%2C+%27%7B%22code%22%3A-1121%2C%22msg%22%3A%22Invalid+symbol.%22%7D%27%29%3C%2Fpre%3E&parse_mode=HTML')
+Traceback (most recent call last):
+  File "/home/joaosilva/Documents/GitHub/Binance-Trader/Prod/BestEMA.py", line 124, in getdata
+    frame = pd.DataFrame(client.get_historical_klines(pSymbol,
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/binance/client.py", line 934, in get_historical_klines
+    return self._historical_klines(
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/binance/client.py", line 973, in _historical_klines
+    first_valid_ts = self._get_earliest_valid_timestamp(symbol, interval, klines_type)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/binance/client.py", line 904, in _get_earliest_valid_timestamp
+    kline = self._klines(
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/binance/client.py", line 883, in _klines
+    return self.get_klines(**params)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/binance/client.py", line 868, in get_klines
+    return self._get('klines', data=params, version=self.PRIVATE_API_VERSION)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/binance/client.py", line 371, in _get
+    return self._request_api('get', path, signed, version, **kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/binance/client.py", line 334, in _request_api
+    return self._request(method, uri, signed, **kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/binance/client.py", line 315, in _request
+    return self._handle_response(self.response)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/binance/client.py", line 324, in _handle_response
+    raise BinanceAPIException(response, response.status_code, response.text)
+binance.exceptions.BinanceAPIException: APIError(code=-1121): Invalid symbol.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/joaosilva/Documents/GitHub/Binance-Trader/Prod/telegram.py", line 129, in send_telegram_message
+    resp.raise_for_status()
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/models.py", line 1021, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 400 Client Error: Bad Request for url: https://api.telegram.org/bot5889130031:AAHuojesIxu8m1NYCcSUW9kBVg1iKKfUkVU/sendMessage?chat_id=1144450791&text=%3Cpre%3E%E2%9A%A0+getdata+-+USTCUSDT+-+BinanceAPIException%28%3CResponse+%5B400%5D%3E%2C+400%2C+%27%7B%22code%22%3A-1121%2C%22msg%22%3A%22Invalid+symbol.%22%7D%27%29%3C%2Fpre%3E&parse_mode=HTML
+2023-02-04 02:58:40 AM - send_telegram_message - An Http Error occurred:HTTPError('400 Client Error: Bad Request for url: https://api.telegram.org/bot5889130031:AAHuojesIxu8m1NYCcSUW9kBVg1iKKfUkVU/sendMessage?chat_id=1144450791&text=%3Cpre%3E%E2%9A%A0+getdata+-+USTCUSDT+-+BinanceAPIException%28%3CResponse+%5B400%5D%3E%2C+400%2C+%27%7B%22code%22%3A-1121%2C%22msg%22%3A%22Invalid+symbol.%22%7D%27%29%3C%2Fpre%3E&parse_mode=HTML')
+Traceback (most recent call last):
+  File "/home/joaosilva/Documents/GitHub/Binance-Trader/Prod/BestEMA.py", line 124, in getdata
+    frame = pd.DataFrame(client.get_historical_klines(pSymbol,
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/binance/client.py", line 934, in get_historical_klines
+    return self._historical_klines(
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/binance/client.py", line 973, in _historical_klines
+    first_valid_ts = self._get_earliest_valid_timestamp(symbol, interval, klines_type)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/binance/client.py", line 904, in _get_earliest_valid_timestamp
+    kline = self._klines(
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/binance/client.py", line 883, in _klines
+    return self.get_klines(**params)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/binance/client.py", line 868, in get_klines
+    return self._get('klines', data=params, version=self.PRIVATE_API_VERSION)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/binance/client.py", line 371, in _get
+    return self._request_api('get', path, signed, version, **kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/binance/client.py", line 334, in _request_api
+    return self._request(method, uri, signed, **kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/binance/client.py", line 315, in _request
+    return self._handle_response(self.response)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/binance/client.py", line 324, in _handle_response
+    raise BinanceAPIException(response, response.status_code, response.text)
+binance.exceptions.BinanceAPIException: APIError(code=-1121): Invalid symbol.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/joaosilva/Documents/GitHub/Binance-Trader/Prod/telegram.py", line 129, in send_telegram_message
+    resp.raise_for_status()
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/models.py", line 1021, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 400 Client Error: Bad Request for url: https://api.telegram.org/bot5889130031:AAHuojesIxu8m1NYCcSUW9kBVg1iKKfUkVU/sendMessage?chat_id=1144450791&text=%3Cpre%3E%E2%9A%A0+getdata+-+USTCUSDT+-+BinanceAPIException%28%3CResponse+%5B400%5D%3E%2C+400%2C+%27%7B%22code%22%3A-1121%2C%22msg%22%3A%22Invalid+symbol.%22%7D%27%29%3C%2Fpre%3E&parse_mode=HTML
+2023-02-05 12:09:10 AM - send_telegram_message - An Error Connecting to the API occurred:SSLError(MaxRetryError("HTTPSConnectionPool(host='api.telegram.org', port=443): Max retries exceeded with url: /bot5791916657:AAF7DPD1tkco53NOlj0fLY7Jg43EHBZWLME/sendMessage?chat_id=1144450791&text=%3Cpre%3EHOTBUSD+-+20%2F40+EMA+cross+-+Buy+condition+not+fulfilled%3C%2Fpre%3E&parse_mode=HTML (Caused by SSLError(SSLZeroReturnError(6, 'TLS/SSL connection has been closed (EOF) (_ssl.c:997)')))"))
+Traceback (most recent call last):
+  File "/usr/lib/python3/dist-packages/urllib3/connectionpool.py", line 699, in urlopen
+    httplib_response = self._make_request(
+  File "/usr/lib/python3/dist-packages/urllib3/connectionpool.py", line 382, in _make_request
+    self._validate_conn(conn)
+  File "/usr/lib/python3/dist-packages/urllib3/connectionpool.py", line 1012, in _validate_conn
+    conn.connect()
+  File "/usr/lib/python3/dist-packages/urllib3/connection.py", line 411, in connect
+    self.sock = ssl_wrap_socket(
+  File "/usr/lib/python3/dist-packages/urllib3/util/ssl_.py", line 449, in ssl_wrap_socket
+    ssl_sock = _ssl_wrap_socket_impl(
+  File "/usr/lib/python3/dist-packages/urllib3/util/ssl_.py", line 493, in _ssl_wrap_socket_impl
+    return ssl_context.wrap_socket(sock, server_hostname=server_hostname)
+  File "/usr/lib/python3.10/ssl.py", line 513, in wrap_socket
+    return self.sslsocket_class._create(
+  File "/usr/lib/python3.10/ssl.py", line 1071, in _create
+    self.do_handshake()
+  File "/usr/lib/python3.10/ssl.py", line 1342, in do_handshake
+    self._sslobj.do_handshake()
+ssl.SSLZeroReturnError: TLS/SSL connection has been closed (EOF) (_ssl.c:997)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/adapters.py", line 489, in send
+    resp = conn.urlopen(
+  File "/usr/lib/python3/dist-packages/urllib3/connectionpool.py", line 755, in urlopen
+    retries = retries.increment(
+  File "/usr/lib/python3/dist-packages/urllib3/util/retry.py", line 574, in increment
+    raise MaxRetryError(_pool, url, error or ResponseError(cause))
+urllib3.exceptions.MaxRetryError: HTTPSConnectionPool(host='api.telegram.org', port=443): Max retries exceeded with url: /bot5791916657:AAF7DPD1tkco53NOlj0fLY7Jg43EHBZWLME/sendMessage?chat_id=1144450791&text=%3Cpre%3EHOTBUSD+-+20%2F40+EMA+cross+-+Buy+condition+not+fulfilled%3C%2Fpre%3E&parse_mode=HTML (Caused by SSLError(SSLZeroReturnError(6, 'TLS/SSL connection has been closed (EOF) (_ssl.c:997)')))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/joaosilva/Documents/GitHub/Binance-Trader/Prod/telegram.py", line 131, in send_telegram_message
+    resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegram_token), params=params)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/api.py", line 115, in post
+    return request("post", url, data=data, json=json, **kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/api.py", line 59, in request
+    return session.request(method=method, url=url, **kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/sessions.py", line 587, in request
+    resp = self.send(prep, **send_kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/sessions.py", line 701, in send
+    r = adapter.send(request, **kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/adapters.py", line 563, in send
+    raise SSLError(e, request=request)
+requests.exceptions.SSLError: HTTPSConnectionPool(host='api.telegram.org', port=443): Max retries exceeded with url: /bot5791916657:AAF7DPD1tkco53NOlj0fLY7Jg43EHBZWLME/sendMessage?chat_id=1144450791&text=%3Cpre%3EHOTBUSD+-+20%2F40+EMA+cross+-+Buy+condition+not+fulfilled%3C%2Fpre%3E&parse_mode=HTML (Caused by SSLError(SSLZeroReturnError(6, 'TLS/SSL connection has been closed (EOF) (_ssl.c:997)')))
+2023-02-05 02:07:45 AM - send_telegram_message - An Error Connecting to the API occurred:SSLError(MaxRetryError("HTTPSConnectionPool(host='api.telegram.org', port=443): Max retries exceeded with url: /bot5442956381:AAGuyjm_vNhl7jb3A0AS69pD5ncI5NW4mgU/sendMessage?chat_id=1144450791&text=%3Cpre%3EIOTXBUSD+-+10%2F40+EMA+cross+-+Buy+condition+not+fulfilled%3C%2Fpre%3E&parse_mode=HTML (Caused by SSLError(SSLZeroReturnError(6, 'TLS/SSL connection has been closed (EOF) (_ssl.c:997)')))"))
+Traceback (most recent call last):
+  File "/usr/lib/python3/dist-packages/urllib3/connectionpool.py", line 699, in urlopen
+    httplib_response = self._make_request(
+  File "/usr/lib/python3/dist-packages/urllib3/connectionpool.py", line 382, in _make_request
+    self._validate_conn(conn)
+  File "/usr/lib/python3/dist-packages/urllib3/connectionpool.py", line 1012, in _validate_conn
+    conn.connect()
+  File "/usr/lib/python3/dist-packages/urllib3/connection.py", line 411, in connect
+    self.sock = ssl_wrap_socket(
+  File "/usr/lib/python3/dist-packages/urllib3/util/ssl_.py", line 449, in ssl_wrap_socket
+    ssl_sock = _ssl_wrap_socket_impl(
+  File "/usr/lib/python3/dist-packages/urllib3/util/ssl_.py", line 493, in _ssl_wrap_socket_impl
+    return ssl_context.wrap_socket(sock, server_hostname=server_hostname)
+  File "/usr/lib/python3.10/ssl.py", line 513, in wrap_socket
+    return self.sslsocket_class._create(
+  File "/usr/lib/python3.10/ssl.py", line 1071, in _create
+    self.do_handshake()
+  File "/usr/lib/python3.10/ssl.py", line 1342, in do_handshake
+    self._sslobj.do_handshake()
+ssl.SSLZeroReturnError: TLS/SSL connection has been closed (EOF) (_ssl.c:997)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/adapters.py", line 489, in send
+    resp = conn.urlopen(
+  File "/usr/lib/python3/dist-packages/urllib3/connectionpool.py", line 755, in urlopen
+    retries = retries.increment(
+  File "/usr/lib/python3/dist-packages/urllib3/util/retry.py", line 574, in increment
+    raise MaxRetryError(_pool, url, error or ResponseError(cause))
+urllib3.exceptions.MaxRetryError: HTTPSConnectionPool(host='api.telegram.org', port=443): Max retries exceeded with url: /bot5442956381:AAGuyjm_vNhl7jb3A0AS69pD5ncI5NW4mgU/sendMessage?chat_id=1144450791&text=%3Cpre%3EIOTXBUSD+-+10%2F40+EMA+cross+-+Buy+condition+not+fulfilled%3C%2Fpre%3E&parse_mode=HTML (Caused by SSLError(SSLZeroReturnError(6, 'TLS/SSL connection has been closed (EOF) (_ssl.c:997)')))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/joaosilva/Documents/GitHub/Binance-Trader/Prod/telegram.py", line 131, in send_telegram_message
+    resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegram_token), params=params)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/api.py", line 115, in post
+    return request("post", url, data=data, json=json, **kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/api.py", line 59, in request
+    return session.request(method=method, url=url, **kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/sessions.py", line 587, in request
+    resp = self.send(prep, **send_kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/sessions.py", line 701, in send
+    r = adapter.send(request, **kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/adapters.py", line 563, in send
+    raise SSLError(e, request=request)
+requests.exceptions.SSLError: HTTPSConnectionPool(host='api.telegram.org', port=443): Max retries exceeded with url: /bot5442956381:AAGuyjm_vNhl7jb3A0AS69pD5ncI5NW4mgU/sendMessage?chat_id=1144450791&text=%3Cpre%3EIOTXBUSD+-+10%2F40+EMA+cross+-+Buy+condition+not+fulfilled%3C%2Fpre%3E&parse_mode=HTML (Caused by SSLError(SSLZeroReturnError(6, 'TLS/SSL connection has been closed (EOF) (_ssl.c:997)')))
+2023-02-05 02:11:14 AM - send_telegram_message - An Error Connecting to the API occurred:SSLError(MaxRetryError("HTTPSConnectionPool(host='api.telegram.org', port=443): Max retries exceeded with url: /bot5442956381:AAGuyjm_vNhl7jb3A0AS69pD5ncI5NW4mgU/sendMessage?chat_id=1144450791&text=%3Cpre%3EIQBUSD+-+75%2F150+EMA+cross+-+Buy+condition+not+fulfilled%3C%2Fpre%3E&parse_mode=HTML (Caused by SSLError(SSLZeroReturnError(6, 'TLS/SSL connection has been closed (EOF) (_ssl.c:997)')))"))
+Traceback (most recent call last):
+  File "/usr/lib/python3/dist-packages/urllib3/connectionpool.py", line 699, in urlopen
+    httplib_response = self._make_request(
+  File "/usr/lib/python3/dist-packages/urllib3/connectionpool.py", line 382, in _make_request
+    self._validate_conn(conn)
+  File "/usr/lib/python3/dist-packages/urllib3/connectionpool.py", line 1012, in _validate_conn
+    conn.connect()
+  File "/usr/lib/python3/dist-packages/urllib3/connection.py", line 411, in connect
+    self.sock = ssl_wrap_socket(
+  File "/usr/lib/python3/dist-packages/urllib3/util/ssl_.py", line 449, in ssl_wrap_socket
+    ssl_sock = _ssl_wrap_socket_impl(
+  File "/usr/lib/python3/dist-packages/urllib3/util/ssl_.py", line 493, in _ssl_wrap_socket_impl
+    return ssl_context.wrap_socket(sock, server_hostname=server_hostname)
+  File "/usr/lib/python3.10/ssl.py", line 513, in wrap_socket
+    return self.sslsocket_class._create(
+  File "/usr/lib/python3.10/ssl.py", line 1071, in _create
+    self.do_handshake()
+  File "/usr/lib/python3.10/ssl.py", line 1342, in do_handshake
+    self._sslobj.do_handshake()
+ssl.SSLZeroReturnError: TLS/SSL connection has been closed (EOF) (_ssl.c:997)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/adapters.py", line 489, in send
+    resp = conn.urlopen(
+  File "/usr/lib/python3/dist-packages/urllib3/connectionpool.py", line 755, in urlopen
+    retries = retries.increment(
+  File "/usr/lib/python3/dist-packages/urllib3/util/retry.py", line 574, in increment
+    raise MaxRetryError(_pool, url, error or ResponseError(cause))
+urllib3.exceptions.MaxRetryError: HTTPSConnectionPool(host='api.telegram.org', port=443): Max retries exceeded with url: /bot5442956381:AAGuyjm_vNhl7jb3A0AS69pD5ncI5NW4mgU/sendMessage?chat_id=1144450791&text=%3Cpre%3EIQBUSD+-+75%2F150+EMA+cross+-+Buy+condition+not+fulfilled%3C%2Fpre%3E&parse_mode=HTML (Caused by SSLError(SSLZeroReturnError(6, 'TLS/SSL connection has been closed (EOF) (_ssl.c:997)')))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/joaosilva/Documents/GitHub/Binance-Trader/Prod/telegram.py", line 131, in send_telegram_message
+    resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegram_token), params=params)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/api.py", line 115, in post
+    return request("post", url, data=data, json=json, **kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/api.py", line 59, in request
+    return session.request(method=method, url=url, **kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/sessions.py", line 587, in request
+    resp = self.send(prep, **send_kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/sessions.py", line 701, in send
+    r = adapter.send(request, **kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/adapters.py", line 563, in send
+    raise SSLError(e, request=request)
+requests.exceptions.SSLError: HTTPSConnectionPool(host='api.telegram.org', port=443): Max retries exceeded with url: /bot5442956381:AAGuyjm_vNhl7jb3A0AS69pD5ncI5NW4mgU/sendMessage?chat_id=1144450791&text=%3Cpre%3EIQBUSD+-+75%2F150+EMA+cross+-+Buy+condition+not+fulfilled%3C%2Fpre%3E&parse_mode=HTML (Caused by SSLError(SSLZeroReturnError(6, 'TLS/SSL connection has been closed (EOF) (_ssl.c:997)')))
+2023-02-05 02:14:25 AM - send_telegram_message - An Error Connecting to the API occurred:SSLError(MaxRetryError("HTTPSConnectionPool(host='api.telegram.org', port=443): Max retries exceeded with url: /bot5442956381:AAGuyjm_vNhl7jb3A0AS69pD5ncI5NW4mgU/sendMessage?chat_id=1144450791&text=%3Cpre%3EJOEBUSD+-+10%2F135+EMA+cross+-+Buy+condition+not+fulfilled%3C%2Fpre%3E&parse_mode=HTML (Caused by SSLError(SSLZeroReturnError(6, 'TLS/SSL connection has been closed (EOF) (_ssl.c:997)')))"))
+Traceback (most recent call last):
+  File "/usr/lib/python3/dist-packages/urllib3/connectionpool.py", line 699, in urlopen
+    httplib_response = self._make_request(
+  File "/usr/lib/python3/dist-packages/urllib3/connectionpool.py", line 382, in _make_request
+    self._validate_conn(conn)
+  File "/usr/lib/python3/dist-packages/urllib3/connectionpool.py", line 1012, in _validate_conn
+    conn.connect()
+  File "/usr/lib/python3/dist-packages/urllib3/connection.py", line 411, in connect
+    self.sock = ssl_wrap_socket(
+  File "/usr/lib/python3/dist-packages/urllib3/util/ssl_.py", line 449, in ssl_wrap_socket
+    ssl_sock = _ssl_wrap_socket_impl(
+  File "/usr/lib/python3/dist-packages/urllib3/util/ssl_.py", line 493, in _ssl_wrap_socket_impl
+    return ssl_context.wrap_socket(sock, server_hostname=server_hostname)
+  File "/usr/lib/python3.10/ssl.py", line 513, in wrap_socket
+    return self.sslsocket_class._create(
+  File "/usr/lib/python3.10/ssl.py", line 1071, in _create
+    self.do_handshake()
+  File "/usr/lib/python3.10/ssl.py", line 1342, in do_handshake
+    self._sslobj.do_handshake()
+ssl.SSLZeroReturnError: TLS/SSL connection has been closed (EOF) (_ssl.c:997)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/adapters.py", line 489, in send
+    resp = conn.urlopen(
+  File "/usr/lib/python3/dist-packages/urllib3/connectionpool.py", line 755, in urlopen
+    retries = retries.increment(
+  File "/usr/lib/python3/dist-packages/urllib3/util/retry.py", line 574, in increment
+    raise MaxRetryError(_pool, url, error or ResponseError(cause))
+urllib3.exceptions.MaxRetryError: HTTPSConnectionPool(host='api.telegram.org', port=443): Max retries exceeded with url: /bot5442956381:AAGuyjm_vNhl7jb3A0AS69pD5ncI5NW4mgU/sendMessage?chat_id=1144450791&text=%3Cpre%3EJOEBUSD+-+10%2F135+EMA+cross+-+Buy+condition+not+fulfilled%3C%2Fpre%3E&parse_mode=HTML (Caused by SSLError(SSLZeroReturnError(6, 'TLS/SSL connection has been closed (EOF) (_ssl.c:997)')))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/joaosilva/Documents/GitHub/Binance-Trader/Prod/telegram.py", line 131, in send_telegram_message
+    resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegram_token), params=params)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/api.py", line 115, in post
+    return request("post", url, data=data, json=json, **kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/api.py", line 59, in request
+    return session.request(method=method, url=url, **kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/sessions.py", line 587, in request
+    resp = self.send(prep, **send_kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/sessions.py", line 701, in send
+    r = adapter.send(request, **kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/adapters.py", line 563, in send
+    raise SSLError(e, request=request)
+requests.exceptions.SSLError: HTTPSConnectionPool(host='api.telegram.org', port=443): Max retries exceeded with url: /bot5442956381:AAGuyjm_vNhl7jb3A0AS69pD5ncI5NW4mgU/sendMessage?chat_id=1144450791&text=%3Cpre%3EJOEBUSD+-+10%2F135+EMA+cross+-+Buy+condition+not+fulfilled%3C%2Fpre%3E&parse_mode=HTML (Caused by SSLError(SSLZeroReturnError(6, 'TLS/SSL connection has been closed (EOF) (_ssl.c:997)')))
+2023-02-05 02:16:30 AM - send_telegram_message - An Error Connecting to the API occurred:SSLError(MaxRetryError("HTTPSConnectionPool(host='api.telegram.org', port=443): Max retries exceeded with url: /bot5442956381:AAGuyjm_vNhl7jb3A0AS69pD5ncI5NW4mgU/sendMessage?chat_id=1144450791&text=%3Cpre%3EJSTBUSD+-+15%2F30+EMA+cross+-+Buy+condition+not+fulfilled%3C%2Fpre%3E&parse_mode=HTML (Caused by SSLError(SSLZeroReturnError(6, 'TLS/SSL connection has been closed (EOF) (_ssl.c:997)')))"))
+Traceback (most recent call last):
+  File "/usr/lib/python3/dist-packages/urllib3/connectionpool.py", line 699, in urlopen
+    httplib_response = self._make_request(
+  File "/usr/lib/python3/dist-packages/urllib3/connectionpool.py", line 382, in _make_request
+    self._validate_conn(conn)
+  File "/usr/lib/python3/dist-packages/urllib3/connectionpool.py", line 1012, in _validate_conn
+    conn.connect()
+  File "/usr/lib/python3/dist-packages/urllib3/connection.py", line 411, in connect
+    self.sock = ssl_wrap_socket(
+  File "/usr/lib/python3/dist-packages/urllib3/util/ssl_.py", line 449, in ssl_wrap_socket
+    ssl_sock = _ssl_wrap_socket_impl(
+  File "/usr/lib/python3/dist-packages/urllib3/util/ssl_.py", line 493, in _ssl_wrap_socket_impl
+    return ssl_context.wrap_socket(sock, server_hostname=server_hostname)
+  File "/usr/lib/python3.10/ssl.py", line 513, in wrap_socket
+    return self.sslsocket_class._create(
+  File "/usr/lib/python3.10/ssl.py", line 1071, in _create
+    self.do_handshake()
+  File "/usr/lib/python3.10/ssl.py", line 1342, in do_handshake
+    self._sslobj.do_handshake()
+ssl.SSLZeroReturnError: TLS/SSL connection has been closed (EOF) (_ssl.c:997)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/adapters.py", line 489, in send
+    resp = conn.urlopen(
+  File "/usr/lib/python3/dist-packages/urllib3/connectionpool.py", line 755, in urlopen
+    retries = retries.increment(
+  File "/usr/lib/python3/dist-packages/urllib3/util/retry.py", line 574, in increment
+    raise MaxRetryError(_pool, url, error or ResponseError(cause))
+urllib3.exceptions.MaxRetryError: HTTPSConnectionPool(host='api.telegram.org', port=443): Max retries exceeded with url: /bot5442956381:AAGuyjm_vNhl7jb3A0AS69pD5ncI5NW4mgU/sendMessage?chat_id=1144450791&text=%3Cpre%3EJSTBUSD+-+15%2F30+EMA+cross+-+Buy+condition+not+fulfilled%3C%2Fpre%3E&parse_mode=HTML (Caused by SSLError(SSLZeroReturnError(6, 'TLS/SSL connection has been closed (EOF) (_ssl.c:997)')))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/joaosilva/Documents/GitHub/Binance-Trader/Prod/telegram.py", line 131, in send_telegram_message
+    resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegram_token), params=params)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/api.py", line 115, in post
+    return request("post", url, data=data, json=json, **kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/api.py", line 59, in request
+    return session.request(method=method, url=url, **kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/sessions.py", line 587, in request
+    resp = self.send(prep, **send_kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/sessions.py", line 701, in send
+    r = adapter.send(request, **kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/adapters.py", line 563, in send
+    raise SSLError(e, request=request)
+requests.exceptions.SSLError: HTTPSConnectionPool(host='api.telegram.org', port=443): Max retries exceeded with url: /bot5442956381:AAGuyjm_vNhl7jb3A0AS69pD5ncI5NW4mgU/sendMessage?chat_id=1144450791&text=%3Cpre%3EJSTBUSD+-+15%2F30+EMA+cross+-+Buy+condition+not+fulfilled%3C%2Fpre%3E&parse_mode=HTML (Caused by SSLError(SSLZeroReturnError(6, 'TLS/SSL connection has been closed (EOF) (_ssl.c:997)')))
+2023-02-05 02:20:28 AM - send_telegram_message - An Error Connecting to the API occurred:SSLError(MaxRetryError("HTTPSConnectionPool(host='api.telegram.org', port=443): Max retries exceeded with url: /bot5442956381:AAGuyjm_vNhl7jb3A0AS69pD5ncI5NW4mgU/sendMessage?chat_id=1144450791&text=%3Cpre%3EKLAYBUSD+-+10%2F195+EMA+cross+-+Buy+condition+not+fulfilled%3C%2Fpre%3E&parse_mode=HTML (Caused by SSLError(SSLZeroReturnError(6, 'TLS/SSL connection has been closed (EOF) (_ssl.c:997)')))"))
+Traceback (most recent call last):
+  File "/usr/lib/python3/dist-packages/urllib3/connectionpool.py", line 699, in urlopen
+    httplib_response = self._make_request(
+  File "/usr/lib/python3/dist-packages/urllib3/connectionpool.py", line 382, in _make_request
+    self._validate_conn(conn)
+  File "/usr/lib/python3/dist-packages/urllib3/connectionpool.py", line 1012, in _validate_conn
+    conn.connect()
+  File "/usr/lib/python3/dist-packages/urllib3/connection.py", line 411, in connect
+    self.sock = ssl_wrap_socket(
+  File "/usr/lib/python3/dist-packages/urllib3/util/ssl_.py", line 449, in ssl_wrap_socket
+    ssl_sock = _ssl_wrap_socket_impl(
+  File "/usr/lib/python3/dist-packages/urllib3/util/ssl_.py", line 493, in _ssl_wrap_socket_impl
+    return ssl_context.wrap_socket(sock, server_hostname=server_hostname)
+  File "/usr/lib/python3.10/ssl.py", line 513, in wrap_socket
+    return self.sslsocket_class._create(
+  File "/usr/lib/python3.10/ssl.py", line 1071, in _create
+    self.do_handshake()
+  File "/usr/lib/python3.10/ssl.py", line 1342, in do_handshake
+    self._sslobj.do_handshake()
+ssl.SSLZeroReturnError: TLS/SSL connection has been closed (EOF) (_ssl.c:997)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/adapters.py", line 489, in send
+    resp = conn.urlopen(
+  File "/usr/lib/python3/dist-packages/urllib3/connectionpool.py", line 755, in urlopen
+    retries = retries.increment(
+  File "/usr/lib/python3/dist-packages/urllib3/util/retry.py", line 574, in increment
+    raise MaxRetryError(_pool, url, error or ResponseError(cause))
+urllib3.exceptions.MaxRetryError: HTTPSConnectionPool(host='api.telegram.org', port=443): Max retries exceeded with url: /bot5442956381:AAGuyjm_vNhl7jb3A0AS69pD5ncI5NW4mgU/sendMessage?chat_id=1144450791&text=%3Cpre%3EKLAYBUSD+-+10%2F195+EMA+cross+-+Buy+condition+not+fulfilled%3C%2Fpre%3E&parse_mode=HTML (Caused by SSLError(SSLZeroReturnError(6, 'TLS/SSL connection has been closed (EOF) (_ssl.c:997)')))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/joaosilva/Documents/GitHub/Binance-Trader/Prod/telegram.py", line 131, in send_telegram_message
+    resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegram_token), params=params)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/api.py", line 115, in post
+    return request("post", url, data=data, json=json, **kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/api.py", line 59, in request
+    return session.request(method=method, url=url, **kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/sessions.py", line 587, in request
+    resp = self.send(prep, **send_kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/sessions.py", line 701, in send
+    r = adapter.send(request, **kwargs)
+  File "/home/joaosilva/.local/lib/python3.10/site-packages/requests/adapters.py", line 563, in send
+    raise SSLError(e, request=request)
+requests.exceptions.SSLError: HTTPSConnectionPool(host='api.telegram.org', port=443): Max retries exceeded with url: /bot5442956381:AAGuyjm_vNhl7jb3A0AS69pD5ncI5NW4mgU/sendMessage?chat_id=1144450791&text=%3Cpre%3EKLAYBUSD+-+10%2F195+EMA+cross+-+Buy+condition+not+fulfilled%3C%2Fpre%3E&parse_mode=HTML (Caused by SSLError(SSLZeroReturnError(6, 'TLS/SSL connection has been closed (EOF) (_ssl.c:997)')))
