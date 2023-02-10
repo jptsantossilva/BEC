@@ -1,6 +1,6 @@
 """
 Gets all coin pairs from Binance, calculate market phase for each and store results in coinpairByMarketPhase_USD_1d.csv 
-Removes coins from positions files that are not in the accumulation or bullish phase.
+Removes coins from positions files that are not top performers in the accumulation or bullish phase.
 Adds the coins in the accumulation or bullish phase to addCoinPair.csv and calc BestEMA 
 for each coin pair on 1d,4h,1h time frame and save on positions files
 """
@@ -19,9 +19,8 @@ import timeit
 import addCoinPair
 import telegram
 import logging
+import yaml
 
-# %%
-# %%
 
 # calculate program run time
 start = timeit.default_timer() 
@@ -33,6 +32,29 @@ telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eS
 log_filename = "coinpairByMarketPhase.log"
 logging.basicConfig(filename=log_filename, level=logging.INFO,
                     format='%(asctime)s %(message)s', datefmt='%Y-%m-%d %I:%M:%S %p -')
+
+# get settings from config file
+try:
+    with open("config.yaml", "r") as file:
+        config = yaml.safe_load(file)
+
+    trade_top_performance = config["trade_top_performance"]
+
+except FileNotFoundError as e:
+    msg = "Error: The file config.yaml could not be found."
+    msg = msg + " " + sys._getframe(  ).f_code.co_name+" - "+repr(e)
+    print(msg)
+    logging.exception(msg)
+    telegram.send_telegram_message(telegram.telegramToken_errors, telegram.eWarning, msg)
+    sys.exit(msg) 
+
+except yaml.YAMLError as e:
+    msg = "Error: There was an issue with the YAML file."
+    msg = msg + " " + sys._getframe(  ).f_code.co_name+" - "+repr(e)
+    print(msg)
+    logging.exception(msg)
+    telegram.send_telegram_message(telegram.telegramToken_errors, telegram.eWarning, msg)
+    sys.exit(msg) 
 
 # Binance
 # environment variables
@@ -68,11 +90,11 @@ n = len(sys.argv)
 if n < 2:
     print("Argument is missing")
     timeframe = input('Enter timeframe (1d, 8h, 4h):')
-    stablecoin = input('Trade against USDT, BUSD or BTC:')
+    trade_against = input('Trade against USDT, BUSD or BTC:')
 else:
     # argv[0] in Python is always the name of the script.
     timeframe = sys.argv[1]
-    stablecoin = sys.argv[2]
+    trade_against = sys.argv[2]
 
 if timeframe == "1d": startdate = "200 day ago UTC"
 elif timeframe == "8h": startdate = str(8*200)+" hour ago UTC"
@@ -80,7 +102,7 @@ elif timeframe == "4h": startdate = str(4*200)+" hour ago UTC"
 
 # read coins in blacklist to not trade
 dfBlacklist = pd.read_csv('blacklist.csv')
-dfBlacklist['Currency'] = dfBlacklist['Currency'].astype(str)+stablecoin
+dfBlacklist['Currency'] = dfBlacklist['Currency'].astype(str)+trade_against
 # put the blacklist in a set
 blacklist = set(dfBlacklist["Currency"].unique())
 
@@ -96,12 +118,12 @@ except Exception as e:
 coinPairs = set()
 
 for s in exchange_info['symbols']:
-    if (s['symbol'].endswith(stablecoin)
-        and not(s['symbol'].endswith('DOWN'+stablecoin))
-        and not(s['symbol'].endswith('UP'+stablecoin))
-        and not(s['symbol'] == "AUD"+stablecoin) # Australian Dollar
-        and not(s['symbol'] == "EUR"+stablecoin) # Euro
-        and not(s['symbol'] == "GBP"+stablecoin) # British pound
+    if (s['symbol'].endswith(trade_against)
+        and not(s['symbol'].endswith('DOWN'+trade_against))
+        and not(s['symbol'].endswith('UP'+trade_against))
+        and not(s['symbol'] == "AUD"+trade_against) # Australian Dollar
+        and not(s['symbol'] == "EUR"+trade_against) # Euro
+        and not(s['symbol'] == "GBP"+trade_against) # British pound
         and s['status'] == 'TRADING'):
             coinPairs.add(s['symbol'])
 
@@ -109,13 +131,17 @@ for s in exchange_info['symbols']:
 coinPairs -= blacklist
 
 coinPairs = sorted(coinPairs)
-msg = str(len(coinPairs))+" coins found. Calculating..."
+msg = str(len(coinPairs))+" symbols found. Calculating..."
 print(msg)
 telegram.send_telegram_message(telegram.telegramToken_market_phases, "", msg)
 
 def applytechnicals(df):
+        
         df['50DSMA'] = df['Close'].rolling(50).mean()
         df['200DSMA'] = df['Close'].rolling(200).mean()
+
+        df['perc_above_50DSMA'] = ((df['Close']-df['50DSMA'])/df['50DSMA'])*100
+        df['perc_above_200DSMA'] = ((df['Close']-df['200DSMA'])/df['200DSMA'])*100        
 
 def getdata(Symbol):
     try:
@@ -149,7 +175,7 @@ for coinPair in coinPairs:
     #     break    
     
     # i = i+1
-    # if i == 2:
+    # if i == 50:
     #     break
 
     print("calculating "+coinPair)
@@ -163,9 +189,8 @@ for coinPair in coinPairs:
         dfResult = df
     else:
         dfResult = pd.concat([dfResult, df])
-    
-    # print(dfResult)
 
+# Coins in accumulation and Bullish phases
 conditions = [
     (dfResult['Close'] > dfResult['50DSMA']) & (dfResult['Close'] < dfResult['200DSMA']) & (dfResult['50DSMA'] < dfResult['200DSMA']), # recovery phase
     (dfResult['Close'] > dfResult['50DSMA']) & (dfResult['Close'] > dfResult['200DSMA']) & (dfResult['50DSMA'] < dfResult['200DSMA']), # accumulation phase
@@ -180,39 +205,94 @@ dfResult['MarketPhase'] = np.select(conditions, values)
 # print(dfResult)
 
 # currentDate = date.today().strftime('%Y%m%d')
-# dfResult.to_csv("coinPairByMarketPhase/coinpairByMarketPhase_"+stablecoin+"_"+timeframe+"_"+currentDate+".csv")
+# dfResult.to_csv("coinPairByMarketPhase/coinpairByMarketPhase_"+trade_against+"_"+timeframe+"_"+currentDate+".csv")
 
-# add coin pairs in accumulation or bullish phase to addcoinpair file
 dfBullish = dfResult.query("MarketPhase == 'bullish'")
 dfAccumulation= dfResult.query("MarketPhase == 'accumulation'")
+
 # union accumulation and bullish results
 dfUnion = pd.concat([dfBullish, dfAccumulation], ignore_index=True)
-dfUnion.to_csv("coinpairByMarketPhase_"+stablecoin+"_"+timeframe+".csv")
 
-telegram.send_telegram_message(telegram.telegramToken_market_phases, "", dfBullish.to_string(index=False))
-telegram.send_telegram_message(telegram.telegramToken_market_phases, "", f"{str(len(dfBullish))} in bullish phase")
-telegram.send_telegram_message(telegram.telegramToken_market_phases, "", dfAccumulation.to_string(index=False))
-telegram.send_telegram_message(telegram.telegramToken_market_phases, "", f"{str(len(dfAccumulation))} in accumulation phase")
+df_top = dfUnion.sort_values(by=['perc_above_200DSMA'], ascending=False)
+df_top = df_top.head(trade_top_performance)
+
+# set rank for highest strength
+df_top['performance_rank'] = np.arange(len(df_top))+1
+
+df_top.to_csv("coinpairByMarketPhase_"+trade_against+"_"+timeframe+".csv")
+
+selected_columns = df_top[["Coinpair","Close","MarketPhase",'performance_rank']]
+df_top_print = selected_columns.copy()
+df_top_print.rename(columns={"Coinpair": "Symbol", "Close": "Price", "performance_rank": "BestPerf" }, inplace=True)
+
+telegram.send_telegram_message(telegram.telegramToken_market_phases, "", f"Top {str(trade_top_performance)} performance coins:")
+telegram.send_telegram_message(telegram.telegramToken_market_phases, "", df_top_print.to_string(index=False))
+
+# telegram.send_telegram_message(telegram.telegramToken_market_phases, "", dfBullish.to_string(index=False))
+# telegram.send_telegram_message(telegram.telegramToken_market_phases, "", f"{str(len(dfBullish))} in bullish phase")
+# telegram.send_telegram_message(telegram.telegramToken_market_phases, "", dfAccumulation.to_string(index=False))
+# telegram.send_telegram_message(telegram.telegramToken_market_phases, "", f"{str(len(dfAccumulation))} in accumulation phase")
 
 positionsTimeframe = ["1d", "4h", "1h"]
 
-if not dfUnion.empty:
+if not df_top.empty:
 
-    # remove coin pairs from position files not in accumulation or bullish phase
-    accuBullishCoinPairs = dfUnion.Coinpair.to_list()
+    #------------------------
+    # remove coins from position files that are not top perfomers in accumulation or bullish phase
+    #------------------------
+    top_coins = df_top.Coinpair.to_list()
 
     for tf in positionsTimeframe: 
         positionsfile = pd.read_csv('positions'+tf+'.csv')
 
         filter1 = (positionsfile['position'] == 1) & (positionsfile['quantity'] > 0)
-        filter2 = positionsfile['Currency'].isin(accuBullishCoinPairs)
+        filter2 = positionsfile['Currency'].isin(top_coins)
         positionsfile = positionsfile[filter1 | filter2]  
         
         positionsfile.to_csv('positions'+tf+'.csv', index=False)
     #------------------------
 
+    #------------------------
+    # add top rank coins with positive returns to positions files
+    #------------------------
+    df_best_ema = pd.read_csv('coinpairBestEma.csv')
+    for tf in positionsTimeframe: 
+        for coinPair in top_coins:
+            
+            # read position file
+            df_pos = pd.read_csv('positions'+tf+'.csv')
 
-    # add coin pairs in accumulation or bullish phase
+            # check if coin is already in position file
+            exists = coinPair in df_pos['Currency'].values
+            if not exists:
+                
+                # get return percentage
+                values = df_best_ema.loc[(df_best_ema['coinPair'] == coinPair) & (df_best_ema['timeFrame'] == tf), ['returnPerc']].values
+                if len(values) > 0:
+                    return_perc = values[0][0]
+                    
+                    #if return percentage > 0 add coin to positions file
+                    if return_perc > 0:            
+                        df_add = pd.DataFrame({'Currency': [coinPair],
+                                                'performance_rank': [0],
+                                                'position': [0],
+                                                'quantity': [0],
+                                                'buyPrice': [0],
+                                                'currentPrice': [0],
+                                                'PnLperc': [0]})
+                        df_pos = pd.concat([df_pos, df_add], ignore_index = True, axis = 0)
+
+                        try:
+                            df_pos.to_csv('positions'+tf+'.csv', index=False)
+                        except Exception as e:
+                            msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
+                            print(msg)
+                            # telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eWarning, msg)
+    #------------------------
+
+    #------------------------
+    # add coin pairs top performers in accumulation or bullish phase to calc best ema if not exist 
+    #------------------------
     try:
         filename = 'addcoinpair.csv'
         fileAddcoinpair = pd.read_csv(filename)
@@ -222,14 +302,14 @@ if not dfUnion.empty:
         logging.exception(msg)
         telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eWarning, msg) 
 
-    # remove the coins that are not anymore on the accumulation or bullish phases 
+    # remove the coins that are not anymore top performers on the accumulation or bullish phases 
     # and next time the coin goes into these phases will calc again the best ema
     filter1 = fileAddcoinpair['Completed'] == 0
-    filter2 = fileAddcoinpair['Currency'].isin(accuBullishCoinPairs)
+    filter2 = fileAddcoinpair['Currency'].isin(top_coins)
     fileAddcoinpair = fileAddcoinpair[filter1 | filter2]  
 
     # add coin pairs
-    for coinPair in dfUnion.Coinpair:
+    for coinPair in df_top.Coinpair:
         # line = fileAddcoinpair.index[(fileAddcoinpair['Currency'] == coinPair)].to_list()
         exists = coinPair in fileAddcoinpair['Currency'].values
         if not exists:
@@ -297,6 +377,7 @@ telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eS
 stop = timeit.default_timer()
 msg = "Execution Time (s): "+str(round(stop - start,1))
 print(msg) 
-telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eStop, msg)
+
+telegram.send_telegram_message(telegram.telegramToken_market_phases, "", msg)
 
 

@@ -10,7 +10,7 @@ stake_amount_type: "unlimited"
 
 # max number of open positions
 # if tradable balance = 1000 and max_number_of_open_positions = 10, the stake_amount = 1000/10 = 100 
-max_number_of_open_positions: 30
+max_number_of_open_positions: 28
 
 # tradable percentage of the balance
 # for example: if you want to run 3 bot instances (1h, 4h and 1D), you can set the percentage of the total balance to be allocated to all the bots.
@@ -18,3 +18,9 @@ tradable_balance_ratio: 1
 
 # minimum position size in usd
 min_position_size: 20
+
+# trade top X performance coins
+trade_top_performance: 30
+
+# trade against BUSD, USDT or BTC
+trade_against: "BUSD"

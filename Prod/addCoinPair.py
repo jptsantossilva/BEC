@@ -60,6 +60,28 @@ timeframe = ["1d", "4h", "1h"]
 #         df['SMA50']  = df['Close'].rolling(50).mean()
 #         df['SMA200'] = df['Close'].rolling(200).mean()
 
+def get_performance_rank(symbol):
+
+    if symbol.endswith("BTC"):
+        coin_only = symbol[:-3]
+        coin_stable = symbol[-3:]
+    elif symbol.endswith(("BUSD","USDT")):    
+        coin_only = symbol[:-4]
+        coin_stable = symbol[-4:]
+
+    filename = f'coinpairByMarketPhase_{coin_stable}_1d.csv'
+    df = pd.read_csv(filename)
+
+    # get performance_rank value 
+    if 'performance_rank' in df.columns:
+        res = df.loc[df['Coinpair'] == symbol, 'performance_rank'].values
+        if len(res) > 0:
+            return res[0]
+        else:
+            return 1000
+    else:
+        return 1000
+
 def main():
 
     try:
@@ -78,8 +100,10 @@ def main():
     # Listcoinpair
 
     list = ListNotCompleted.drop(columns = ['Completed','Date'])
-    telegram.send_telegram_message(telegram.telegramToken_market_phases, "", "Calculating best EMA for the following coins:")
-    telegram.send_telegram_message(telegram.telegramToken_market_phases, "", list.to_string(index=False, header = False)) 
+
+    if not list.empty: # not empty 
+        telegram.send_telegram_message(telegram.telegramToken_market_phases, "", "Calculating best EMA for the following coins:")
+        telegram.send_telegram_message(telegram.telegramToken_market_phases, "", list.to_string(index=False, header = False)) 
     
     # insertupdate
     # calc BestEMA for each coin pair and each time frame and save on positions files
@@ -115,7 +139,7 @@ def main():
                 slowEMA = 0
                 msg = "Warning: there is no line in coinpairBestEma file with coinPair "+str(coinPair)+ " and timeframe "+str(tf)+". "
                 print(msg)
-                telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eWarning, msg)
+                # telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eWarning, msg)
                 continue
 
                 
@@ -157,9 +181,15 @@ def main():
                     # ------------------------------------
 
                     position = 0
+                    rank = get_performance_rank(coinPair)
+
+                    # if column does not exist add it as the second column
+                    if 'performance_rank' not in positionsfile.columns:
+                        positionsfile.insert(loc=1, column="performance_rank", value=[0]*len(positionsfile))
 
                     #add line
-                    positionsfile.loc[len(positionsfile.index)] = [coinPair 
+                    positionsfile.loc[len(positionsfile.index)] = [coinPair
+                                                                    ,rank # performance rank
                                                                     ,position
                                                                     ,0 # qty
                                                                     ,0 # buyPrice

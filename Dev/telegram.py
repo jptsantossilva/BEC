@@ -86,11 +86,11 @@ def send_telegram_message(telegram_token, emoji, msg):
             try:
                 # if message is a warning, send message also to the errors telegram chat bot 
                 if emoji == eWarning:
-                    resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegramToken_errors), params=params)
+                    resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegramToken_errors), params=params, timeout=5)
                     resp.raise_for_status()
 
                 if telegram_token != telegramToken_errors:
-                    resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegram_token), params=params)
+                    resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegram_token), params=params, timeout=5)
                     resp.raise_for_status()
 
             except requests.exceptions.HTTPError as errh:
@@ -125,10 +125,10 @@ def send_telegram_message(telegram_token, emoji, msg):
         try:            
             # if message is a warning, send message also to the errors telegram chat bot 
             if emoji == eWarning:
-                resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegramToken_errors), params=params)
+                resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegramToken_errors), params=params, timeout=5)
                 resp.raise_for_status()
 
-            resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegram_token), params=params)
+            resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegram_token), params=params, timeout=5)
             resp.raise_for_status()
 
         except requests.exceptions.HTTPError as errh:
@@ -164,7 +164,7 @@ def send_telegram_alert(telegram_token, emoji, date, coin, timeframe, strategy, 
     }
     
     try:
-        resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegram_token), params=params)
+        resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegram_token), params=params, timeout=5)
         resp.raise_for_status()
 
     except requests.exceptions.HTTPError as errh:
@@ -194,7 +194,7 @@ def send_telegram_alert(telegram_token, emoji, date, coin, timeframe, strategy, 
         }
 
         try: 
-            resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegramToken_closed_position), params=params)
+            resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegramToken_closed_position), params=params, timeout=5)
             resp.raise_for_status()
 
         except requests.exceptions.HTTPError as errh:
@@ -224,7 +224,7 @@ def send_telegram_photo(telegram_token, file_name='balance.png'):
     url = f"https://api.telegram.org/bot{telegram_token}/sendPhoto?chat_id={telegram_chat_id}"
     
     try:
-        resp = requests.post(url, files={'photo':oimg}) # this sends the message
+        resp = requests.post(url, files={'photo':oimg}, timeout=5) # this sends the message
         resp.raise_for_status()
 
     except requests.exceptions.HTTPError as errh:

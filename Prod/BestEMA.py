@@ -142,49 +142,57 @@ def getdata(pSymbol, pTimeframe):
         frame = pd.DataFrame()
         return frame 
 
-def runBackTest(coinPair):
-
-    coinOnly = coinPair[:-4]
-    coinStable = coinPair[-4:]
+def runBackTest(coin_pair):
+    
+    if coin_pair.endswith("BTC"):
+        coinOnly = coin_pair[:-3]
+        coinStable = coin_pair[-3:]
+    elif coin_pair.endswith(("BUSD","USDT")):    
+        coinOnly = coin_pair[:-4]
+        coinStable = coin_pair[-4:]
 
     # print("coinPair = ",coinPair)
     # df = getdata(coinPair, timeframe)
 
+    if coin_pair.endswith("BTC"):
+        df = getdata(coin_pair, timeframe)
+
     # get historical data from BUSD and USDT and use the one with more data 
-    dfStableBUSD = pd.DataFrame()
-    dfStableUSDT = pd.DataFrame()
-
-    iniBUSD = 0
-    iniUSDT = 0
+    elif coin_pair.endswith(("BUSD","USDT")):
+        dfStableBUSD = pd.DataFrame()
+        dfStableUSDT = pd.DataFrame()
     
-    dfStableBUSD = getdata(coinOnly+"BUSD", timeframe)
+        iniBUSD = 0
+        iniUSDT = 0
         
-    if not dfStableBUSD.empty:
-        ini1 = dfStableBUSD.index[0]
+        dfStableBUSD = getdata(coinOnly+"BUSD", timeframe)
+            
+        if not dfStableBUSD.empty:
+            ini1 = dfStableBUSD.index[0]
 
-    dfStableUSDT = getdata(coinOnly+"USDT", timeframe) 
+        dfStableUSDT = getdata(coinOnly+"USDT", timeframe) 
 
-    if not dfStableUSDT.empty:
-        ini2 = dfStableUSDT.index[0]
+        if not dfStableUSDT.empty:
+            ini2 = dfStableUSDT.index[0]
 
-    # get start date and use the older one
-    if dfStableBUSD.empty and dfStableUSDT.empty:
-        # print("Both wrong")
-        return
-    elif dfStableBUSD.empty and not dfStableUSDT.empty:
-        # print("choose ini2")
-        df = dfStableUSDT.copy()
-    elif not dfStableBUSD.empty and dfStableUSDT.empty:
-        # print("choose ini1")
-        df = dfStableBUSD.copy()
-    elif ini1 > ini2:
-        # USDT has more history
-        print("USDT pair has more history data")
-        df = dfStableUSDT.copy()
-    else:
-        # BUSD has more history
-        print("BUSD pair has more history data")
-        df = dfStableBUSD.copy()
+        # get start date and use the older one
+        if dfStableBUSD.empty and dfStableUSDT.empty:
+            # print("Both wrong")
+            return
+        elif dfStableBUSD.empty and not dfStableUSDT.empty:
+            # print("choose ini2")
+            df = dfStableUSDT.copy()
+        elif not dfStableBUSD.empty and dfStableUSDT.empty:
+            # print("choose ini1")
+            df = dfStableBUSD.copy()
+        elif ini1 > ini2:
+            # USDT has more history
+            print("USDT pair has more historical data")
+            df = dfStableUSDT.copy()
+        else:
+            # BUSD has more history
+            print("BUSD pair has more historical data")
+            df = dfStableBUSD.copy()
 
     # df = df.drop(['Time'], axis=1)
     # print(df)
@@ -222,12 +230,12 @@ def runBackTest(coinPair):
         # coinpairBestEma
         # add to file coinpair Best Ema 
         # if exist then update else add
-        linha = coinpairBestEma.index[(coinpairBestEma.coinPair == coinPair) & (coinpairBestEma.timeFrame == timeframe)].to_list()
+        linha = coinpairBestEma.index[(coinpairBestEma.coinPair == coin_pair) & (coinpairBestEma.timeFrame == timeframe)].to_list()
 
         if not linha:
             # print("There is no line in coinpairBestEma file with coinPair "+str(coinPair)+ " and timeframe "+str(timeframe)+". New line will be added.")
             # add line
-            coinpairBestEma.loc[len(coinpairBestEma.index)] = [coinPair, 
+            coinpairBestEma.loc[len(coinpairBestEma.index)] = [coin_pair, 
                                                                 n1,
                                                                 n2,
                                                                 timeframe,

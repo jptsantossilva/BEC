@@ -30,6 +30,7 @@ import logging
 import telegram
 import timeit
 import yaml
+from addCoinPair import get_performance_rank
 
 # calculate program run time
 start = timeit.default_timer()
@@ -85,10 +86,11 @@ try:
     with open("config.yaml", "r") as file:
         config = yaml.safe_load(file)
 
-    stake_amount_type      = config["stake_amount_type"]
-    max_number_of_open_positions   = config["max_number_of_open_positions"]
-    tradable_balance_ratio = config["tradable_balance_ratio"]
-    min_position_size      = config["min_position_size"]
+    stake_amount_type               = config["stake_amount_type"]
+    max_number_of_open_positions    = config["max_number_of_open_positions"]
+    tradable_balance_ratio          = config["tradable_balance_ratio"]
+    min_position_size               = config["min_position_size"]
+    trade_against                   = config["trade_against"]
 
 except FileNotFoundError as e:
     msg = "Error: The file config.yaml could not be found."
@@ -140,6 +142,9 @@ def read_csv_files():
 
     try:
         # read positions
+        # make sure performance rank is fulfilled
+        set_performance_rank()
+
         filename = 'positions'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv'
         df_positions = pd.read_csv(filename)
 
@@ -340,20 +345,23 @@ def change_pos(dfPos, curr, order, typePos, buyPrice=0, currentPrice=0):
         
 #-----------------------------------------------------------------------
 
+# Make sure we are only trying to buy positions on coins included on market phases file.  
+# this is needed here specially for 1h/4h time frames when coin is no longer on bullish or accumulation and a close position occurred
+# and we dont want to back in position during the same day
 def remove_coins_position():
     # remove coin pairs from position file not in accumulation or bullish phase -> coinpairByMarketPhase_BUSD_1d.csv
-    
-    dfAllByMarketPhase = pd.read_csv('coinpairByMarketPhase_BUSD_1d.csv')
-    dfBullish = dfAllByMarketPhase.query("MarketPhase == 'bullish'")
-    dfAccumulation= dfAllByMarketPhase.query("MarketPhase == 'accumulation'")
-    # union accumulation and bullish results
-    dfUnion = pd.concat([dfBullish, dfAccumulation], ignore_index=True)
-    accuBullishCoinPairs = dfUnion.Coinpair.to_list()
+
+    dfAllByMarketPhase = pd.read_csv(f'coinpairByMarketPhase_{trade_against}_1d.csv')
+    # dfBullish = dfAllByMarketPhase.query("MarketPhase == 'bullish'")
+    # dfAccumulation= dfAllByMarketPhase.query("MarketPhase == 'accumulation'")
+    # # union accumulation and bullish results
+    # dfUnion = pd.concat([dfBullish, dfAccumulation], ignore_index=True)
+    # accuBullishCoinPairs = dfUnion.Coinpair.to_list()
 
     positionsfile = pd.read_csv('positions'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv')
 
     filter1 = (positionsfile['position'] == 1) & (positionsfile['quantity'] > 0)
-    filter2 = positionsfile['Currency'].isin(accuBullishCoinPairs)
+    filter2 = positionsfile['Currency'].isin(dfAllByMarketPhase['Coinpair'])
     positionsfile = positionsfile[filter1 | filter2]
 
     # order by name
@@ -432,7 +440,24 @@ def get_open_positions(df):
         telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
         return -1
 
-# %%
+
+# get performance rank values from coinpairByMarketPhase and set to position file
+def set_performance_rank():
+
+    filename = 'positions'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv'
+    df_pos = pd.read_csv(filename)  
+
+    filename = f'coinpairByMarketPhase_{trade_against}_1d.csv'
+    df_mp = pd.read_csv(filename)
+    
+    df_merged = df_pos.merge(df_mp, left_on='Currency', right_on='Coinpair', how='left')
+    df_pos['performance_rank'] = df_merged['performance_rank_y']
+
+    # those that dont have performance rank number will set rank num to 1000 to make sure that they are at the end of the list
+    df_pos['performance_rank'].fillna(1000, inplace=True)
+
+    df_pos.to_csv('positions'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv', index=False)
+
 def trader():
 
     # remove coin pairs from position file not in accumulation or bullish phase -> coinpairByMarketPhase_BUSD_1d.csv
@@ -441,15 +466,19 @@ def trader():
     # read position, orders and bestEma files
     read_csv_files()
 
-    # list of coins in position - SELL
-    listPosition1 = df_positions[df_positions.position == 1].Currency
-    # list of coins in position - BUY
-    listPosition0 = df_positions[df_positions.position == 0].Currency
+    # sort positions by performance rank
+    df_positions.sort_values(by=['performance_rank'], inplace=True)
 
+    # list of coins in position - SELL
+    list_to_sell = df_positions[df_positions.position == 1].Currency
+    
+    # list of coins in position - BUY
+    list_to_buy = df_positions[df_positions.position == 0].Currency
+    
     # ------------------------------------------------------------
     # check open positions and SELL if conditions are fulfilled 
     # ------------------------------------------------------------
-    for coinPair in listPosition1:
+    for coinPair in list_to_sell:
         # sendTelegramMessage("",coinPair) 
         df = get_data(coinPair, gTimeFrameNum, gtimeframeTypeShort)
 
@@ -585,7 +614,7 @@ def trader():
     # ------------------------------------------------------------------
     # check coins not in positions and BUY if conditions are fulfilled
     # ------------------------------------------------------------------
-    for coinPair in listPosition0:
+    for coinPair in list_to_buy:
         # sendTelegramMessage("",coinPair) 
         df = get_data(coinPair, gTimeFrameNum, gtimeframeTypeShort)
 
@@ -678,40 +707,26 @@ def trader():
             print(msg)
             telegram.send_telegram_message(telegramToken, "", msg)
 
-    # remove coin pairs from position file not in accumulation or bullish phase -> coinpairByMarketPhase_BUSD_1d.csv
-    # this is needed here specially for 1h/4h time frames when coin is no longer on bullish or accumulation and a close position occurred
-    # and we dont want to back in position during the same day
-    remove_coins_position()
-
 
 def main():
 
-    try:
-        trader()
-    except Exception as e:
-        msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
-        print(msg)
-        telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
-        pass
-
+    trader()
 
     # add orders to csv file
     df_orders.to_csv('orders'+str(gTimeFrameNum)+gtimeframeTypeShort+'.csv', mode='a', index=False, header=False)
-
-
-    # posframe.drop('position', axis=1, inplace=True)
-    # posframe.style.applymap(custom_style)
      
     # positions summary
     df_current_positions = get_open_positions(df_positions)
-    df_current_positions.drop(columns=['position'], inplace=True)
-    df_current_positions.reset_index(drop=True, inplace=True) # gives consecutive numbers to each row
-    if df_current_positions.empty:
+    df_cp_to_print = df_current_positions.drop(columns=['position','performance_rank'])
+    df_cp_to_print.sort_values(by=['Currency'], inplace=True)
+    df_cp_to_print.rename(columns={"Currency": "Symbol", "Close": "Price", }, inplace=True)
+    df_cp_to_print.reset_index(drop=True, inplace=True) # gives consecutive numbers to each row
+    if df_cp_to_print.empty:
         print("Result: no open positions yet")
         telegram.send_telegram_message(telegramToken, "", "Result: no open positions")
     else:
-        print(df_current_positions)
-        telegram.send_telegram_message(telegramToken, "", df_current_positions.to_string())
+        print(df_cp_to_print)
+        telegram.send_telegram_message(telegramToken, "", df_cp_to_print.to_string())
 
     if stake_amount_type == "unlimited":
         num_open_positions = get_num_open_positions()
@@ -728,7 +743,7 @@ def main():
     stop = timeit.default_timer()
     msg = 'Execution Time (s): '+str(round(stop - start,1))
     print(msg)
-    telegram.send_telegram_message(telegramToken, telegram.eStop, msg)
+    telegram.send_telegram_message(telegramToken, "", msg)
 
 if __name__ == "__main__":
     main()

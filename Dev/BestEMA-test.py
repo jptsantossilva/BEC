@@ -13,6 +13,10 @@ import sys
 from datetime import date, timedelta
 from dateutil.relativedelta import relativedelta
 import time
+import timeit
+
+# calculate program run time
+start = timeit.default_timer() 
 
 # %%
 # Binance API
@@ -67,8 +71,8 @@ def SMA(values, n):
 # Close position when slow ema > fast ema  
 #-------------------------------------
 class EmaCross(Strategy):
-    n1 = 7
-    n2 = 8
+    n1 = 15
+    n2 = 105
     nFastSMA = 50
     nSlowSMA = 200
     
@@ -92,8 +96,8 @@ class EmaCross(Strategy):
         bullishPhase = (priceClose > SMA50) and (priceClose > SMA200) and (SMA50 > SMA200)
 
         if not self.position:
-            # if (accumulationPhase or bullishPhase) and crossover(fastEMA, slowEMA):
-            if crossover(fastEMA, slowEMA):
+            if (accumulationPhase or bullishPhase) and crossover(fastEMA, slowEMA):
+            # if crossover(fastEMA, slowEMA):
                 self.buy()
         
         else: 
@@ -133,13 +137,19 @@ def runBackTest(coinPair):
     print(stats)
     bt.plot()
 
-    stats, heatmap = bt.optimize(
-    n1=range(5, 100, 5),
-    n2=range(10, 200, 5),
-    constraint=lambda param: param.n1 < param.n2,
-    maximize='Equity Final [$]',
-    return_heatmap=True
-    )
+    try:
+        stats, heatmap = bt.optimize(
+        n1=range(5, 100, 5),
+        n2=range(10, 200, 5),
+        constraint=lambda param: param.n1 < param.n2,
+        maximize='Equity Final [$]',
+        return_heatmap=True
+        )
+    except Exception as e:
+        msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
+        print(msg)
+        # telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
+
 
     dfbema = pd.DataFrame(heatmap.sort_values().iloc[-1:])
     n1 = dfbema.index.get_level_values(0)[0]
@@ -153,33 +163,33 @@ def runBackTest(coinPair):
     print("Return [%] = ",round(returnPerc,2))
     print("Buy & Hold Return [%] = ",round(BuyHoldReturnPerc,2))
 
-    coinpairBestEma = pd.read_csv('coinpairBestEma.csv')
-    # coinpairBestEma
-    # add to file coinpair Best Ema 
-    # if exist then update else add
-    linha = coinpairBestEma.index[(coinpairBestEma.coinPair == coinPair) & (coinpairBestEma.timeFrame == timeframe)].to_list()
+    # coinpairBestEma = pd.read_csv('coinpairBestEma.csv')
+    # # coinpairBestEma
+    # # add to file coinpair Best Ema 
+    # # if exist then update else add
+    # linha = coinpairBestEma.index[(coinpairBestEma.coinPair == coinPair) & (coinpairBestEma.timeFrame == timeframe)].to_list()
 
-    if not linha:
-        # print("There is no line in coinpairBestEma file with coinPair "+str(coinPair)+ " and timeframe "+str(timeframe)+". New line will be added.")
-        # add line
-        coinpairBestEma.loc[len(coinpairBestEma.index)] = [coinPair, 
-                                                            n1,
-                                                            n2,
-                                                            timeframe,
-                                                            returnPerc,
-                                                     BuyHoldReturnPerc
-                                                        ]
-    else:
-        # print("linha=",linha[0])
-        # update line
-        coinpairBestEma.loc[linha[0],['fastEMA','slowEMA','returnPerc','BuyHoldReturnPerc']] = [n1, n2, returnPerc,BuyHoldReturnPerc]
+    # if not linha:
+    #     # print("There is no line in coinpairBestEma file with coinPair "+str(coinPair)+ " and timeframe "+str(timeframe)+". New line will be added.")
+    #     # add line
+    #     coinpairBestEma.loc[len(coinpairBestEma.index)] = [coinPair, 
+    #                                                         n1,
+    #                                                         n2,
+    #                                                         timeframe,
+    #                                                         returnPerc,
+    #                                                  BuyHoldReturnPerc
+    #                                                     ]
+    # else:
+    #     # print("linha=",linha[0])
+    #     # update line
+    #     coinpairBestEma.loc[linha[0],['fastEMA','slowEMA','returnPerc','BuyHoldReturnPerc']] = [n1, n2, returnPerc,BuyHoldReturnPerc]
 
-    # coinpairBestEma
-    # print("Saving Coin Pair to coinpairBestEma file")
+    # # coinpairBestEma
+    # # print("Saving Coin Pair to coinpairBestEma file")
 
-    #order by coinpair and timeframe
-    coinpairBestEma.sort_values(by=['coinPair','timeFrame'], inplace=True)
-    coinpairBestEma.to_csv('coinpairBestEma.csv', index=False, header=True)
+    # #order by coinpair and timeframe
+    # coinpairBestEma.sort_values(by=['coinPair','timeFrame'], inplace=True)
+    # coinpairBestEma.to_csv('coinpairBestEma.csv', index=False, header=True)
 
 
 def addcoinpair(coinPair, lTimeframe):
@@ -202,7 +212,11 @@ def addcoinpair(coinPair, lTimeframe):
 
 
 # %%
-addcoinpair("FETBUSD", "1h")
+addcoinpair("FISUSDT", "4h")
+
+stop = timeit.default_timer()
+msg = "Execution Time (s): "+str(round(stop - start,1))
+print(msg) 
 
 
 

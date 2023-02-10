@@ -143,8 +143,7 @@ def getdata(pSymbol, pTimeframe):
         return frame 
 
 def runBackTest(coin_pair):
-
-
+    
     if coin_pair.endswith("BTC"):
         coinOnly = coin_pair[:-3]
         coinStable = coin_pair[-3:]
@@ -188,11 +187,11 @@ def runBackTest(coin_pair):
             df = dfStableBUSD.copy()
         elif ini1 > ini2:
             # USDT has more history
-            print("USDT pair has more history data")
+            print("USDT pair has more historical data")
             df = dfStableUSDT.copy()
         else:
             # BUSD has more history
-            print("BUSD pair has more history data")
+            print("BUSD pair has more historical data")
             df = dfStableBUSD.copy()
 
     # df = df.drop(['Time'], axis=1)
