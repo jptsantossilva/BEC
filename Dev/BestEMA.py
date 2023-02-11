@@ -121,9 +121,13 @@ class EmaCross(Strategy):
 # %%
 def getdata(pSymbol, pTimeframe):
     try:
-        frame = pd.DataFrame(client.get_historical_klines(pSymbol,
-                                                        pTimeframe,
-                                                        startdate
+        frame = pd.DataFrame(client.get_historical_klines(pSymbol
+                                                        ,pTimeframe
+
+                                                        # better get all historical data. 
+                                                        # Using a defined start date will affect ema values. 
+                                                        # To get same ema and sma values of tradingview all historical data must be used. 
+                                                        # ,lstartDate
                                                         ))
         
         frame = frame.iloc[:,:6] # use the first 5 columns

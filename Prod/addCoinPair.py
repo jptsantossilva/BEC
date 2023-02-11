@@ -23,43 +23,6 @@ result_4h = False
 result_1h = False
 timeframe = ["1d", "4h", "1h"]
 
-# def getdata(coinPair, aTimeframeNum, aTimeframeTypeShort, aSlowSMA=200):
-
-#     lTimeFrame = str(aTimeframeNum)+aTimeframeTypeShort
-#     if aTimeframeTypeShort == "h":
-#         lTimeframeTypeLong = "hour"
-#     elif aTimeframeTypeShort == "d":
-#         lTimeframeTypeLong = "day"
-    
-#     # gStrategyName = str(aFastMA)+"/"+str(aSlowMA)+" EMA cross"
-
-#     # if bestEMA does not exist return empty dataframe in order to no use that trading pair
-#     # if aFastMA == 0:
-#     #     frame = pd.DataFrame()
-#     #     return frame
-    
-#     # if best Ema exist get price data 
-#     lstartDate = str(aSlowSMA*aTimeframeNum)+" "+lTimeframeTypeLong+" ago UTC" 
-#     ltimeframe = str(aTimeframeNum)+aTimeframeTypeShort
-#     frame = pd.DataFrame(BestEMA.client.get_historical_klines(coinPair,
-#                                                     ltimeframe,
-#                                                     lstartDate))
-
-#     frame = frame[[0,4]]
-#     frame.columns = ['Time','Close']
-#     frame.Close = frame.Close.astype(float)
-#     frame.Time = pd.to_datetime(frame.Time, unit='ms')
-#     return frame
-
-# %%
-# def applytechnicals(df, aFastMA, aSlowMA):
-    
-#     if aFastMA > 0: 
-#         df['FastEMA'] = df['Close'].ewm(span=aFastMA, adjust=False).mean()
-#         df['SlowEMA'] = df['Close'].ewm(span=aSlowMA, adjust=False).mean()
-#         df['SMA50']  = df['Close'].rolling(50).mean()
-#         df['SMA200'] = df['Close'].rolling(200).mean()
-
 def get_performance_rank(symbol):
 
     if symbol.endswith("BTC"):

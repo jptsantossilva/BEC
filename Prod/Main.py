@@ -286,9 +286,15 @@ def get_data(coinPair, aTimeframeNum, aTimeframeTypeShort, aFastMA=0, aSlowMA=0)
         sma200 = 200
         lstartDate = str(sma200*aTimeframeNum)+" "+lTimeframeTypeLong+" ago UTC" 
         ltimeframe = str(aTimeframeNum)+aTimeframeTypeShort
-        frame = pd.DataFrame(client.get_historical_klines(coinPair,
-                                                        ltimeframe,
-                                                        lstartDate))
+        frame = pd.DataFrame(client.get_historical_klines(coinPair
+                                                        ,ltimeframe
+    
+                                                        # better get all historical data. 
+                                                        # Using a defined start date will affect ema values. 
+                                                        # To get same ema and sma values of tradingview all historical data must be used. 
+                                                        # ,lstartDate
+                                                        
+                                                        ))
 
         frame = frame[[0,4]]
         frame.columns = ['Time','Close']

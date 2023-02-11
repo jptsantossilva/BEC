@@ -145,9 +145,15 @@ def applytechnicals(df):
 
 def getdata(Symbol):
     try:
-        frame = pd.DataFrame(client.get_historical_klines(Symbol,
-                                                        timeframe,                                        
-                                                        startdate))
+        frame = pd.DataFrame(client.get_historical_klines(Symbol
+                                                        ,timeframe                                        
+                                                        
+                                                        # better get all historical data. 
+                                                        # Using a defined start date will affect ema values. 
+                                                        # To get same ema and sma values of tradingview all historical data must be used. 
+                                                        # ,startDate
+
+                                                        ))
         
         frame = frame.iloc[:,[0,4]] # columns selection
         frame.columns = ['Time','Close'] #rename columns
@@ -219,7 +225,7 @@ df_top = df_top.head(trade_top_performance)
 # set rank for highest strength
 df_top['performance_rank'] = np.arange(len(df_top))+1
 
-df_top.to_csv("coinpairByMarketPhase_"+trade_against+"_"+timeframe+".csv")
+df_top.to_csv("coinpairByMarketPhase_"+trade_against+"_"+timeframe+".csv", index=False)
 
 selected_columns = df_top[["Coinpair","Close","MarketPhase",'performance_rank']]
 df_top_print = selected_columns.copy()
