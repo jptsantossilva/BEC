@@ -1,3 +1,4 @@
+# %%
 
 """
 calculates best ema for the coinpair and time frame provided and store results on coinpairBestEma.csv
@@ -33,6 +34,7 @@ today = date.today()
 # print(today)
 # today - 4 years - 200 days
 pastdate = today - relativedelta(years=4) - relativedelta(days=200)
+
 # print(pastdate)
 # element = datetime.datetime.strptime(str(pastdate_4years),"%Y-%m-%d")
 tuple = pastdate.timetuple()
@@ -47,6 +49,18 @@ startdate = str(timestamp)
 # startdate = "4 year ago UTC"
 # startdate = "10 day ago UTC"
 #-------------------------------------
+
+
+# # example when want to choose specific start date
+# #-------------------------------------
+# pastdate = datetime.date(2022, 4, 23)
+# pastdate = pastdate - relativedelta(days=200)
+# tuple = pastdate.timetuple()
+# timestamp = time.mktime(tuple)
+# startdate = str(timestamp)
+#-------------------------------------
+
+
 timeframe = ""
 
 # %%
@@ -71,8 +85,8 @@ def SMA(values, n):
 # Close position when slow ema > fast ema  
 #-------------------------------------
 class EmaCross(Strategy):
-    n1 = 15
-    n2 = 105
+    n1 = 55
+    n2 = 60
     nFastSMA = 50
     nSlowSMA = 200
     
@@ -109,8 +123,8 @@ class EmaCross(Strategy):
 # %%
 def getdata(Symbol):
     frame = pd.DataFrame(client.get_historical_klines(Symbol,
-                                                      timeframe,
-                                                      startdate
+                                                      timeframe
+                                                      ,startdate
                                                       ))
     
     frame = frame.iloc[:,:6] # use the first 5 columns
@@ -122,6 +136,7 @@ def getdata(Symbol):
     # format = '%Y-%m-%d %H:%M:%S'
     # frame['Time'] = pd.to_datetime(frame['Time'], format=format)
     frame = frame.set_index(pd.DatetimeIndex(frame['Time']))
+    frame = frame.drop(['Time'], axis=1)
     return frame
 
 # %%
@@ -129,40 +144,41 @@ def runBackTest(coinPair):
 
     # print("coinPair = ",coinPair)
     df = getdata(coinPair)
-    df = df.drop(['Time'], axis=1)
+    # df = df.drop(['Time'], axis=1)
     # print(df)
 
     bt = Backtest(df, EmaCross, cash=100000, commission=0.001)
     stats = bt.run()
     print(stats)
     bt.plot()
+    
 
-    try:
-        stats, heatmap = bt.optimize(
-        n1=range(5, 100, 5),
-        n2=range(10, 200, 5),
-        constraint=lambda param: param.n1 < param.n2,
-        maximize='Equity Final [$]',
-        return_heatmap=True
-        )
-    except Exception as e:
-        msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
-        print(msg)
-        # telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
-
+    stats, heatmap = bt.optimize(
+    n1=range(5, 100, 5),
+    n2=range(10, 200, 5),
+    constraint=lambda param: param.n1 < param.n2,
+    maximize='Equity Final [$]',
+    return_heatmap=True
+    )
 
     dfbema = pd.DataFrame(heatmap.sort_values().iloc[-1:])
     n1 = dfbema.index.get_level_values(0)[0]
     n2 = dfbema.index.get_level_values(1)[0]
     returnPerc = round(stats['Return [%]'],2)
     BuyHoldReturnPerc = round(stats['Buy & Hold Return [%]'],2)
-
+    BacktestStartDate = str(df.index[0])
+    exposure = stats['Exposure Time [%]']
+    num_trades = stats['# Trades']
+    # num_trades = len(stats['_strategy'].trades)
     # lista
     print("n1=",n1)
     print("n2=",n2)
     print("Return [%] = ",round(returnPerc,2))
     print("Buy & Hold Return [%] = ",round(BuyHoldReturnPerc,2))
-
+    print("Backtest start date =", BacktestStartDate)
+    print("Trades =", num_trades)
+    print('Exposure Time [%] = ',round(exposure,2))
+    
     # coinpairBestEma = pd.read_csv('coinpairBestEma.csv')
     # # coinpairBestEma
     # # add to file coinpair Best Ema 
@@ -177,12 +193,13 @@ def runBackTest(coinPair):
     #                                                         n2,
     #                                                         timeframe,
     #                                                         returnPerc,
-    #                                                  BuyHoldReturnPerc
+    #                                                  BuyHoldReturnPerc,
+    #                                                  BacktestStartDate
     #                                                     ]
     # else:
     #     # print("linha=",linha[0])
     #     # update line
-    #     coinpairBestEma.loc[linha[0],['fastEMA','slowEMA','returnPerc','BuyHoldReturnPerc']] = [n1, n2, returnPerc,BuyHoldReturnPerc]
+    #     coinpairBestEma.loc[linha[0],['fastEMA','slowEMA','returnPerc','BuyHoldReturnPerc','BacktestStartDate']] = [n1, n2, returnPerc,BuyHoldReturnPerc,BacktestStartDate]
 
     # # coinpairBestEma
     # # print("Saving Coin Pair to coinpairBestEma file")
@@ -201,22 +218,17 @@ def addcoinpair(coinPair, lTimeframe):
 
     print("Backtest - "+coinPair+" - "+timeframe+" - Start")
     runBackTest(coinPair)
-
     print("Backtest "+coinPair+" - "+timeframe+" - End")
+
+    stop = timeit.default_timer()
+    msg = "Execution Time (s): "+str(round(stop - start,1))
+    print(msg) 
 
     result = True
     return result
 
 
-
-
-
 # %%
-addcoinpair("FISUSDT", "4h")
-
-stop = timeit.default_timer()
-msg = "Execution Time (s): "+str(round(stop - start,1))
-print(msg) 
-
+addcoinpair("CHESSBUSD", "4h")
 
 

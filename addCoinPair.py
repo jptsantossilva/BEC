@@ -176,7 +176,7 @@ def main():
             completedcoinpair.Completed = completedcoinpair.Completed.astype(int, errors='ignore')
             
             # coinpairBestEma
-            print("Mark coin "+str(coinPair)+ " as Completed to addcoinpair file")
+            # print("Mark coin "+str(coinPair)+ " as Completed to addcoinpair file")
             completedcoinpair.to_csv(filename, index=False, header=True)
 
         except Exception as e:

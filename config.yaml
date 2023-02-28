@@ -23,4 +23,4 @@ min_position_size: 20
 trade_top_performance: 30
 
 # trade against BUSD, USDT or BTC
-trade_against: "BUSD"
+trade_against: "BTC"

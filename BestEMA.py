@@ -17,6 +17,7 @@ from binance.exceptions import BinanceAPIException
 import requests
 import telegram
 import logging
+import timeit
 
 # log file to store error messages
 log_filename = "coinpairByMarketPhase.log"
@@ -127,7 +128,7 @@ def getdata(pSymbol, pTimeframe):
                                                         # better get all historical data. 
                                                         # Using a defined start date will affect ema values. 
                                                         # To get same ema and sma values of tradingview all historical data must be used. 
-                                                        # ,lstartDate
+                                                        ,startdate
                                                         ))
         
         frame = frame.iloc[:,:6] # use the first 5 columns
@@ -274,9 +275,18 @@ def addcoinpair(coinPair, lTimeframe):
     timeframe = str(lTimeframe)
 
     try:
+        # calculate program run time
+        start = timeit.default_timer()
+        
+        print(" ")
         print("Backtest - "+coinPair+" - "+timeframe+" - Start")
         runBackTest(coinPair)
         print("Backtest "+coinPair+" - "+timeframe+" - End")
+        
+        stop = timeit.default_timer()
+        msg = 'Execution Time (s): '+str(round(stop - start,1))
+        print(msg)
+        print(" ")
 
         result = True
         return result

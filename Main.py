@@ -206,7 +206,7 @@ def get_num_open_positions():
         telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
         return -1
     
-def calc_stake_amount(coin = 'BUSD'):
+def calc_stake_amount(coin):
     if stake_amount_type == "unlimited":
         num_open_positions = get_num_open_positions()
 
@@ -218,6 +218,7 @@ def calc_stake_amount(coin = 'BUSD'):
 
         try:
             balance = float(client.get_asset_balance(asset=coin)['free'])
+            
         except BinanceAPIException as e:
             msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
             print(msg)
@@ -497,9 +498,13 @@ def trader():
         apply_technicals(df, gFastMA, gSlowMA)
         lastrow = df.iloc[-1]
 
-        # separate coin from stable. example coinPair=BTCUSDT coinOnly=BTC coinStable=USDT 
-        coinOnly = coinPair[:-4]
-        coinStable = coinPair[-4:]
+        # separate coin from stable. example coinPair=BTCUSDT coinOnly=BTC coinStable=USDT
+        if coinPair.endswith("BTC"):
+            coinOnly = coinPair[:-3]
+            coinStable = coinPair[-3:]
+        elif coinPair.endswith(("BUSD","USDT")):    
+            coinOnly = coinPair[:-4]
+            coinStable = coinPair[-4:]
 
         if lastrow.SlowEMA > lastrow.FastEMA:
         # if crossover(df.SlowEMA, df.FastEMA): 
@@ -634,10 +639,12 @@ def trader():
         lastrow = df.iloc[-1]
 
         # separate coin from stable. example coinPair=BTCUSDT coinOnly=BTC coinStable=USDT 
-        coinOnly = coinPair[:-4]
-        # print('coinOnly=',coinOnly)
-        coinStable = coinPair[-4:]
-        # print('coinStable=',coinStable)
+        if coinPair.endswith("BTC"):
+            coinOnly = coinPair[:-3]
+            coinStable = coinPair[-3:]
+        elif coinPair.endswith(("BUSD","USDT")):    
+            coinOnly = coinPair[:-4]
+            coinStable = coinPair[-4:]
 
         # if we wanna be more agressive we can use the following approach:
         # since the coin pair by marketphase is already choosing the coins in bullish and accumulation phase on daily time frame 
