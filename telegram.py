@@ -2,11 +2,35 @@ import requests
 import os
 import sys
 import logging
+import yaml
 
 # log file to store error messages
 log_filename = "main.log"
 logging.basicConfig(filename=log_filename, level=logging.INFO,
                     format='%(asctime)s %(message)s', datefmt='%Y-%m-%d %I:%M:%S %p -')
+
+# get settings from config file
+# get trade_against to know which telegram bots to use (BUSD or BTC)
+try:
+    with open("config.yaml", "r") as file:
+        config = yaml.safe_load(file)
+    trade_against = config["trade_against"]
+
+except FileNotFoundError as e:
+    msg = "Error: The file config.yaml could not be found."
+    msg = msg + " " + sys._getframe(  ).f_code.co_name+" - "+repr(e)
+    print(msg)
+    logging.exception(msg)
+    # telegram.send_telegram_message(telegram.telegramToken_errors, telegram.eWarning, msg)
+    sys.exit(msg) 
+
+except yaml.YAMLError as e:
+    msg = "Error: There was an issue with the YAML file."
+    msg = msg + " " + sys._getframe(  ).f_code.co_name+" - "+repr(e)
+    print(msg)
+    logging.exception(msg)
+    # telegram.send_telegram_message(telegram.telegramToken_errors, telegram.eWarning, msg)
+    sys.exit(msg) 
 
 # emoji
 eStart   = u'\U000025B6'
@@ -38,13 +62,15 @@ def read_env_var():
     global telegramToken_1d
 
     try:
+        add_at_the_end = "_btc" if trade_against == "BTC" else ""
+
         telegram_chat_id = os.environ.get('telegram_chat_id')
-        telegramToken_closed_position = os.environ.get('telegramToken_ClosedPositions') 
-        telegramToken_errors = os.environ.get('telegramToken_errors')
-        telegramToken_market_phases = os.environ.get('telegramToken_MarketPhases')
-        telegramToken_1h = os.environ.get('telegramToken1h')
-        telegramToken_4h = os.environ.get('telegramToken4h')
-        telegramToken_1d = os.environ.get('telegramToken1d')
+        telegramToken_closed_position = os.environ.get('telegramToken_ClosedPositions'+add_at_the_end) 
+        telegramToken_errors = os.environ.get('telegramToken_errors'+add_at_the_end)
+        telegramToken_market_phases = os.environ.get('telegramToken_MarketPhases'+add_at_the_end)
+        telegramToken_1h = os.environ.get('telegramToken1h'+add_at_the_end)
+        telegramToken_4h = os.environ.get('telegramToken4h'+add_at_the_end)
+        telegramToken_1d = os.environ.get('telegramToken1d'+add_at_the_end)
 
     except KeyError as e: 
         msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
