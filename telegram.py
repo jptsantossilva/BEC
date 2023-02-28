@@ -174,10 +174,10 @@ def send_telegram_message(telegram_token, emoji, msg):
             print(msg)
             logging.exception(msg)
 
-def send_telegram_alert(telegram_token, emoji, date, coin, timeframe, strategy, ordertype, unitValue, amount, USDValue, pnlPerc = '', pnlUSD = ''):
-    lmsg = emoji + " " + str(date) + "\n" + coin + "\n" + strategy + "\n" + timeframe + "\n" + ordertype + "\n" + "UnitPrice: " + str(unitValue) + "\n" + "Qty: " + str(amount)+ "\n" + "USD: " + str(USDValue)
+def send_telegram_alert(telegram_token, emoji, date, coin, timeframe, strategy, ordertype, unitValue, amount, trade_against_value, pnlPerc = '', pnl_trade_against = ''):
+    lmsg = emoji + " " + str(date) + "\n" + coin + "\n" + strategy + "\n" + timeframe + "\n" + ordertype + "\n" + "UnitPrice: " + str(unitValue) + "\n" + "Qty: " + str(amount)+ "\n" + trade_against + ": " + str(trade_against_value)
     if pnlPerc != '':
-        lmsg = lmsg + "\n"+"PnL%: "+str(round(float(pnlPerc),2)) + "\n"+"PnL USD: "+str(round(float(pnlUSD),2))
+        lmsg = lmsg + "\n"+"PnL%: "+str(round(float(pnlPerc),2)) + "\n"+"PnL USD: "+str(float(pnl_trade_against))
 
     # To fix the issues with dataframes alignments, the message is sent as HTML and wraped with <pre> tag
     # Text in a <pre> element is displayed in a fixed-width font, and the text preserves both spaces and line breaks
