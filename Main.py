@@ -231,7 +231,13 @@ def calc_stake_amount(coin):
             telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
     
         tradable_balance = balance*tradable_balance_ratio 
+        
         stake_amount = tradable_balance/(max_number_of_open_positions-num_open_positions)
+        
+        if coin == "BTC":
+            stake_amount = round(stake_amount, 8)
+        elif coin in ("BUSD", "USDT"):
+            stake_amount = int(stake_amount)
         
         # make sure the size is >= the minimum size
         if stake_amount < min_position_size:
