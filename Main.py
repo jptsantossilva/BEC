@@ -453,7 +453,6 @@ def get_open_positions(df):
         telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
         return -1
 
-
 # get performance rank values from coinpairByMarketPhase and set to position file
 def set_performance_rank():
 
@@ -574,9 +573,6 @@ def trader():
                                                             addPnL[1], # PnL%
                                                             addPnL[2]  # PnL USD
                                                             ]
-                
-
-                        # print(order)
                 
                         if addPnL[2] > 0: 
                             # trade with profit

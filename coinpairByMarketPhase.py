@@ -10,9 +10,7 @@ import os
 from binance.client import Client
 import requests
 import pandas as pd
-from datetime import datetime
-from datetime import date
-from datetime import timedelta
+from datetime import datetime, date, timedelta
 import numpy as np
 import sys
 import timeit
@@ -20,7 +18,6 @@ import addCoinPair
 import telegram
 import logging
 import yaml
-
 
 # calculate program run time
 start = timeit.default_timer() 
@@ -168,28 +165,20 @@ def getdata(Symbol):
         msg = sys._getframe(  ).f_code.co_name+" - "+coinPair+" - "+repr(e)
         print(msg)
         telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eWarning, msg)
+
+        # return empty dataframe
         frame = pd.DataFrame()
         return frame 
 
-# %%
+# empty dataframe
 dfResult = pd.DataFrame()
-# i = 0
 
 for coinPair in coinPairs:
-    # if coinPair == "VGXUSDT":
-    #     print(dfResult)
-    #     break    
-    
-    # i = i+1
-    # if i == 50:
-    #     break
 
     print("calculating "+coinPair)
-    # df = pd.DataFrame()
-    # print(len(df.index))
     df = getdata(coinPair)
     applytechnicals(df)
-    # df.dropna(inplace=True)
+    # last one is the one with 200dsma value
     df = df.tail(1)
 
     if dfResult.empty:
