@@ -82,6 +82,8 @@ read_env_var()
 
 def send_telegram_message(telegram_token, emoji, msg):
 
+    msg = remove_chars_exceptions(msg)
+
     max_limit = 4096
     if emoji:
         additional_characters = eWarning+" <pre> </pre>Part [10/99]"
@@ -179,6 +181,8 @@ def send_telegram_alert(telegram_token, emoji, date, coin, timeframe, strategy, 
     if pnlPerc != '':
         lmsg = lmsg + "\n"+"PnL%: "+str(round(float(pnlPerc),2)) + "\n"+"PnL USD: "+str(float(pnl_trade_against))
 
+    print(lmsg)
+
     # To fix the issues with dataframes alignments, the message is sent as HTML and wraped with <pre> tag
     # Text in a <pre> element is displayed in a fixed-width font, and the text preserves both spaces and line breaks
     lmsg = "<pre>"+lmsg+"</pre>"
@@ -269,3 +273,14 @@ def send_telegram_photo(telegram_token, file_name='balance.png'):
         msg = sys._getframe(  ).f_code.co_name+" - An Unknown Error occurred" + repr(err)
         print(msg)
         logging.exception(msg)
+
+def remove_chars_exceptions(string):
+    
+    # define the characters to be removed
+    chars_to_remove = ['<', '>', '{', '}', "'", '"']
+
+    # use a loop to replace each character with an empty string
+    for char in chars_to_remove:
+        string = string.replace(char, '')
+
+    return string
