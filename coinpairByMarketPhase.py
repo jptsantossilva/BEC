@@ -300,18 +300,22 @@ if not df_top.empty:
 
     # remove the coins that are not anymore top performers on the accumulation or bullish phases 
     # and next time the coin goes into these phases will calc again the best ema
-    filter1 = fileAddcoinpair['Completed'] == 0
-    filter2 = fileAddcoinpair['Currency'].isin(top_coins)
-    fileAddcoinpair = fileAddcoinpair[filter1 | filter2]  
 
+    # keep only coins with calc not completed. Now I want to make sure best ema is calculated everyday
+    filter1 = fileAddcoinpair['Completed'] == 0 
+    # filter2 = fileAddcoinpair['Currency'].isin(top_coins)
+    # fileAddcoinpair = fileAddcoinpair[filter1 | filter2]  
+    fileAddcoinpair = fileAddcoinpair[filter1
+                                      ]  
     # add coin pairs
     for coinPair in df_top.Coinpair:
-        # line = fileAddcoinpair.index[(fileAddcoinpair['Currency'] == coinPair)].to_list()
+        # check if coin already exists (completed = 0)
         exists = coinPair in fileAddcoinpair['Currency'].values
         if not exists:
             dfAdd = pd.DataFrame({'Currency': [coinPair],
-                                    'Completed' : [0],
-                                    'Date' : [str(date.today())]})
+                                  'Completed' : [0],
+                                  'Date' : [str(date.today())]
+                                })
             fileAddcoinpair = pd.concat([fileAddcoinpair, dfAdd], ignore_index = True, axis = 0)
 
     try:
