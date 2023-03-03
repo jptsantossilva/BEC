@@ -26,3 +26,11 @@ trade_top_performance: 30
 
 # trade against BUSD, USDT or BTC
 trade_against: "BTC"
+
+# Risk Management 
+# Set stop loss to automatically sell if its price falls below a certain percentage.
+# If no stop loss
+# examples:
+# stop_loss = 0 => will not use stop loss. The stop loss used will be triggered when slow_ema > fast_ema
+# stop_loss = 10 => 10%   
+stop_loss: 20

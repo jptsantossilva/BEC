@@ -91,6 +91,7 @@ try:
     tradable_balance_ratio          = config["tradable_balance_ratio"]
     min_position_size               = config["min_position_size"]
     trade_against                   = config["trade_against"]
+    stop_loss                       = config["stop_loss"]
 
 except FileNotFoundError as e:
     msg = "Error: The file config.yaml could not be found."
@@ -328,6 +329,34 @@ def apply_technicals(df, aFastMA, aSlowMA):
 #-----------------------------------------------------------------------
 
 #-----------------------------------------------------------------------
+# calc current pnl  
+#-----------------------------------------------------------------------
+def get_current_pnl(dfPos, symbol, current_price):
+
+    try:
+        # go to symbol line 
+        pos = dfPos.loc[dfPos['Currency'] == symbol]
+        pnl_perc = 0
+        
+        if not pos.empty:
+            # get buy price
+            buy_price = pos.at[pos.index[0], 'buyPrice']
+            # check if buy price is fulfilled 
+            if not math.isnan(buy_price) and buy_price > 0:
+                # calc pnl percentage
+                pnl_perc = ((current_price - buy_price) / buy_price) * 100
+                pnl_perc = round(pnl_perc, 2)
+        
+        return pnl_perc
+    
+    except Exception as e:
+        msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
+        print(msg)
+        telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
+        
+#-----------------------------------------------------------------------
+
+#-----------------------------------------------------------------------
 # Update positions files 
 #-----------------------------------------------------------------------
 def change_pos(dfPos, curr, order, typePos, buyPrice=0, currentPrice=0):
@@ -511,7 +540,16 @@ def trader():
             coinOnly = coinPair[:-4]
             coinStable = coinPair[-4:]
 
-        if lastrow.SlowEMA > lastrow.FastEMA:
+        # if using stop loss
+        sell_stop_loss = False
+        if stop_loss > 0:
+            # check current price
+            current_price = lastrow.Close
+            # check current pnl
+            current_pnl = get_current_pnl(df_positions, coinPair, current_price)
+            sell_stop_loss = current_pnl <= -stop_loss
+
+        if (lastrow.SlowEMA > lastrow.FastEMA) or sell_stop_loss:
         # if crossover(df.SlowEMA, df.FastEMA): 
             try:
                 balanceQty = float(client.get_asset_balance(asset=coinOnly)['free'])  
@@ -526,14 +564,14 @@ def trader():
                 telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
                 continue            
 
+            # verify sell quantity
             buyOrderQty = float(df_positions[df_positions.Currency == coinPair].quantity.values[0])
             sellQty = buyOrderQty
             if balanceQty < buyOrderQty:
                 sellQty = balanceQty
             sellQty = adjust_size(coinPair, sellQty)
 
-            if sellQty > 0: 
-                
+            if sellQty > 0:                
                 try:        
                     if runMode == "prod":
                         order = client.create_order(symbol=coinPair,
@@ -619,9 +657,9 @@ def trader():
             
             # set current PnL
             lastrow = df.iloc[-1]
-            currentPrice = lastrow.Close
+            current_price = lastrow.Close
             # changepos(df_positions, coinPair,'',buy=False)
-            change_pos(df_positions, coinPair, '', typePos="updatePnL", currentPrice=currentPrice)
+            change_pos(df_positions, coinPair, '', typePos="updatePnL", currentPrice=current_price)
 
 
     # ------------------------------------------------------------------
