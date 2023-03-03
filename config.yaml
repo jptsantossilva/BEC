@@ -33,4 +33,4 @@ trade_against: "BTC"
 # examples:
 # stop_loss = 0 => will not use stop loss. The stop loss used will be triggered when slow_ema > fast_ema
 # stop_loss = 10 => 10%   
-stop_loss: 20
+stop_loss: 0
