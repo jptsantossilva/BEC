@@ -75,7 +75,7 @@ def main():
 
             # calc BestEMA
             resultBestEma = BestEMA.addcoinpair(coinPair, tf)
-            print("Add Coin pair - "+coinPair+" - "+tf+" - run successfully")
+            # print("Add Coin pair - "+coinPair+" - "+tf+" - run successfully")
 
             # check if exists in coinpairBestEma to make sure we have stored best ema
             try:
