@@ -217,11 +217,15 @@ df_top['performance_rank'] = np.arange(len(df_top))+1
 
 df_top.to_csv("coinpairByMarketPhase_"+trade_against+"_"+timeframe+".csv", index=False)
 
-selected_columns = df_top[["Coinpair","Close","MarketPhase",'performance_rank']]
+selected_columns = df_top[["Coinpair","Close","MarketPhase"]]
 df_top_print = selected_columns.copy()
-df_top_print.rename(columns={"Coinpair": "Symbol", "Close": "Price", "performance_rank": "BestPerf" }, inplace=True)
+df_top_print.rename(columns={"Coinpair": "Symbol", "Close": "Price"}, inplace=True)
 
-telegram.send_telegram_message(telegram.telegramToken_market_phases, "", f"Top {str(trade_top_performance)} performance coins:")
+msg = f"Top {str(trade_top_performance)} performance coins:"
+print(msg)
+print(df_top_print.to_string(index=False))
+
+telegram.send_telegram_message(telegram.telegramToken_market_phases, "", msg)
 telegram.send_telegram_message(telegram.telegramToken_market_phases, "", df_top_print.to_string(index=False))
 
 # telegram.send_telegram_message(telegram.telegramToken_market_phases, "", dfBullish.to_string(index=False))
