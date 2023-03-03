@@ -278,7 +278,7 @@ def addcoinpair(coinPair, lTimeframe):
         # calculate program run time
         start = timeit.default_timer()
         
-        print(" ")
+        print("")
         print("Backtest - "+coinPair+" - "+timeframe+" - Start")
         runBackTest(coinPair)
         print("Backtest "+coinPair+" - "+timeframe+" - End")
@@ -286,8 +286,7 @@ def addcoinpair(coinPair, lTimeframe):
         stop = timeit.default_timer()
         msg = 'Execution Time (s): '+str(round(stop - start,1))
         print(msg)
-        print(" ")
-
+        
         result = True
         return result
     
