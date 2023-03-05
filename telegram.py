@@ -50,6 +50,9 @@ telegramToken_1h = ""
 telegramToken_4h = ""
 telegramToken_1d = ""
 
+# telegram timeout 5 seg
+telegram_timeout = 5
+
 def read_env_var():
     # environment variables
     
@@ -114,11 +117,11 @@ def send_telegram_message(telegram_token, emoji, msg):
             try:
                 # if message is a warning, send message also to the errors telegram chat bot 
                 if emoji == eWarning:
-                    resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegramToken_errors), params=params, timeout=5)
+                    resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegramToken_errors), params=params, timeout=telegram_timeout)
                     resp.raise_for_status()
 
                 if telegram_token != telegramToken_errors:
-                    resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegram_token), params=params, timeout=5)
+                    resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegram_token), params=params, timeout=telegram_timeout)
                     resp.raise_for_status()
 
             except requests.exceptions.HTTPError as errh:
@@ -153,10 +156,10 @@ def send_telegram_message(telegram_token, emoji, msg):
         try:            
             # if message is a warning, send message also to the errors telegram chat bot 
             if emoji == eWarning:
-                resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegramToken_errors), params=params, timeout=5)
+                resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegramToken_errors), params=params, timeout=telegram_timeout)
                 resp.raise_for_status()
 
-            resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegram_token), params=params, timeout=5)
+            resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegram_token), params=params, timeout=telegram_timeout)
             resp.raise_for_status()
 
         except requests.exceptions.HTTPError as errh:
@@ -194,7 +197,7 @@ def send_telegram_alert(telegram_token, emoji, date, coin, timeframe, strategy, 
     }
     
     try:
-        resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegram_token), params=params, timeout=5)
+        resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegram_token), params=params, timeout=telegram_timeout)
         resp.raise_for_status()
 
     except requests.exceptions.HTTPError as errh:
@@ -224,7 +227,7 @@ def send_telegram_alert(telegram_token, emoji, date, coin, timeframe, strategy, 
         }
 
         try: 
-            resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegramToken_closed_position), params=params, timeout=5)
+            resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegramToken_closed_position), params=params, timeout=telegram_timeout)
             resp.raise_for_status()
 
         except requests.exceptions.HTTPError as errh:
@@ -244,7 +247,7 @@ def send_telegram_alert(telegram_token, emoji, date, coin, timeframe, strategy, 
             print(msg)
             logging.exception(msg)
 
-def send_telegram_photo(telegram_token, file_name='balance.png'):
+def send_telegram_photo(telegram_token, file_name):
     
     # get current dir
     cwd = os.getcwd()
@@ -254,7 +257,7 @@ def send_telegram_photo(telegram_token, file_name='balance.png'):
     url = f"https://api.telegram.org/bot{telegram_token}/sendPhoto?chat_id={telegram_chat_id}"
     
     try:
-        resp = requests.post(url, files={'photo':oimg}, timeout=5) # this sends the message
+        resp = requests.post(url, files={'photo':oimg}, timeout=telegram_timeout) # this sends the message
         resp.raise_for_status()
 
     except requests.exceptions.HTTPError as errh:
@@ -273,6 +276,37 @@ def send_telegram_photo(telegram_token, file_name='balance.png'):
         msg = sys._getframe(  ).f_code.co_name+" - An Unknown Error occurred" + repr(err)
         print(msg)
         logging.exception(msg)
+
+def send_telegram_file(telegram_token, file_name):
+    
+    # get current dir
+    cwd = os.getcwd()
+    file = cwd+"/"+file_name
+    # print(limg)
+    url = f"https://api.telegram.org/bot{telegram_token}/sendDocument"
+    
+    try:
+        with open(file, 'rb') as f:
+            resp = requests.post(url, data={'chat_id': telegram_chat_id},files={'document':f}, timeout=telegram_timeout) # this sends the message
+            resp.raise_for_status()
+
+    except requests.exceptions.HTTPError as errh:
+        msg = sys._getframe(  ).f_code.co_name+" - An Http Error occurred:" + repr(errh)
+        print(msg)
+        logging.exception(msg)
+    except requests.exceptions.ConnectionError as errc:
+        msg = sys._getframe(  ).f_code.co_name+" - An Error Connecting to the API occurred:" + repr(errc)
+        print(msg)
+        logging.exception(msg)
+    except requests.exceptions.Timeout as errt:
+        msg = sys._getframe(  ).f_code.co_name+" - A Timeout Error occurred:" + repr(errt)
+        print(msg)
+        logging.exception(msg)
+    except requests.exceptions.RequestException as err:
+        msg = sys._getframe(  ).f_code.co_name+" - An Unknown Error occurred" + repr(err)
+        print(msg)
+        logging.exception(msg)
+
 
 def remove_chars_exceptions(string):
     

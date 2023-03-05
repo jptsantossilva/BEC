@@ -219,7 +219,7 @@ df_top.to_csv("coinpairByMarketPhase_"+trade_against+"_"+timeframe+".csv", index
 
 selected_columns = df_top[["Coinpair","Close","MarketPhase"]]
 df_top_print = selected_columns.copy()
-df_top_print.rename(columns={"Coinpair": "Symbol", "Close": "Price"}, inplace=True)
+df_top_print = df_top_print.rename(columns={"Coinpair": "Symbol", "Close": "Price"})
 
 msg = f"Top {str(trade_top_performance)} performance coins:"
 print(msg)
@@ -227,6 +227,17 @@ print(df_top_print.to_string(index=False))
 
 telegram.send_telegram_message(telegram.telegramToken_market_phases, "", msg)
 telegram.send_telegram_message(telegram.telegramToken_market_phases, "", df_top_print.to_string(index=False))
+
+# create file list of top performers to import to TradingView 
+# Read CSV file and select only the 'coinpair' column
+df_tv_list = pd.read_csv('coinpairByMarketPhase_'+trade_against+'_1d.csv', usecols=['Coinpair'])
+df_tv_list['Coinpair'] = "BINANCE:"+df_tv_list['Coinpair']
+# Write DataFrame to CSV file
+filename = "Top_performers_"+trade_against+".txt" 
+df_tv_list.to_csv(filename, header=False, index=False)
+msg = "Tradingview List:"
+telegram.send_telegram_message(telegram.telegramToken_market_phases, "", msg)
+telegram.send_telegram_file(telegram.telegramToken_market_phases, filename)
 
 # telegram.send_telegram_message(telegram.telegramToken_market_phases, "", dfBullish.to_string(index=False))
 # telegram.send_telegram_message(telegram.telegramToken_market_phases, "", f"{str(len(dfBullish))} in bullish phase")
