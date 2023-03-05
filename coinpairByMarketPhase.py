@@ -228,16 +228,44 @@ print(df_top_print.to_string(index=False))
 telegram.send_telegram_message(telegram.telegramToken_market_phases, "", msg)
 telegram.send_telegram_message(telegram.telegramToken_market_phases, "", df_top_print.to_string(index=False))
 
-# create file list of top performers to import to TradingView 
+#---------------------------------------------
+# create file list of top performers and coins in position to import to TradingView 
+#---------------------------------------------
 # Read CSV file and select only the 'coinpair' column
 df_tv_list = pd.read_csv('coinpairByMarketPhase_'+trade_against+'_1d.csv', usecols=['Coinpair'])
-df_tv_list['Coinpair'] = "BINANCE:"+df_tv_list['Coinpair']
+
+df_pos_1h = pd.read_csv("positions1h.csv")
+df_pos_4h = pd.read_csv("positions4h.csv")
+df_pos_1d = pd.read_csv("positions1d.csv")
+
+# Rename the column to 'symbol'
+df_tv_list = df_tv_list.rename(columns={'Coinpair': 'symbol'})
+
+# Rename the 'symbol' column to 'Currency' in the 'df_pos1h', 'df_pos4h', and 'df_pos1d' dataframes
+df_pos_1h = df_pos_1h.rename(columns={'Currency': 'symbol'})
+df_pos_4h = df_pos_4h.rename(columns={'Currency': 'symbol'})
+df_pos_1d = df_pos_1d.rename(columns={'Currency': 'symbol'})
+
+# Filter the open positions
+df_pos_1h = df_pos_1h.query('position == 1')[['symbol']]
+df_pos_4h = df_pos_4h.query('position == 1')[['symbol']]
+df_pos_1d = df_pos_1d.query('position == 1')[['symbol']]
+
+# Merge the dataframes using an outer join on the 'symbol' column
+merged_df = pd.merge(df_tv_list, df_pos_1h, on='symbol', how='outer')
+merged_df = pd.merge(merged_df, df_pos_4h, on='symbol', how='outer')
+merged_df = pd.merge(merged_df, df_pos_1d, on='symbol', how='outer')
+
+df_top = merged_df
+
+df_tv_list['symbol'] = "BINANCE:"+df_tv_list['symbol']
 # Write DataFrame to CSV file
 filename = "Top_performers_"+trade_against+".txt" 
 df_tv_list.to_csv(filename, header=False, index=False)
 msg = "Tradingview List:"
 telegram.send_telegram_message(telegram.telegramToken_market_phases, "", msg)
 telegram.send_telegram_file(telegram.telegramToken_market_phases, filename)
+#---------------------------------------------
 
 # telegram.send_telegram_message(telegram.telegramToken_market_phases, "", dfBullish.to_string(index=False))
 # telegram.send_telegram_message(telegram.telegramToken_market_phases, "", f"{str(len(dfBullish))} in bullish phase")
