@@ -7,7 +7,7 @@ All notable changes to this project will be documented in this file.
 ### Added
 - TradingView watchlist file with top performers to import to TradingView  
 ### Changed
-
+- Calculate the best ema for top performers and also for those where we have positions and are no longer top performers
 ### Fixed
 
 ## [2023-03-03]

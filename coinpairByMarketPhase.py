@@ -248,9 +248,9 @@ positionsTimeframe = ["1d", "4h", "1h"]
 
 if not df_top.empty:
 
-    #------------------------
+    #---------------------------------------------
     # remove coins from position files that are not top perfomers in accumulation or bullish phase
-    #------------------------
+    #---------------------------------------------
     top_coins = df_top.Coinpair.to_list()
 
     for tf in positionsTimeframe: 
@@ -261,11 +261,11 @@ if not df_top.empty:
         positionsfile = positionsfile[filter1 | filter2]  
         
         positionsfile.to_csv('positions'+tf+'.csv', index=False)
-    #------------------------
+    #---------------------------------------------
 
-    #------------------------
+    #---------------------------------------------
     # add top rank coins with positive returns to positions files
-    #------------------------
+    #---------------------------------------------
     df_best_ema = pd.read_csv('coinpairBestEma.csv')
     for tf in positionsTimeframe: 
         for coinPair in top_coins:
@@ -299,11 +299,11 @@ if not df_top.empty:
                             msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
                             print(msg)
                             # telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eWarning, msg)
-    #------------------------
+    #---------------------------------------------
 
-    #------------------------
+    #---------------------------------------------
     # add coin pairs top performers in accumulation or bullish phase to calc best ema if not exist 
-    #------------------------
+    #---------------------------------------------
     try:
         filename = 'addcoinpair.csv'
         fileAddcoinpair = pd.read_csv(filename)
@@ -316,14 +316,42 @@ if not df_top.empty:
     # remove the coins that are not anymore top performers on the accumulation or bullish phases 
     # and next time the coin goes into these phases will calc again the best ema
 
+    #---------------------------------------------
+    #  we want to calculate the best ema for top performers, and also for those where we have positions and are no longer top performers
+    #---------------------------------------------
+    df_mp = pd.read_csv("coinpairByMarketPhase_"+trade_against+"_1d.csv", usecols=['Coinpair'])
+    df_pos_1h = pd.read_csv("positions1h.csv")
+    df_pos_4h = pd.read_csv("positions4h.csv")
+    df_pos_1d = pd.read_csv("positions1d.csv")
+
+    # Rename the column to 'symbol'
+    df_mp = df_mp.rename(columns={'Coinpair': 'symbol'})
+
+    # Rename the 'symbol' column to 'Currency' in the 'df_pos1h', 'df_pos4h', and 'df_pos1d' dataframes
+    df_pos_1h = df_pos_1h.rename(columns={'Currency': 'symbol'})
+    df_pos_4h = df_pos_4h.rename(columns={'Currency': 'symbol'})
+    df_pos_1d = df_pos_1d.rename(columns={'Currency': 'symbol'})
+
+    # Filter the open positions
+    df_pos_1h = df_pos_1h.query('position == 1')[['symbol']]
+    df_pos_4h = df_pos_4h.query('position == 1')[['symbol']]
+    df_pos_1d = df_pos_1d.query('position == 1')[['symbol']]
+
+    # Merge the dataframes using an outer join on the 'symbol' column
+    merged_df = pd.merge(df_mp, df_pos_1h, on='symbol', how='outer')
+    merged_df = pd.merge(merged_df, df_pos_4h, on='symbol', how='outer')
+    merged_df = pd.merge(merged_df, df_pos_1d, on='symbol', how='outer')
+
+    df_top = merged_df
+    #---------------------------------------------
+
     # keep only coins with calc not completed. Now I want to make sure best ema is calculated everyday
     filter1 = fileAddcoinpair['Completed'] == 0 
     # filter2 = fileAddcoinpair['Currency'].isin(top_coins)
     # fileAddcoinpair = fileAddcoinpair[filter1 | filter2]  
-    fileAddcoinpair = fileAddcoinpair[filter1
-                                      ]  
+    fileAddcoinpair = fileAddcoinpair[filter1]  
     # add coin pairs
-    for coinPair in df_top.Coinpair:
+    for coinPair in df_top.symbol:
         # check if coin already exists (completed = 0)
         exists = coinPair in fileAddcoinpair['Currency'].values
         if not exists:
