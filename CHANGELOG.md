@@ -1,8 +1,16 @@
 
 # Change Log
 All notable changes to this project will be documented in this file.
-  
-## [2023-02-03]
+
+## [2023-03-05]
+ 
+### Added
+- TradingView watchlist file with top performers to import to TradingView  
+### Changed
+
+### Fixed
+
+## [2023-03-03]
  
 ### Added
 - Trading - Trade against BTC 
