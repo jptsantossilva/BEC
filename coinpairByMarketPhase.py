@@ -279,7 +279,7 @@ if not df_top.empty:
     #---------------------------------------------
     # remove coins from position files that are not top perfomers in accumulation or bullish phase
     #---------------------------------------------
-    top_coins = df_top.Coinpair.to_list()
+    top_coins = df_top.symbol.to_list()
 
     for tf in positionsTimeframe: 
         positionsfile = pd.read_csv('positions'+tf+'.csv')
