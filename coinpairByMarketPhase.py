@@ -262,7 +262,7 @@ df_tv_list['symbol'] = "BINANCE:"+df_tv_list['symbol']
 # Write DataFrame to CSV file
 filename = "Top_performers_"+trade_against+".txt" 
 df_tv_list.to_csv(filename, header=False, index=False)
-msg = "Tradingview List:"
+msg = "TradingView List:"
 telegram.send_telegram_message(telegram.telegramToken_market_phases, "", msg)
 telegram.send_telegram_file(telegram.telegramToken_market_phases, filename)
 #---------------------------------------------
