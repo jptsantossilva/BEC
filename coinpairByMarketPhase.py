@@ -19,6 +19,11 @@ import telegram
 import logging
 import yaml
 
+# sets the output display precision in terms of decimal places to 8.
+# this is helpful when trading against BTC. The value in the dataframe has the precision 8 but when we display it 
+# by printing or sending to telegram only shows precision 6
+pd.set_option("display.precision", 8)
+
 # calculate program run time
 start = timeit.default_timer() 
 
@@ -154,6 +159,7 @@ def getdata(Symbol):
         
         frame = frame.iloc[:,[0,4]] # columns selection
         frame.columns = ['Time','Close'] #rename columns
+        # new dataframe with price only
         frame[['Close']] = frame[['Close']].astype(float) #cast to float
         # frame.Time = pd.to_datetime(frame.Time, unit='ms') #make human readable timestamp
         frame['Coinpair'] = Symbol
@@ -445,9 +451,27 @@ else:
 # inform that ended
 telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eStop, "Market Phases - End")
 
+# calculate execution time
 stop = timeit.default_timer()
-msg = "Execution Time (s): "+str(round(stop - start,1))
-print(msg) 
+total_seconds = stop - start
+
+days, remainder = divmod(total_seconds, 3600*24)
+hours, remainder = divmod(remainder, 3600)
+minutes, seconds = divmod(remainder, 60)
+
+# Creating a string that displays the time in the hms format
+time_format = ""
+if days > 0:
+    time_format += "{:2d}d ".format(int(days))
+if hours > 0 or (days > 0 and (minutes > 0 or seconds > 0)):
+    time_format += "{:2d}h ".format(int(hours))
+if minutes > 0 or (hours > 0 and seconds > 0) or (days > 0 and seconds > 0):
+    time_format += "{:2d}m ".format(int(minutes))
+if seconds > 0 or (days == 0 and hours == 0 and minutes == 0):
+    time_format += "{:2d}s".format(int(seconds))
+
+msg = f'Execution Time: {time_format}'
+print(msg)
 telegram.send_telegram_message(telegram.telegramToken_market_phases, "", msg)
 
 
