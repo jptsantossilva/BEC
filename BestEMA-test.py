@@ -85,8 +85,8 @@ def SMA(values, n):
 # Close position when slow ema > fast ema  
 #-------------------------------------
 class EmaCross(Strategy):
-    n1 = 55
-    n2 = 60
+    n1 = 35
+    n2 = 70
     nFastSMA = 50
     nSlowSMA = 200
     
@@ -169,6 +169,8 @@ def runBackTest(coinPair):
     BacktestStartDate = str(df.index[0])
     exposure = stats['Exposure Time [%]']
     num_trades = stats['# Trades']
+    df_trades = stats['_trades']
+    print(df_trades)
     # num_trades = len(stats['_strategy'].trades)
     # lista
     print("n1=",n1)
@@ -229,6 +231,6 @@ def addcoinpair(coinPair, lTimeframe):
 
 
 # %%
-addcoinpair("CHESSBUSD", "4h")
+addcoinpair("SSVBTC", "1h")
 
 
