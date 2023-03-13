@@ -32,6 +32,11 @@ import timeit
 import yaml
 from addCoinPair import get_performance_rank
 
+# sets the output display precision in terms of decimal places to 8.
+# this is helpful when trading against BTC. The value in the dataframe has the precision 8 but when we display it 
+# by printing or sending to telegram only shows precision 6
+pd.set_option("display.precision", 8)
+
 # calculate program run time
 start = timeit.default_timer()
 
@@ -107,7 +112,7 @@ except yaml.YAMLError as e:
     print(msg)
     logging.exception(msg)
     telegram.send_telegram_message(telegram.telegramToken_errors, telegram.eWarning, msg)
-    sys.exit(msg) 
+    sys.exit(msg)
 
 # environment variables
 try:
@@ -122,7 +127,10 @@ except KeyError as e:
     telegram.send_telegram_message(telegram.telegramToken_errors, telegram.eWarning, msg)
     sys.exit(msg) 
 
-# constants
+if trade_against == "BTC":
+    n_decimals = 8
+elif trade_against in ["BUSD","USDT"]:    
+    n_decimals = 2
 
 # strategy
 # gTimeframe = client.KLINE_INTERVAL_1HOUR # "1h"
@@ -225,11 +233,13 @@ def calc_stake_amount(coin):
             print(msg)
             logging.exception(msg)
             telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
+            return 0
         except Exception as e:
             msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
             print(msg)
             logging.exception(msg)
             telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
+            return 0
     
         tradable_balance = balance*tradable_balance_ratio 
         
@@ -451,8 +461,8 @@ def calc_pnl(symbol, sellprice: float, sellqty: float):
                     # PnLperc = ((sellprice-buyprice)/buyprice)*100
                     PnLperc = (((sellprice*sellqty)-(buyprice*buyqty))/(buyprice*buyqty))*100
                     PnLperc = round(PnLperc, 2)
-                    PnLvalue = (sellprice*sellqty)-(buyprice*buyqty) # erro!
-                    PnLValue = round(PnLvalue, 2)
+                    PnLvalue = (sellprice*sellqty)-(buyprice*buyqty)
+                    PnLValue = round(PnLvalue, n_decimals)
                     # print('Buy USD =', round(buyprice*buyqty,2))
                     # print('Sell USD =', round(sellprice*sellqty,2))
                     # print('PnL% =', PnLperc)
@@ -609,7 +619,7 @@ def trader():
                                                             order['side'], avg_price, order['executedQty'],
                                                             addPnL[0], # buyorderid 
                                                             addPnL[1], # PnL%
-                                                            addPnL[2]  # PnL USD
+                                                            addPnL[2]  # PnL trade against
                                                             ]
                 
                         if addPnL[2] > 0: 
@@ -625,7 +635,7 @@ def trader():
                                         order['executedQty'],
                                         avg_price*float(order['executedQty']),
                                         addPnL[1], # PnL%
-                                        addPnL[2]  # PnL USD
+                                        addPnL[2]  # PnL trade against
                                         )
                         else:
                             # trade with loss
@@ -640,7 +650,7 @@ def trader():
                                         order['executedQty'],
                                         avg_price*float(order['executedQty']),
                                         addPnL[1], # PnL%
-                                        addPnL[2]  # PnL USD
+                                        addPnL[2]  # PnL trade against
                                         )
 
                         
@@ -793,8 +803,26 @@ def main():
     # inform that ended
     telegram.send_telegram_message(telegramToken, telegram.eStop, "Binance Trader Bot - End")
 
+    # calculate execution time
     stop = timeit.default_timer()
-    msg = 'Execution Time (s): '+str(round(stop - start,1))
+    total_seconds = stop - start
+
+    days, remainder = divmod(total_seconds, 3600*24)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, seconds = divmod(remainder, 60)
+
+    # Creating a string that displays the time in the hms format
+    time_format = ""
+    if days > 0:
+        time_format += "{:2d}d ".format(int(days))
+    if hours > 0 or (days > 0 and (minutes > 0 or seconds > 0)):
+        time_format += "{:2d}h ".format(int(hours))
+    if minutes > 0 or (hours > 0 and seconds > 0) or (days > 0 and seconds > 0):
+        time_format += "{:2d}m ".format(int(minutes))
+    if seconds > 0 or (days == 0 and hours == 0 and minutes == 0):
+        time_format += "{:2d}s".format(int(seconds))
+
+    msg = f'Execution Time: {time_format}'
     print(msg)
     telegram.send_telegram_message(telegramToken, "", msg)
 
