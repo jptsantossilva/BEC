@@ -13,6 +13,11 @@ import sys
 import logging
 import telegram
 
+# sets the output display precision in terms of decimal places to 8.
+# this is helpful when trading against BTC. The value in the dataframe has the precision 8 but when we display it 
+# by printing or sending to telegram only shows precision 6
+pd.set_option("display.precision", 8)
+
 # log file to store error messages
 log_filename = "addCoinPair.log"
 logging.basicConfig(filename=log_filename, level=logging.INFO,
