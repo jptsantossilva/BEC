@@ -68,10 +68,13 @@ def main():
     # Listcoinpair
 
     list = ListNotCompleted.drop(columns = ['Completed','Date'])
+    # reset the index and set number beginning from 1
+    list = list.reset_index(drop=True)
+    list.index += 1
 
     if not list.empty: # not empty 
         telegram.send_telegram_message(telegram.telegramToken_market_phases, "", "Calculating best EMA for the following coins:")
-        telegram.send_telegram_message(telegram.telegramToken_market_phases, "", list.to_string(index=False, header = False)) 
+        telegram.send_telegram_message(telegram.telegramToken_market_phases, "", list.to_string(index=True, header = False)) 
     
     # insertupdate
     # calc BestEMA for each coin pair and each time frame and save on positions files

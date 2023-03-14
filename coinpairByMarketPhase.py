@@ -226,13 +226,16 @@ df_top.to_csv("coinpairByMarketPhase_"+trade_against+"_"+timeframe+".csv", index
 selected_columns = df_top[["Coinpair","Close","MarketPhase"]]
 df_top_print = selected_columns.copy()
 df_top_print = df_top_print.rename(columns={"Coinpair": "Symbol", "Close": "Price"})
+# reset the index and set number beginning from 1
+df_top_print = df_top_print.reset_index(drop=True)
+df_top_print.index += 1
 
 msg = f"Top {str(trade_top_performance)} performance coins:"
 print(msg)
-print(df_top_print.to_string(index=False))
+print(df_top_print.to_string(index=True))
 
 telegram.send_telegram_message(telegram.telegramToken_market_phases, "", msg)
-telegram.send_telegram_message(telegram.telegramToken_market_phases, "", df_top_print.to_string(index=False))
+telegram.send_telegram_message(telegram.telegramToken_market_phases, "", df_top_print.to_string(index=True))
 
 #---------------------------------------------
 # create file list of top performers and coins in position to import to TradingView 
