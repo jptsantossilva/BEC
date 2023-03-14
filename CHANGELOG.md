@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [2023-03-13]
  
 ### Added
-  
+-
 ### Changed
 - set pandas display.precision to 8. Useful when trading against BTC
 - execution time format d h m s
