@@ -83,6 +83,17 @@ def read_env_var():
 # fulfill telegram vars
 read_env_var()
 
+def remove_chars_exceptions(string):
+    
+    # define the characters to be removed
+    chars_to_remove = ['<', '>', '{', '}', "'", '"']
+
+    # use a loop to replace each character with an empty string
+    for char in chars_to_remove:
+        string = string.replace(char, '')
+
+    return string
+
 def send_telegram_message(telegram_token, emoji, msg):
 
     msg = remove_chars_exceptions(msg)
@@ -306,15 +317,3 @@ def send_telegram_file(telegram_token, file_name):
         msg = sys._getframe(  ).f_code.co_name+" - An Unknown Error occurred" + repr(err)
         print(msg)
         logging.exception(msg)
-
-
-def remove_chars_exceptions(string):
-    
-    # define the characters to be removed
-    chars_to_remove = ['<', '>', '{', '}', "'", '"']
-
-    # use a loop to replace each character with an empty string
-    for char in chars_to_remove:
-        string = string.replace(char, '')
-
-    return string
