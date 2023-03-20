@@ -462,12 +462,11 @@ def calc_pnl(symbol, sellprice: float, sellqty: float):
                     PnLperc = (((sellprice*sellqty)-(buyprice*buyqty))/(buyprice*buyqty))*100
                     PnLperc = round(PnLperc, 2)
                     PnLvalue = (sellprice*sellqty)-(buyprice*buyqty)
-                    PnLValue = round(PnLvalue, n_decimals)
+                    PnLvalue = round(PnLvalue, n_decimals)
                     # print('Buy USD =', round(buyprice*buyqty,2))
                     # print('Sell USD =', round(sellprice*sellqty,2))
                     # print('PnL% =', PnLperc)
                     # print('PnL USD =', PnLvalue)
-                    
                     
                     lista = [orderid, PnLperc, PnLvalue]
                     return lista
