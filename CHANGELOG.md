@@ -2,10 +2,10 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
-## [2023-03-20]
+## [2023-03-21]
  
 ### Added
--
+- PnL analysis for closed positions within a year/month and current open positions
 ### Changed
 - 
 ### Fixed
