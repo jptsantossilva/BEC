@@ -267,6 +267,7 @@ merged_df = pd.merge(merged_df, df_pos_1d, on='symbol', how='outer')
 
 df_top = merged_df
 
+df_tv_list = merged_df
 df_tv_list['symbol'] = "BINANCE:"+df_tv_list['symbol']
 # Write DataFrame to CSV file
 filename = "Top_performers_"+trade_against+".txt" 
