@@ -2,6 +2,16 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2023-03-20]
+ 
+### Added
+-
+### Changed
+- 
+### Fixed
+- PnL value - decimal values corrected
+- TradingView import list with symbols in position
+
 ## [2023-03-13]
  
 ### Added
