@@ -1,0 +1,14 @@
+
+Install the virtualenv package using the following command:
+pip install virtualenv
+
+Once you're in the desired directory, create the virtual environment by running the following command:
+virtualenv env
+
+Activate the virtual environment using the following command:
+source env/bin/activate
+
+---
+
+save python libraries to requirements file 
+pip freeze > requirements.txt
