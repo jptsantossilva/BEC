@@ -1,11 +1,27 @@
 
-Install the virtualenv package using the following command:
+#Virtual env - option 1
+
+#Install Pipenv
+## Install pip
+sudo apt-get install python3-pip
+## Install pipenv
+pip3 install pipenv
+## Create a new Pipenv environment in project folder and activate that environment:
+pipenv shell
+##Any time you want to use the new environment, you first need to go to your project folder (where the Pipenv file lives) and run:
+pipenv shell
+
+--
+
+#Virtual env - option 2
+
+#Install the virtualenv package using the following command:
 pip install virtualenv
 
-Once you're in the desired directory, create the virtual environment by running the following command:
+#Once you're in the desired directory, create the virtual environment by running the following command:
 virtualenv env
 
-Activate the virtual environment using the following command:
+#Activate the virtual environment using the following command:
 source env/bin/activate
 
 ---

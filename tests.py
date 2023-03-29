@@ -1,72 +1,33 @@
-# %%
+import pandas as pd
 
+df_top = pd.read_csv("coinpairByMarketPhase_BTC_1d.csv", usecols=['Coinpair'])
+df_pos_1h = pd.read_csv("positions1h.csv")
+df_pos_4h = pd.read_csv("positions4h.csv")
+df_pos_1d = pd.read_csv("positions1d.csv")
 
-from binance.client import Client
-from binance.exceptions import BinanceAPIException, BinanceOrderException
-import sys
-import os
+# Rename the column to 'symbol'
+df_top = df_top.rename(columns={'Coinpair': 'symbol'})
 
-# Binance
-api_key = os.environ.get('binance_api')
-api_secret = os.environ.get('binance_secret')
+# Rename the 'symbol' column to 'Currency' in the 'df_pos1h', 'df_pos4h', and 'df_pos1d' dataframes
+df_pos_1h = df_pos_1h.rename(columns={'Currency': 'symbol'})
+df_pos_4h = df_pos_4h.rename(columns={'Currency': 'symbol'})
+df_pos_1d = df_pos_1d.rename(columns={'Currency': 'symbol'})
 
-stake_amount_type = "unlimited"
-max_number_of_open_positions = 10
-tradable_balance_ratio = 1
-min_position_size = 0.001
-coin = "BTC"
+# Filter the open positions
+df_pos_1h = df_pos_1h.query('position == 1')[['symbol']]
+df_pos_4h = df_pos_4h.query('position == 1')[['symbol']]
+df_pos_1d = df_pos_1d.query('position == 1')[['symbol']]
 
-client = Client(api_key, api_secret)
-balance = client.get_asset_balance(asset=coin)['free']
+# Merge the dataframes using an outer join on the 'symbol' column
+merged_df = pd.merge(df_top, df_pos_1h, on='symbol', how='outer')
+merged_df = pd.merge(merged_df, df_pos_4h, on='symbol', how='outer')
+merged_df = pd.merge(merged_df, df_pos_1d, on='symbol', how='outer')
 
-def calc_stake_amount(coin):
+# Filter the rows where the 'symbol' column in the merged dataframe is null
+new_symbols = merged_df.loc[merged_df['symbol'].isnull(), ['symbol_x', 'symbol_y', 'symbol']].stack().unique()
 
-    if stake_amount_type == "unlimited":
-        num_open_positions = 0
+# Remove any null values from the list of new symbols
+new_symbols = [symbol for symbol in new_symbols if pd.notnull(symbol)]
 
-        # if error occurred
-        if num_open_positions == -1:
-            return 0
-        if num_open_positions >= max_number_of_open_positions:
-            return -2 
-
-        try:
-            balance = float(client.get_asset_balance(asset=coin)['free'])
-            
-        except BinanceAPIException as e:
-            msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
-            print(msg)
-            # logging.exception(msg)
-            # telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
-        except Exception as e:
-            msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
-            print(msg)
-            # logging.exception(msg)
-            # telegram.send_telegram_message(telegramToken, telegram.eWarning, msg)
-    
-        tradable_balance = balance*tradable_balance_ratio 
-        stake_amount = int(tradable_balance/(max_number_of_open_positions-num_open_positions))
-        
-        # make sure the size is >= the minimum size
-        if stake_amount < min_position_size:
-            stake_amount = min_position_size
-
-        # make sure there are enough funds otherwise abort the buy position
-        if balance < stake_amount:
-            stake_amount = 0
-
-        return stake_amount
-    elif int(stake_amount_type) >= 0:
-        return stake_amount_type
-    else:
-        return 0
-
-coin = "BTC"
-calc_stake_amount(coin)
-
-
-
-# %%
-
-
-
+# Print the list of new symbols
+print(new_symbols)
