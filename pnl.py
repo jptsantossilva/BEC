@@ -256,7 +256,7 @@ def calculate_pnl_open_positions():
 
 # define a function to set the background color of the rows based on pnl_usd
 def set_pnl_color(val):
-    color = '#ffcccc' if val < 0 else '#b3ffcc' if val > 0 else ''
+    color = '#E9967A' if val < 0 else '#8FBC8F' if val > 0 else ''
     return f'background-color: {color}'
 
 # define the table style where the last row is bold
