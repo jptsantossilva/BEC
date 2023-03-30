@@ -18,7 +18,7 @@ st.set_page_config(
 
 st.title('Bot Dashboard')
 
-tab_rpnl, tab_upnl = st.tabs(["Realized PnL", "Unrealized PnL"])
+tab_upnl, tab_rpnl = st.tabs(["Unrealized PnL","Realized PnL"])
 
 # Get years with orders
 def get_orders_by_year():
@@ -98,6 +98,10 @@ month = col2.selectbox(
 # st.write('month_name: ', month)
 
 # get month 
+if month == None:
+    #get current month name
+    month = datetime.date.today().strftime('%B')
+    
 month_number = datetime.datetime.strptime(month, '%B').month
 if col2.checkbox('Full Year'):
     month_number = 13
