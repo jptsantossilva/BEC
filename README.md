@@ -22,6 +22,7 @@ Check [here](https://github.com/jptsantossilva/Binance-Trading-bot-EMA-Cross/blo
 - Telegram message notifications - every time bot is executed; open position; close position; position status summary; coins in accumulation and bullish market phases
 - Blacklist - coins to be ignored. Bot will not trade them.
 
+![dashboard](https://raw.githubusercontent.com/jptsantossilva/Binance-Trading-bot-EMA-Cross/main/docs/dashboard.png)
 
 ## Disclaimer
 This software is for educational purposes only. Use the software at **your own risk**. The authors and all affiliates assume **no responsibility for your trading results**. **Do not risk money that you are afraid to lose**. There might be **bugs** in the code. This software does not come with **any warranty**.
