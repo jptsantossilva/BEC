@@ -112,7 +112,7 @@ if col2.checkbox('Full Year'):
 def get_year_month(date):
     return date.year, date.month
 
-def calculate_pnl_closed_positions(year, month):
+def calculate_realized_pnl(year, month):
 
     # Get user input for the year and month
     # print('Choose period for PnL analysis of closed positions')
@@ -191,7 +191,7 @@ def calculate_pnl_closed_positions(year, month):
     
     return results_df, month_df_1d, month_df_4h, month_df_1h
 
-def calculate_pnl_open_positions():
+def calculate_unrealized_pnl():
     
     print('\nUnrealized PnL')
     print('---------------------')
@@ -267,7 +267,7 @@ def last_row_bold(row):
         return f'background-color: black'
     return ['']*len(row)
 
-result_closed_positions, trades_month_1d, trades_month_4h, trades_month_1h = calculate_pnl_closed_positions(year, month_number)
+result_closed_positions, trades_month_1d, trades_month_4h, trades_month_1h = calculate_realized_pnl(year, month_number)
 print("\nPnL - Total")
 # apply the lambda function to make the last row bold
 # result_closed_positions = result_closed_positions.apply(lambda x: ['font-weight: bold' if i == len(x)-1 else '' for i in range(len(x))], axis=1)
@@ -293,7 +293,7 @@ tab_rpnl.dataframe(trades_month_1h.style.apply(last_row_bold, axis=0).applymap(s
 
 # print('\n----------------------------\n')
 
-result_open_positions, positions_df_1d, positions_df_4h, positions_df_1h = calculate_pnl_open_positions()
+result_open_positions, positions_df_1d, positions_df_4h, positions_df_1h = calculate_unrealized_pnl()
 print("\nUnrealized PnL - Total")
 print('-------------------------------')
 print(result_open_positions)
