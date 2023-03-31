@@ -79,23 +79,28 @@ def get_orders_by_month(year):
 
     return months
 
+# get years
+years = get_orders_by_year()
+
+# years empty list
+if len(years) == 0:
+    tab_rpnl.warning('There are no closed positions yet! Looks like you just started 🤞')
+
 col1, col2, col3 = tab_rpnl.columns(3)
 
-# Add a selectbox to the sidebar:
-years = get_orders_by_year()
+# years selectbox
 year = col1.selectbox(
     'Year',
     (years)
 )
-# st.sidebar.write('You selected: ', year)
-
-# Add a selectbox to the sidebar:
+# get months
 months = get_orders_by_month(year)
+
+# months selectbox
 month = col2.selectbox(
     'Month',
     (months)
 )
-# st.write('month_name: ', month)
 
 # get month 
 if month == None:
@@ -297,6 +302,10 @@ result_open_positions, positions_df_1d, positions_df_4h, positions_df_1h = calcu
 print("\nUnrealized PnL - Total")
 print('-------------------------------')
 print(result_open_positions)
+
+if positions_df_1d.empty and positions_df_4h.empty and positions_df_1h.empty:
+    tab_upnl.warning('There are no open positions yet! Looks like you just started 🤞') 
+
 tab_upnl.header("Unrealized PnL - Total")
 
 # st.sidebar.subheader('Unrealized PnL %')
