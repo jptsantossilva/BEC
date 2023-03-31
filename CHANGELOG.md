@@ -2,6 +2,15 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2023-03-31]
+ 
+### Added
+- PnL analysis web dashboard
+### Changed
+- 
+### Fixed
+- Fulfill currentPrice when buy position to make sure PnL is showing correct results
+
 ## [2023-03-21]
  
 ### Added
