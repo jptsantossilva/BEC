@@ -358,7 +358,6 @@ def calculate_unrealized_pnl(bot):
     
     return results_df, positions_df_1d, positions_df_4h, positions_df_1h
 
-
 # define a function to set the background color of the rows based on pnl_value
 def set_pnl_color(val):
     color = '#E9967A' if val < 0 else '#8FBC8F' if val > 0 else ''
