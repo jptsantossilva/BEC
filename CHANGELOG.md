@@ -2,6 +2,15 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2023-04-04]
+ 
+### Added
+- 
+### Changed
+- PnL dashboard - support for multiple bots. Side panel to choose which bot you want to get data from. Bots must all be located in the same parent folder.
+### Fixed
+- 
+
 ## [2023-03-31]
  
 ### Added

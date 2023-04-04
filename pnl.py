@@ -3,12 +3,15 @@ import streamlit as st
 import datetime
 import numpy as np
 from millify import millify
+import os
+import yaml
+import sys
 
 st.set_page_config(
     page_title="Bot Dashboard App",
     page_icon="random",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
     menu_items={
         # 'Get Help': 'https://www.extremelycoolapp.com/help',
         # 'Report a bug': "https://www.extremelycoolapp.com/bug",
@@ -16,20 +19,97 @@ st.set_page_config(
     }
 )
 
-st.title('Bot Dashboard')
+# im using to find which bots are running using the positions files
+def find_file_paths(filename):
+    
+    # get the current working directory
+    cwd = os.getcwd()
+
+    parent_dir_path = os.path.join(cwd, '..')
+
+    # find all folders inside the parent folder
+    folder_paths = [os.path.join(parent_dir_path, f) for f in os.listdir(parent_dir_path)
+                    if os.path.isdir(os.path.join(parent_dir_path, f))]
+
+    # search for the file in each folder and return the file paths where it exists
+    file_paths = []
+    for folder_path in folder_paths:
+        file_path = os.path.join(folder_path, filename)
+        if os.path.exists(file_path):
+            file_paths.append(folder_path)
+
+    return file_paths
+
+paths = find_file_paths('positions1d.csv')
+
+def get_bot_names(paths):
+    bot_names = []
+    for path in paths:
+        bot_names.append(os.path.basename(os.path.normpath(path)))
+    
+    return bot_names
+
+bot_names = get_bot_names(paths)
+
+#sidebar with available bots
+with st.sidebar:
+    bot_selected = st.radio(
+        "Choose Bot:",
+        (bot_names)
+        )
+    
+def get_trade_against(bot):
+
+    # get settings from config file
+    try:
+        # get the current working directory
+        cwd = os.getcwd()
+        file_path = os.path.join(cwd, '..', bot, 'config.yaml')
+        with open(file_path, "r") as file:
+            config = yaml.safe_load(file)
+
+        trade_against = config["trade_against"]
+
+        return trade_against
+        
+    except FileNotFoundError as e:
+        msg = "Error: The file config.yaml could not be found."
+        msg = msg + " " + sys._getframe(  ).f_code.co_name+" - "+repr(e)
+        print(msg)
+        # logging.exception(msg)
+        # telegram.send_telegram_message(telegram.telegramToken_errors, telegram.eWarning, msg)
+        # sys.exit(msg) 
+
+    except yaml.YAMLError as e:
+        msg = "Error: There was an issue with the YAML file."
+        msg = msg + " " + sys._getframe(  ).f_code.co_name+" - "+repr(e)
+        print(msg)
+        # logging.exception(msg)
+        # telegram.send_telegram_message(telegram.telegramToken_errors, telegram.eWarning, msg)
+        # sys.exit(msg)
+
+st.title(f'Dashboard')
+trade_against = get_trade_against(bot_selected)
+num_decimals = 8 if trade_against == "BTC" else 2  
+st.caption(f'**{bot_selected}** - {trade_against}')
 
 tab_upnl, tab_rpnl = st.tabs(["Unrealized PnL","Realized PnL"])
 
 # Get years with orders
-def get_orders_by_year():
+def get_orders_by_year(bot):
     
     time_frame = ["1d", "4h", "1h"]
 
     years = []
 
     for tf in time_frame: 
-        df = pd.read_csv('orders'+tf+'.csv')
+        # get the current working directory
+        cwd = os.getcwd()
+        bot_dir_path = os.path.join(cwd, '..', bot, 'orders'+tf+'.csv')
+        df = pd.read_csv(bot_dir_path)
         
+        # df = pd.read_csv('orders'+tf+'.csv')
+
         # convert 'date' column to datetime format
         df['time'] = pd.to_datetime(df['time'])
 
@@ -48,14 +128,18 @@ def get_orders_by_year():
     return years
 
 # get months with orders within the year
-def get_orders_by_month(year):
+def get_orders_by_month(year, bot):
     
     time_frame = ["1d", "4h", "1h"]
 
     months = {}
 
     for tf in time_frame: 
-        df = pd.read_csv('orders'+tf+'.csv')
+        # get the current working directory
+        cwd = os.getcwd()
+        bot_dir_path = os.path.join(cwd, '..', bot, 'orders'+tf+'.csv')
+        df = pd.read_csv(bot_dir_path)
+        # df = pd.read_csv('orders'+tf+'.csv')
         
         # convert 'date' column to datetime format
         df['time'] = pd.to_datetime(df['time'])
@@ -80,7 +164,7 @@ def get_orders_by_month(year):
     return months
 
 # get years
-years = get_orders_by_year()
+years = get_orders_by_year(bot_selected)
 
 # years empty list
 if len(years) == 0:
@@ -94,7 +178,7 @@ year = col1.selectbox(
     (years)
 )
 # get months
-months = get_orders_by_month(year)
+months = get_orders_by_month(year, bot_selected)
 
 # months selectbox
 month = col2.selectbox(
@@ -117,7 +201,7 @@ if col2.checkbox('Full Year'):
 def get_year_month(date):
     return date.year, date.month
 
-def calculate_realized_pnl(year, month):
+def calculate_realized_pnl(year, month, bot):
 
     # Get user input for the year and month
     # print('Choose period for PnL analysis of closed positions')
@@ -135,10 +219,15 @@ def calculate_realized_pnl(year, month):
     
     positionsTimeframe = ["1d", "4h", "1h"] 
 
-    results_df = pd.DataFrame(columns=['bot','Year','Month','pnl_%','pnl_usd','trades'])
+    results_df = pd.DataFrame(columns=['bot','Year','Month','pnl_%','pnl_value','trades'])
 
     for tf in positionsTimeframe: 
-        df = pd.read_csv('orders'+tf+'.csv')
+        # get the current working directory
+        cwd = os.getcwd()
+        bot_dir_path = os.path.join(cwd, '..', bot, 'orders'+tf+'.csv')
+        
+        df = pd.read_csv(bot_dir_path)
+        # df = pd.read_csv('orders'+tf+'.csv')
     
         # Convert the time column to a Pandas datetime object
         df['time'] = pd.to_datetime(df['time'])
@@ -160,10 +249,13 @@ def calculate_realized_pnl(year, month):
         # remove miliseconds
         df['time'] = df['time'].dt.strftime("%Y-%m-%d %H:%M:%S")
         month_df = df[['bot','time','symbol','executedQty','price','pnlusd','pnlperc']].copy()
-        month_df = month_df.rename(columns={'executedQty':'quantity','price':'sellPrice','pnlusd':'pnl_usd','pnlperc':'pnl_%'})
+        month_df = month_df.rename(columns={'time':'date','executedQty':'quantity','price':'sellPrice','pnlusd':'pnl_value','pnlperc':'pnl_%'})
 
         print('')              
         print(month_df)
+
+        # drop the 'bot' column
+        month_df = month_df.drop('bot', axis=1)
 
         if tf == "1h":
             month_df_1h = month_df
@@ -172,9 +264,9 @@ def calculate_realized_pnl(year, month):
         elif tf == "1d":
             month_df_1d = month_df
 
-        # Calculate the sums of the 'pnlperc' and 'pnlusd' columns
+        # Calculate the sums of the 'pnlperc' and 'pnlvalue' columns
         pnl_perc_sum = month_df['pnl_%'].sum()
-        pnl_usd_sum = round(month_df['pnl_usd'].sum(),2)
+        pnl_value_sum = round(month_df['pnl_value'].sum(), num_decimals)
 
         # Create a new dataframe with the results
         df_new = pd.DataFrame({
@@ -182,31 +274,36 @@ def calculate_realized_pnl(year, month):
                 'Year': [year],
                 'Month': [month],
                 'pnl_%': [pnl_perc_sum],
-                'pnl_usd': [pnl_usd_sum],
+                'pnl_value': [pnl_value_sum],
                 'trades': [trades]})
         # append the new data to the existing DataFrame
         results_df = pd.concat([results_df, df_new], ignore_index=True)
 
     # Calculate the sum of values in pnl 
     sum_pnl_perc = results_df['pnl_%'].sum()
-    sum_pnl_usd = results_df['pnl_usd'].sum()
+    sum_pnl_value = results_df['pnl_value'].sum()
     sum_trades = results_df['trades'].sum()
     # Add a new row at the end of the dataframe with the sum values
-    results_df.loc[len(results_df)] = ['TOTAL','', '', sum_pnl_perc, sum_pnl_usd, sum_trades]
+    results_df.loc[len(results_df)] = ['TOTAL','', '', sum_pnl_perc, sum_pnl_value, sum_trades]
     
     return results_df, month_df_1d, month_df_4h, month_df_1h
 
-def calculate_unrealized_pnl():
+def calculate_unrealized_pnl(bot):
     
     print('\nUnrealized PnL')
     print('---------------------')
 
     positionsTimeframe = ["1d", "4h", "1h"] 
 
-    results_df = pd.DataFrame(columns=['bot','pnl_%','pnl_usd','positions'])
+    results_df = pd.DataFrame(columns=['bot','pnl_%','pnl_value','positions'])
 
     for tf in positionsTimeframe: 
-        df = pd.read_csv('positions'+tf+'.csv')
+        # get the current working directory
+        cwd = os.getcwd()
+        bot_dir_path = os.path.join(cwd, '..', bot, 'positions'+tf+'.csv')
+        
+        df = pd.read_csv(bot_dir_path)
+        # df = pd.read_csv('positions'+tf+'.csv')
     
         # Convert the time column to a Pandas datetime object
         # df['time'] = pd.to_datetime(df['time'])
@@ -224,7 +321,10 @@ def calculate_unrealized_pnl():
         df['pnlperc2'] = (((df['currentPrice']*df['quantity'])-(df['buyPrice']*df['quantity']))/(df['buyPrice']*df['quantity']))*100
 
         positions_df = df[['bot','Currency','quantity','buyPrice','pnlusd','pnlperc2']].copy()
-        positions_df = positions_df.rename(columns={'Currency':'symbol','pnlusd':'pnl_usd','pnlperc2':'pnl_%'})
+        positions_df = positions_df.rename(columns={'Currency':'symbol','pnlusd':'pnl_value','pnlperc2':'pnl_%'})
+
+        # drop the 'bot' column
+        positions_df = positions_df.drop('bot', axis=1)
 
         if tf == "1h":
             positions_df_1h = positions_df
@@ -233,9 +333,9 @@ def calculate_unrealized_pnl():
         elif tf == "1d":
             positions_df_1d = positions_df
 
-        # Calculate the sums of the 'pnlperc' and 'pnlusd' columns
+        # Calculate the sums of the 'pnlperc' and 'pnlvalue' columns
         pnl_perc_sum = round(positions_df['pnl_%'].sum(),2)
-        pnl_usd_sum = round(positions_df['pnl_usd'].sum(),2)
+        pnl_value_sum = round(positions_df['pnl_value'].sum(), num_decimals)
 
         print('')              
         print(positions_df)
@@ -244,22 +344,22 @@ def calculate_unrealized_pnl():
         df_new = pd.DataFrame({
                 'bot': [tf],
                 'pnl_%': [pnl_perc_sum],
-                'pnl_usd': [pnl_usd_sum],
+                'pnl_value': [pnl_value_sum],
                 'positions': [positions]})
         # append the new data to the existing DataFrame
         results_df = pd.concat([results_df, df_new], ignore_index=True)
 
     # Calculate the sum of values in pnl 
     sum_pnl_perc = results_df['pnl_%'].sum()
-    sum_pnl_usd = results_df['pnl_usd'].sum()
+    sum_pnl_value = results_df['pnl_value'].sum()
     sum_positions = results_df['positions'].sum()
     # Add a new row at the end of the dataframe with the sum values
-    results_df.loc[len(results_df)] = ['TOTAL', sum_pnl_perc, sum_pnl_usd, sum_positions]
+    results_df.loc[len(results_df)] = ['TOTAL', sum_pnl_perc, sum_pnl_value, sum_positions]
     
     return results_df, positions_df_1d, positions_df_4h, positions_df_1h
 
 
-# define a function to set the background color of the rows based on pnl_usd
+# define a function to set the background color of the rows based on pnl_value
 def set_pnl_color(val):
     color = '#E9967A' if val < 0 else '#8FBC8F' if val > 0 else ''
     return f'background-color: {color}'
@@ -272,7 +372,7 @@ def last_row_bold(row):
         return f'background-color: black'
     return ['']*len(row)
 
-result_closed_positions, trades_month_1d, trades_month_4h, trades_month_1h = calculate_realized_pnl(year, month_number)
+result_closed_positions, trades_month_1d, trades_month_4h, trades_month_1h = calculate_realized_pnl(year, month_number, bot_selected)
 print("\nPnL - Total")
 # apply the lambda function to make the last row bold
 # result_closed_positions = result_closed_positions.apply(lambda x: ['font-weight: bold' if i == len(x)-1 else '' for i in range(len(x))], axis=1)
@@ -280,7 +380,7 @@ print("\nPnL - Total")
 print(result_closed_positions)
 
 tab_rpnl.header("Realized PnL - Total")
-tab_rpnl.dataframe(result_closed_positions.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['pnl_%','pnl_usd']))
+tab_rpnl.dataframe(result_closed_positions.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['pnl_%','pnl_value']))
 
 print("Realized PnL - Detail")
 print(trades_month_1d)
@@ -289,16 +389,16 @@ print(trades_month_1h)
 
 tab_rpnl.header(f"Realized PnL - Detail")
 tab_rpnl.subheader("Bot 1d")
-tab_rpnl.dataframe(trades_month_1d.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['pnl_%','pnl_usd']))
+tab_rpnl.dataframe(trades_month_1d.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['pnl_%','pnl_value']))
 tab_rpnl.subheader("Bot 4h")
-tab_rpnl.dataframe(trades_month_4h.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['pnl_%','pnl_usd']))
+tab_rpnl.dataframe(trades_month_4h.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['pnl_%','pnl_value']))
 tab_rpnl.subheader("Bot 1h")
-tab_rpnl.dataframe(trades_month_1h.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['pnl_%','pnl_usd']))
+tab_rpnl.dataframe(trades_month_1h.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['pnl_%','pnl_value']))
 
 
 # print('\n----------------------------\n')
 
-result_open_positions, positions_df_1d, positions_df_4h, positions_df_1h = calculate_unrealized_pnl()
+result_open_positions, positions_df_1d, positions_df_4h, positions_df_1h = calculate_unrealized_pnl(bot_selected)
 print("\nUnrealized PnL - Total")
 print('-------------------------------')
 print(result_open_positions)
@@ -310,17 +410,17 @@ tab_upnl.header("Unrealized PnL - Total")
 
 # st.sidebar.subheader('Unrealized PnL %')
 # col1, col2, col3 = st.sidebar.columns(3)
-currPnL_1d_usd = result_open_positions.loc[result_open_positions['bot'] == '1d', 'pnl_usd'].iloc[0]
-currPnL_4h_usd = result_open_positions.loc[result_open_positions['bot'] == '4h', 'pnl_usd'].iloc[0]
-currPnL_1h_usd = result_open_positions.loc[result_open_positions['bot'] == '1h', 'pnl_usd'].iloc[0]
-currPnL_total_usd = currPnL_1d_usd + currPnL_4h_usd + currPnL_1h_usd
+currPnL_1d_value = result_open_positions.loc[result_open_positions['bot'] == '1d', 'pnl_value'].iloc[0]
+currPnL_4h_value = result_open_positions.loc[result_open_positions['bot'] == '4h', 'pnl_value'].iloc[0]
+currPnL_1h_value = result_open_positions.loc[result_open_positions['bot'] == '1h', 'pnl_value'].iloc[0]
+currPnL_total_value = currPnL_1d_value + currPnL_4h_value + currPnL_1h_value
 
 # Convert long numbers into a human-readable format in Python
 # 1200 to 1.2k; 12345678 to 12.35M 
-currPnL_1d_usd = millify(currPnL_1d_usd, precision=2)
-currPnL_4h_usd = millify(currPnL_4h_usd, precision=2)
-currPnL_1h_usd = millify(currPnL_1h_usd, precision=2)
-currPnL_total_usd = millify(currPnL_total_usd, precision=2)
+currPnL_1d_value = millify(currPnL_1d_value, precision=num_decimals)
+currPnL_4h_value = millify(currPnL_4h_value, precision=num_decimals)
+currPnL_1h_value = millify(currPnL_1h_value, precision=num_decimals)
+currPnL_total_value = millify(currPnL_total_value, precision=num_decimals)
 
 currPnL_1d_perc = result_open_positions.loc[result_open_positions['bot'] == '1d', 'pnl_%'].iloc[0]
 currPnL_4h_perc = result_open_positions.loc[result_open_positions['bot'] == '4h', 'pnl_%'].iloc[0]
@@ -333,14 +433,14 @@ currPnL_1h_perc = millify(currPnL_1h_perc, precision=2)
 currPnL_total_perc = millify(currPnL_total_perc, precision=2)
 
 col1, col2, col3, col4 = tab_upnl.columns(4)
-col1.metric("1d", currPnL_1d_usd, str(currPnL_1d_perc)+"%")
-col2.metric("4h", currPnL_4h_usd, str(currPnL_4h_perc)+"%")
-col3.metric("1h", currPnL_1h_usd, str(currPnL_1h_perc)+"%")
-col4.metric("Total", currPnL_total_usd, str(currPnL_total_perc)+"%")
+col1.metric("1d", currPnL_1d_value, str(currPnL_1d_perc)+"%")
+col2.metric("4h", currPnL_4h_value, str(currPnL_4h_perc)+"%")
+col3.metric("1h", currPnL_1h_value, str(currPnL_1h_perc)+"%")
+col4.metric("Total", currPnL_total_value, str(currPnL_total_perc)+"%")
 
 tab_upnl.write("")
 
-tab_upnl.dataframe(result_open_positions.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['pnl_%','pnl_usd']))
+tab_upnl.dataframe(result_open_positions.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['pnl_%','pnl_value']))
 
 print("Unrealized PnL - Detail")
 print(positions_df_1d)
@@ -349,11 +449,11 @@ print(positions_df_1h)
 
 tab_upnl.header(f"Unrealized PnL - Detail")
 tab_upnl.subheader("Bot 1d")
-tab_upnl.dataframe(positions_df_1d.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['pnl_%','pnl_usd']))
+tab_upnl.dataframe(positions_df_1d.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['pnl_%','pnl_value']))
 tab_upnl.subheader("Bot 4h")
-tab_upnl.dataframe(positions_df_4h.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['pnl_%','pnl_usd']))
+tab_upnl.dataframe(positions_df_4h.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['pnl_%','pnl_value']))
 tab_upnl.subheader("Bot 1h")
-tab_upnl.dataframe(positions_df_1h.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['pnl_%','pnl_usd']))
+tab_upnl.dataframe(positions_df_1h.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['pnl_%','pnl_value']))
 
 
 
