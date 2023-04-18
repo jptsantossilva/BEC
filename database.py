@@ -1,6 +1,5 @@
 import sqlite3
 import os
-# import millify
 import math
 from datetime import datetime
 import pandas as pd
