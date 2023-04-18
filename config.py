@@ -2,6 +2,12 @@ import sys
 import yaml
 import telegram
 import os
+import pandas as pd
+
+# sets the output display precision in terms of decimal places to 8.
+# this is helpful when trading against BTC. The value in the dataframe has the precision 8 but when we display it 
+# by printing or sending to telegram only shows precision 6
+pd.set_option("display.precision", 8)
 
 # global vars
 stake_amount_type = None
@@ -10,6 +16,7 @@ tradable_balance_ratio = None
 min_position_size = None
 trade_against = None
 stop_loss = None
+trade_top_performance = None
 
 n_decimals = None
 
@@ -58,7 +65,7 @@ def get_env_var(var_name):
 
 def get_all_settings():
         
-    global stake_amount_type, max_number_of_open_positions, tradable_balance_ratio, min_position_size, trade_against, stop_loss
+    global stake_amount_type, max_number_of_open_positions, tradable_balance_ratio, min_position_size, trade_against, stop_loss, trade_top_performance
 
     # get settings from config file
     stake_amount_type            = get_setting("stake_amount_type")
@@ -67,6 +74,7 @@ def get_all_settings():
     min_position_size            = get_setting("min_position_size")
     trade_against                = get_setting("trade_against")
     stop_loss                    = get_setting("stop_loss")
+    trade_top_performance        = get_setting("trade_top_performance")
 
     global n_decimals
     if trade_against == "BTC":

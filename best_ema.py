@@ -1,23 +1,15 @@
-
-"""
-calculates best ema for the coinpair and time frame provided and store results on coinpairBestEma.csv
-"""
-
-import os
-from binance.client import Client
 import pandas as pd
-import datetime
 from backtesting import Backtest, Strategy
 from backtesting.lib import crossover
 import sys
-from datetime import date, timedelta
+from datetime import date
 from dateutil.relativedelta import relativedelta
 import time
-from binance.exceptions import BinanceAPIException
-import requests
 import telegram
 import logging
 import timeit
+import database
+from exchange import client
 
 # sets the output display precision in terms of decimal places to 8.
 # this is helpful when trading against BTC. The value in the dataframe has the precision 8 but when we display it 
@@ -28,29 +20,6 @@ pd.set_option("display.precision", 8)
 log_filename = "coinpairByMarketPhase.log"
 logging.basicConfig(filename=log_filename, level=logging.INFO,
                     format='%(asctime)s %(message)s', datefmt='%Y-%m-%d %I:%M:%S %p -')
-
-# Binance
-# environment variables
-try:
-    # Binance
-    api_key = os.environ.get('binance_api')
-    api_secret = os.environ.get('binance_secret')
-
-except KeyError as e: 
-    msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
-    print(msg)
-    logging.exception(msg)
-    telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eWarning, msg)
-
-# Binance Client
-try:
-    client = Client(api_key, api_secret)
-except Exception as e:
-    msg = "Error connecting to Binance. "+ repr(e)
-    print(msg)
-    logging.exception(msg)
-    telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eWarning, msg)
-    sys.exit(msg) 
 
 # backtest with 4 years of price data 
 #-------------------------------------
@@ -106,9 +75,6 @@ class EmaCross(Strategy):
         SMA50 = self.sma50
         SMA200 = self.sma200
         priceClose = self.data.Close
-        
-        # accumulationPhase = False
-        # bullishPhase = False
 
         accumulationPhase = (priceClose > SMA50) and (priceClose > SMA200) and (SMA50 < SMA200)
         bullishPhase = (priceClose > SMA50) and (priceClose > SMA200) and (SMA50 > SMA200)
@@ -122,10 +88,7 @@ class EmaCross(Strategy):
             if crossover(slowEMA, fastEMA): 
                 self.position.close()
             
-
-
-# %%
-def getdata(pSymbol, pTimeframe):
+def get_data(pSymbol, pTimeframe):
     try:
         frame = pd.DataFrame(client.get_historical_klines(pSymbol
                                                         ,pTimeframe
@@ -152,35 +115,32 @@ def getdata(pSymbol, pTimeframe):
         frame = pd.DataFrame()
         return frame 
 
-def runBackTest(coin_pair):
+def run_backtest(symbol, timeframe):
     
-    if coin_pair.endswith("BTC"):
-        coinOnly = coin_pair[:-3]
-        coinStable = coin_pair[-3:]
-    elif coin_pair.endswith(("BUSD","USDT")):    
-        coinOnly = coin_pair[:-4]
-        coinStable = coin_pair[-4:]
+    if symbol.endswith("BTC"):
+        symbol_only = symbol[:-3]
+        symbol_stable = symbol[-3:]
+    elif symbol.endswith(("BUSD","USDT")):    
+        symbol_only = symbol[:-4]
+        symbol_stable = symbol[-4:]
 
-    # print("coinPair = ",coinPair)
-    # df = getdata(coinPair, timeframe)
-
-    if coin_pair.endswith("BTC"):
-        df = getdata(coin_pair, timeframe)
+    if symbol.endswith("BTC"):
+        df = get_data(symbol, timeframe)
 
     # get historical data from BUSD and USDT and use the one with more data 
-    elif coin_pair.endswith(("BUSD","USDT")):
+    elif symbol.endswith(("BUSD","USDT")):
         dfStableBUSD = pd.DataFrame()
         dfStableUSDT = pd.DataFrame()
     
         iniBUSD = 0
         iniUSDT = 0
         
-        dfStableBUSD = getdata(coinOnly+"BUSD", timeframe)
+        dfStableBUSD = get_data(symbol_only+"BUSD", timeframe)
             
         if not dfStableBUSD.empty:
             ini1 = dfStableBUSD.index[0]
 
-        dfStableUSDT = getdata(coinOnly+"USDT", timeframe) 
+        dfStableUSDT = get_data(symbol_only+"USDT", timeframe) 
 
         if not dfStableUSDT.empty:
             ini2 = dfStableUSDT.index[0]
@@ -203,9 +163,6 @@ def runBackTest(coin_pair):
             # BUSD has more history
             print("BUSD pair has more historical data")
             df = dfStableBUSD.copy()
-
-    # df = df.drop(['Time'], axis=1)
-    # print(df)
 
     bt = Backtest(df, EmaCross, cash=100000, commission=0.001)
     stats = bt.run()
@@ -234,62 +191,32 @@ def runBackTest(coin_pair):
     print("Buy & Hold Return [%] = ",round(BuyHoldReturnPerc,2))
     print("Backtest start date =", BacktestStartDate)
 
-    try:
-        filename = 'coinpairBestEma.csv'
-        coinpairBestEma = pd.read_csv(filename)
-        # coinpairBestEma
-        # add to file coinpair Best Ema 
-        # if exist then update else add
-        linha = coinpairBestEma.index[(coinpairBestEma.coinPair == coin_pair) & (coinpairBestEma.timeFrame == timeframe)].to_list()
+    database.add_best_ema(timeframe=timeframe,
+                          symbol=symbol,
+                          ema_fast=n1,
+                          ema_slow=n2,
+                          return_perc=returnPerc,
+                          buy_hold_return_perc=BuyHoldReturnPerc,
+                          backtest_start_date=BacktestStartDate
+                          )
 
-        if not linha:
-            # print("There is no line in coinpairBestEma file with coinPair "+str(coinPair)+ " and timeframe "+str(timeframe)+". New line will be added.")
-            # add line
-            coinpairBestEma.loc[len(coinpairBestEma.index)] = [coin_pair, 
-                                                                n1,
-                                                                n2,
-                                                                timeframe,
-                                                                returnPerc,
-                                                                BuyHoldReturnPerc,
-                                                                BacktestStartDate
-                                                                ]
-        else:
-            # print("linha=",linha[0])
-            # update line
-            coinpairBestEma.loc[linha[0],['fastEMA','slowEMA','returnPerc','BuyHoldReturnPerc','BacktestStartDate']] = [n1, n2, returnPerc,BuyHoldReturnPerc,BacktestStartDate]
-
-        # coinpairBestEma
-        # print("Saving Coin Pair to coinpairBestEma file")
-
-        #order by coinpair and timeframe
-        coinpairBestEma.sort_values(by=['coinPair','timeFrame'], inplace=True)
-        coinpairBestEma.to_csv(filename, index=False, header=True)
-
-    except Exception as e:
-        msg = sys._getframe(  ).f_code.co_name+f" - {filename} - " + repr(e)
-        print(msg)
-        logging.exception(msg)
-        telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eWarning, msg)
-
-
-def addcoinpair(coinPair, lTimeframe):
+def calc_best_ema(symbol, timeframe):
 
     result = False
-    
-    global timeframe 
-    timeframe = str(lTimeframe)
 
     try:
-        # calculate program run time
+        # calculate run time
         start = timeit.default_timer()
         
         print("")
-        print("Backtest - "+coinPair+" - "+timeframe+" - Start")
-        runBackTest(coinPair)
-        print("Backtest "+coinPair+" - "+timeframe+" - End")
+        print("Backtest - "+symbol+" - "+timeframe+" - Start")
+        run_backtest(symbol, timeframe)
+        print("Backtest "+symbol+" - "+timeframe+" - End")
         
         stop = timeit.default_timer()
-        msg = 'Execution Time (s): '+str(round(stop - start,1))
+        total_seconds = stop - start
+        duration = database.duration(total_seconds)
+        msg = f'Execution Time: {duration}'
         print(msg)
         
         result = True
