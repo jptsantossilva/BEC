@@ -325,18 +325,17 @@ sql_update_position_pnl = """
         Curr_Price = ?,
         PnL_Perc = ?,
         PnL_Value = ?,
-        Duration = ?,
+        Duration = ?
     WHERE
         Bot = ? 
         AND Symbol = ? 
         AND Position = 1;        
 """
 def update_position_pnl (bot, symbol, curr_price):
-    items = get_positions_by_bot_symbol_position(bot, symbol, position=1)
-    buy_price = float(items[5])
-    buy_price = float(items['Buy_Price'])
-    qty = float(items[7])
-    date = str(items[2])
+    df = get_positions_by_bot_symbol_position(bot, symbol, position=1)
+    buy_price = float(df.loc[0,'Buy_Price'])
+    qty = float(df.loc[0,'Qty'])
+    date = str(df.loc[0,'Date'])
 
     if not math.isnan(buy_price) and (buy_price > 0):
         pnl_perc = ((curr_price - buy_price)/buy_price)*100
@@ -347,9 +346,12 @@ def update_position_pnl (bot, symbol, curr_price):
         
         # duration
         datetime_now = datetime.now()
-        datetime_open_position = datetime.strptime(date, '%Y-%m-%d %H:%M:%S')
-        diff_seconds = (datetime_now - datetime_open_position).total_seconds()
-        duration = str(duration(diff_seconds))
+        
+        duration = None
+        if date != 'None':
+            datetime_open_position = datetime.strptime(date, '%Y-%m-%d %H:%M:%S')
+            diff_seconds = (datetime_now - datetime_open_position).total_seconds()
+            duration = str(duration(diff_seconds))
 
     with connection:
         connection.execute(sql_update_position_pnl, (curr_price, pnl_perc, pnl_value, duration, bot, symbol))
