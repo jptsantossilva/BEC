@@ -1,6 +1,7 @@
 import sqlite3
 import csv
 import database
+import config
 
 # Connect to the database
 conn = sqlite3.connect('data.db')
@@ -62,7 +63,6 @@ with open("blacklist.csv", 'r') as csv_file:
             (row['Currency'],))
 
 # SYMBOLS_TO_CALC
-# Open the CSV file
 with open("addcoinpair.csv", 'r') as csv_file:
     # Create a CSV reader object
     csv_reader = csv.DictReader(csv_file)
@@ -72,9 +72,18 @@ with open("addcoinpair.csv", 'r') as csv_file:
         # Insert the row into the table
         cursor.execute('INSERT INTO Symbols_To_Calc (Symbol, Calc_Completed, Date_Added) VALUES (?, ?, ?)',
             (row['Currency'],row['Completed'],row['Date']))
-        
-        # Currency,Completed,Date
-        
+
+# SYMBOLS_BY_MARKET_PHASE
+with open("coinpairByMarketPhase_"+config.trade_against+"_1d.csv", 'r') as csv_file:
+    # Create a CSV reader object
+    csv_reader = csv.DictReader(csv_file)
+
+    # Iterate over each row in the CSV file
+    for row in csv_reader:
+        # Insert the row into the table
+        cursor.execute('INSERT INTO Symbols_By_Market_Phase (Symbol, Price, DSMA50, DSMA200, Market_Phase, Perc_Above_DSMA50, Perc_Above_DSMA200, Rank) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            (row['Coinpair'], row['Close'], row['50DSMA'] ,row['200DSMA'], row['MarketPhase'], row['perc_above_50DSMA'], row['perc_above_200DSMA'], row['performance_rank']))
+
 # Commit the changes to the database
 conn.commit()
 
