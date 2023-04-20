@@ -33,22 +33,22 @@ except yaml.YAMLError as e:
     sys.exit(msg) 
 
 # emoji
-eStart   = u'\U000025B6'
-eStop    = u'\U000023F9'
-eWarning = u'\U000026A0'
-eEnterTrade = u'\U0001F91E' # crossfingers
-eExitTrade  = u'\U0001F91E' # crossfingers
-eTradeWithProfit = u'\U0001F44D' # thumbs up
-eTradeWithLoss   = u'\U0001F44E' # thumbs down
-eInformation = u'\U00002139'
+EMOJI_START = u'\U000025B6'
+EMOJI_STOP = u'\U000023F9'
+EMOJI_WARNING = u'\U000026A0'
+EMOJI_ENTER_TRADE = u'\U0001F91E' # crossfingers
+EMOJI_EXIT_TRADE = u'\U0001F91E' # crossfingers
+EMOJI_TRADE_WITH_PROFIT = u'\U0001F44D' # thumbs up
+EMOJI_TRADE_WITH_LOSS = u'\U0001F44E' # thumbs down
+EMOJI_INFORMATION = u'\U00002139'
 
 telegram_chat_id = ""
-telegramToken_closed_position = ""
-telegramToken_errors = ""
-telegramToken_market_phases = ""
-telegramToken_1h = ""
-telegramToken_4h = ""
-telegramToken_1d = ""
+telegram_token_closed_position = ""
+telegram_token_errors = ""
+telegram_token_market_phases = ""
+telegram_token_1h = ""
+telegram_token_4h = ""
+telegram_token_1d = ""
 
 # telegram timeout 5 seg
 telegram_timeout = 5
@@ -57,23 +57,23 @@ def read_env_var():
     # environment variables
     
     global telegram_chat_id
-    global telegramToken_closed_position
-    global telegramToken_errors
-    global telegramToken_market_phases
-    global telegramToken_1h
-    global telegramToken_4h
-    global telegramToken_1d
+    global telegram_token_closed_position
+    global telegram_token_errors
+    global telegram_token_market_phases
+    global telegram_token_1h
+    global telegram_token_4h
+    global telegram_token_1d
 
     try:
         add_at_the_end = "_btc" if trade_against == "BTC" else ""
 
         telegram_chat_id = os.environ.get('telegram_chat_id')
-        telegramToken_closed_position = os.environ.get('telegramToken_ClosedPositions'+add_at_the_end) 
-        telegramToken_errors = os.environ.get('telegramToken_errors'+add_at_the_end)
-        telegramToken_market_phases = os.environ.get('telegramToken_MarketPhases'+add_at_the_end)
-        telegramToken_1h = os.environ.get('telegramToken1h'+add_at_the_end)
-        telegramToken_4h = os.environ.get('telegramToken4h'+add_at_the_end)
-        telegramToken_1d = os.environ.get('telegramToken1d'+add_at_the_end)
+        telegram_token_closed_position = os.environ.get('telegramToken_ClosedPositions'+add_at_the_end) 
+        telegram_token_errors = os.environ.get('telegramToken_errors'+add_at_the_end)
+        telegram_token_market_phases = os.environ.get('telegramToken_MarketPhases'+add_at_the_end)
+        telegram_token_1h = os.environ.get('telegramToken1h'+add_at_the_end)
+        telegram_token_4h = os.environ.get('telegramToken4h'+add_at_the_end)
+        telegram_token_1d = os.environ.get('telegramToken1d'+add_at_the_end)
 
     except KeyError as e: 
         msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
@@ -94,13 +94,23 @@ def remove_chars_exceptions(string):
 
     return string
 
+def get_telegram_token(bot):
+    if bot == "1h":
+        telegramToken = telegram_token_1h
+    elif bot == "4h":
+        telegramToken = telegram_token_4h
+    elif bot == "1d":
+        telegramToken = telegram_token_1d
+
+    return telegramToken
+
 def send_telegram_message(telegram_token, emoji, msg):
 
     msg = remove_chars_exceptions(msg)
 
     max_limit = 4096
     if emoji:
-        additional_characters = eWarning+" <pre> </pre>Part [10/99]"
+        additional_characters = EMOJI_WARNING+" <pre> </pre>Part [10/99]"
     else:
         additional_characters = "<pre> </pre>Part [10/99]"
 
@@ -127,11 +137,11 @@ def send_telegram_message(telegram_token, emoji, msg):
 
             try:
                 # if message is a warning, send message also to the errors telegram chat bot 
-                if emoji == eWarning:
-                    resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegramToken_errors), params=params, timeout=telegram_timeout)
+                if emoji == EMOJI_WARNING:
+                    resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegram_token_errors), params=params, timeout=telegram_timeout)
                     resp.raise_for_status()
 
-                if telegram_token != telegramToken_errors:
+                if telegram_token != telegram_token_errors:
                     resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegram_token), params=params, timeout=telegram_timeout)
                     resp.raise_for_status()
 
@@ -166,8 +176,8 @@ def send_telegram_message(telegram_token, emoji, msg):
         
         try:            
             # if message is a warning, send message also to the errors telegram chat bot 
-            if emoji == eWarning:
-                resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegramToken_errors), params=params, timeout=telegram_timeout)
+            if emoji == EMOJI_WARNING:
+                resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegram_token_errors), params=params, timeout=telegram_timeout)
                 resp.raise_for_status()
 
             resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegram_token), params=params, timeout=telegram_timeout)
@@ -190,10 +200,12 @@ def send_telegram_message(telegram_token, emoji, msg):
             print(msg)
             logging.exception(msg)
 
-def send_telegram_alert(telegram_token, emoji, date, coin, timeframe, strategy, ordertype, unitValue, amount, trade_against_value, pnlPerc = '', pnl_trade_against = ''):
+def send_telegram_alert(telegram_token, emoji, date, coin, timeframe, strategy, ordertype, unitValue, amount, trade_against_value, pnlPerc = '', pnl_trade_against = '', exit_reason = ''):
     lmsg = emoji + " " + str(date) + "\n" + coin + "\n" + strategy + "\n" + timeframe + "\n" + ordertype + "\n" + "UnitPrice: " + str(unitValue) + "\n" + "Qty: " + str(amount)+ "\n" + trade_against + ": " + str(trade_against_value)
     if pnlPerc != '':
         lmsg = lmsg + "\n"+"PnL%: "+str(round(float(pnlPerc),2)) + "\n"+"PnL "+trade_against+": "+str(float(pnl_trade_against))
+    if exit_reason != '':
+        lmsg = lmsg + "\n"+"Exit Reason: "+exit_reason
 
     print(lmsg)
 
@@ -229,7 +241,7 @@ def send_telegram_alert(telegram_token, emoji, date, coin, timeframe, strategy, 
         logging.exception(msg)
 
     # if is a closed position send also to telegram of closed positions
-    if emoji in [eTradeWithProfit, eTradeWithLoss]:
+    if emoji in [EMOJI_TRADE_WITH_PROFIT, EMOJI_TRADE_WITH_LOSS]:
         
         params = {
         "chat_id": telegram_chat_id,
@@ -238,7 +250,7 @@ def send_telegram_alert(telegram_token, emoji, date, coin, timeframe, strategy, 
         }
 
         try: 
-            resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegramToken_closed_position), params=params, timeout=telegram_timeout)
+            resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegram_token_closed_position), params=params, timeout=telegram_timeout)
             resp.raise_for_status()
 
         except requests.exceptions.HTTPError as errh:

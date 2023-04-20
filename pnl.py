@@ -1,6 +1,6 @@
 import pandas as pd
 import streamlit as st
-# import datetime
+import time
 import numpy as np
 from millify import millify
 import os
@@ -8,6 +8,13 @@ import yaml
 import sys
 import database
 import calendar
+import config
+import exchange
+
+# Store the initial value of widgets in session state
+# if "visibility" not in st.session_state:
+#     st.session_state.visibility = "visible"
+#     st.session_state.disabled = False
 
 st.set_page_config(
     page_title="Bot Dashboard App",
@@ -357,6 +364,73 @@ tab_upnl.subheader("Bot 4h")
 tab_upnl.dataframe(positions_df_4h.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
 tab_upnl.subheader("Bot 1h")
 tab_upnl.dataframe(positions_df_1h.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
+
+#----------------------
+# Force Close Position
+tab_upnl.header("Exit")
+# add expander
+sell_expander = tab_upnl.expander("Force Close Position?")
+bots = {"1d", "4h", "1h"}
+sell_bot = sell_expander.selectbox(
+    label='Bot?',
+    options=(bots),
+    label_visibility='collapsed')
+# symbols list
+if sell_bot == "1d":
+    list_positions = positions_df_1d.Symbol.to_list()
+elif sell_bot == "4h":
+    list_positions = positions_df_4h.Symbol.to_list()
+elif sell_bot == "1h":
+    list_positions = positions_df_1h.Symbol.to_list()
+
+sell_symbol = sell_expander.selectbox(
+    label='Position?',
+    options=(list_positions),
+    label_visibility='collapsed')
+sell_reason = sell_expander.text_input("Reason")
+sell_confirmation1 = sell_expander.checkbox(f"I confirm the Sell of **{sell_symbol}** in **{sell_bot}** bot")
+# if button pressed then sell position
+if sell_confirmation1:
+    sell_confirmation2 = sell_expander.button("SELL")
+    if sell_confirmation2:
+        # sell
+        symbol_only, symbol_stable = exchange.separate_symbol_and_trade_against(sell_symbol)
+        # get balance
+        balance_qty = exchange.get_symbol_balance(symbol_only, sell_bot)  
+        # verify sell quantity
+        df_pos = database.get_positions_by_bot_symbol_position(bot=sell_bot, symbol=sell_symbol, position=1)
+        if not df_pos.empty:
+            buy_order_qty = df_pos['Qty'].iloc[0]
+        
+        sell_qty = buy_order_qty
+        if balance_qty < buy_order_qty:
+            sell_qty = balance_qty
+        sell_qty = exchange.adjust_size(sell_symbol, sell_qty)
+        exchange.create_sell_order(symbol=sell_symbol,
+                                   qty=sell_qty,
+                                   bot=sell_bot,
+                                   reason=sell_reason) 
+
+        sell_expander.success(f"{sell_symbol} SOLD!")
+        time.sleep(3)
+#----------------------
+
+tab_top_perf.subheader(f"Top {config.trade_top_performance} Performers")
+df_mp = database.get_all_symbols_by_market_phase()
+df_mp['Price'] = df_mp['Price'].apply(lambda x:f'{{:.{num_decimals}f}}'.format(x))
+df_mp['DSMA50'] = df_mp['DSMA50'].apply(lambda x:f'{{:.{num_decimals}f}}'.format(x))
+df_mp['DSMA200'] = df_mp['DSMA200'].apply(lambda x:f'{{:.{num_decimals}f}}'.format(x))
+df_mp['Perc_Above_DSMA50'] = df_mp['Perc_Above_DSMA50'].apply(lambda x:'{:.2f}'.format(x))
+df_mp['Perc_Above_DSMA200'] = df_mp['Perc_Above_DSMA200'].apply(lambda x:'{:.2f}'.format(x))
+tab_top_perf.dataframe(df_mp)
+
+tab_blacklist.subheader("Blacklist")
+df_b = database.get_all_blacklist()
+tab_blacklist.dataframe(df_b)
+
+tab_best_ema.subheader("Best EMA")
+df_bema = database.get_all_best_ema()
+tab_best_ema.dataframe(df_bema)
 
 # Close the database connection
 database.connection.close()
