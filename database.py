@@ -124,10 +124,15 @@ sql_add_order_sell = """
 def add_order_sell(exchange_order_id, date, bot, symbol, price, qty, ema_fast, ema_slow, exit_reason):
     # calc
 
-    df_last_buy_order = get_last_buy_order_by_bot_symbol(connection, bot, symbol)
+    df_last_buy_order = get_last_buy_order_by_bot_symbol(bot, symbol)
 
     if df_last_buy_order.empty:
         print("DataFrame is empty")
+        buy_order_id = ''
+        buy_price = ''
+        buy_qty = ''
+        pnl_perc = ''
+        pnl_value = ''
     else:
         buy_order_id = df_last_buy_order.loc[0, 'Buy_Order_Id']
         buy_price = float(df_last_buy_order.loc[0, 'Price'])
