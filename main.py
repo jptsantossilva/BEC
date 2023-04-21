@@ -276,7 +276,8 @@ def trade():
             # TODO: PASS ALL THIS CODE TO CREATE SELL ORDER FUNCTION 
 
             # get balance
-            balance_qty = exchange.get_symbol_balance(symbol_only)  
+            balance_qty = exchange.get_symbol_balance(symbol=symbol_only,
+                                                      bot=time_frame)  
             
             # verify sell quantity
             df_pos = database.get_positions_by_bot_symbol_position(bot=time_frame, symbol=symbol, position=1)
@@ -291,10 +292,10 @@ def trade():
             if sell_qty > 0:
                 if run_mode == "prod":
                     exchange.create_sell_order(symbol=symbol,
-                                           qty=sell_qty,
-                                           bot=time_frame,
-                                           fast_ema=fast_ema,
-                                           slow_ema=slow_ema)                        
+                                                qty=sell_qty,
+                                                bot=time_frame,
+                                                fast_ema=fast_ema,
+                                                slow_ema=slow_ema)                        
             else:
                 if run_mode == "prod":
                     # if there is no qty on balance to sell we set the qty on positions file to zero
