@@ -22,7 +22,7 @@ def connect():
             msg = "Error connecting to Binance. "+ repr(e)
             print(msg)
             logging.exception(msg)
-            telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eWarning, msg)
+            telegram.send_telegram_message(telegram.telegram_token_errors, telegram.EMOJI_WARNING, msg)
             sys.exit(msg) 
 
 connect()
@@ -34,7 +34,7 @@ def get_exchange_info():
             msg = "Error connecting to Binance. "+ repr(e)
             print(msg)
             logging.exception(msg)
-            telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eWarning, msg)
+            telegram.send_telegram_message(telegram.telegram_token_errors, telegram.EMOJI_WARNING, msg)
             sys.exit(msg) 
 
     return exchange_info
@@ -57,12 +57,12 @@ def get_symbol_balance(symbol, bot):
     except BinanceAPIException as e:
         msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
         print(msg)
-        telegram.send_telegram_message(telegram_token, telegram.eWarning, msg)
+        telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
         return -1
     except Exception as e:
         msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
         print(msg)
-        telegram.send_telegram_message(telegram_token, telegram.eWarning, msg)
+        telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
         return -1  
 
 def separate_symbol_and_trade_against(symbol):
@@ -87,15 +87,15 @@ def create_buy_order(symbol, qty, bot, fast_ema, slow_ema):
     except BinanceAPIException as e:
         msg = "BUY create_order - "+repr(e)
         print(msg)
-        telegram.send_telegram_message(telegram_token, telegram.eWarning, msg)
+        telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
     except BinanceOrderException as e:
         msg = "BUY create_order - "+repr(e)
         print(msg)
-        telegram.send_telegram_message(telegram_token, telegram.eWarning, msg)
+        telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
     except Exception as e:
         msg = "BUY create_order - "+repr(e)
         print(msg)
-        telegram.send_telegram_message(telegram_token, telegram.eWarning, msg)
+        telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
         
     fills = order['fills']
     avg_price = sum([float(f['price']) * (float(f['qty']) / float(order['executedQty'])) for f in fills])
@@ -122,7 +122,7 @@ def create_buy_order(symbol, qty, bot, fast_ema, slow_ema):
                             
     strategy_name = str(fast_ema)+"/"+str(slow_ema)+" EMA cross"
 
-    telegram.send_telegram_alert(telegram_token, telegram.eEnterTrade,
+    telegram.send_telegram_alert(telegram_token, telegram.EMOJI_ENTER_TRADE,
                     pd.to_datetime(order['transactTime'], unit='ms'),
                     order['symbol'], 
                     bot, 
@@ -132,7 +132,7 @@ def create_buy_order(symbol, qty, bot, fast_ema, slow_ema):
                     order['executedQty'],
                     qty)  
 
-def create_sell_order(symbol, qty, bot, fast_ema, slow_ema, reason = ''):
+def create_sell_order(symbol, qty, bot, fast_ema=0, slow_ema=0, reason = ''):
     telegram_token = telegram.get_telegram_token(bot)
 
     try:
@@ -144,15 +144,15 @@ def create_sell_order(symbol, qty, bot, fast_ema, slow_ema, reason = ''):
     except BinanceAPIException as e:
         msg = "SELL create_order - "+repr(e)
         print(msg)
-        telegram.send_telegram_message(telegram_token, telegram.eWarning, msg)
+        telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
     except BinanceOrderException as e:
         msg = "SELL create_order - "+repr(e)
         print(msg)
-        telegram.send_telegram_message(telegram_token, telegram.eWarning, msg)
+        telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
     except Exception as e:
         msg = "SELL create_order - "+repr(e)
         print(msg)
-        telegram.send_telegram_message(telegram_token, telegram.eWarning, msg)
+        telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
         
     fills = order['fills']
     avg_price = sum([float(f['price']) * (float(f['qty']) / float(order['executedQty'])) for f in fills])
@@ -163,7 +163,7 @@ def create_sell_order(symbol, qty, bot, fast_ema, slow_ema, reason = ''):
                                symbol=symbol)
     
     # add to orders database table
-    pnl_value, pnl_perc = database.add_order_sell(exchange_order_id = order['orderId'],
+    pnl_value, pnl_perc = database.add_order_sell(exchange_order_id = str(order['orderId']),
                                                   date = pd.to_datetime(order['transactTime'], unit='ms'),
                                                   bot = bot,
                                                   symbol = symbol,
@@ -177,9 +177,9 @@ def create_sell_order(symbol, qty, bot, fast_ema, slow_ema, reason = ''):
                 
     # determine the alert type based on the value of pnl_value
     if pnl_value > 0:
-        alert_type = telegram.eTradeWithProfit
+        alert_type = telegram.EMOJI_TRADE_WITH_PROFIT
     else:
-        alert_type = telegram.eTradeWithLoss
+        alert_type = telegram.EMOJI_TRADE_WITH_LOSS
 
     strategy_name = str(fast_ema)+"/"+str(slow_ema)+" EMA cross"
 

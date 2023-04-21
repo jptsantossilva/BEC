@@ -20,7 +20,7 @@ def set_connection(path):
 create_orders_table = """
     CREATE TABLE IF NOT EXISTS Orders (
         Id INTEGER PRIMARY KEY,
-        Exchange_Order_Id INTEGER,
+        Exchange_Order_Id TEXT,
         Date TEXT,
         Bot TEXT,
         Symbol TEXT,
@@ -31,7 +31,7 @@ create_orders_table = """
         Ema_Slow INTEGER,
         PnL_Perc REAL,
         PnL_Value REAL,
-        Buy_Order_Id INTEGER,
+        Buy_Order_Id TEXT,
         Exit_Reason text
     );
 """
@@ -117,9 +117,7 @@ sql_add_order_sell = """
         PnL_Value,
         Buy_Order_Id,
         Exit_Reason)
-    VALUES (
-        ?,?,?,?,?,?,?,?,?,?,?,?,?        
-        );        
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?);        
 """
 def add_order_sell(exchange_order_id, date, bot, symbol, price, qty, ema_fast, ema_slow, exit_reason):
     # calc
@@ -129,10 +127,10 @@ def add_order_sell(exchange_order_id, date, bot, symbol, price, qty, ema_fast, e
     if df_last_buy_order.empty:
         print("DataFrame is empty")
         buy_order_id = ''
-        buy_price = ''
-        buy_qty = ''
-        pnl_perc = ''
-        pnl_value = ''
+        buy_price = 0
+        buy_qty = 0
+        pnl_perc = 0
+        pnl_value = 0
     else:
         buy_order_id = df_last_buy_order.loc[0, 'Buy_Order_Id']
         buy_price = float(df_last_buy_order.loc[0, 'Price'])
@@ -149,8 +147,20 @@ def add_order_sell(exchange_order_id, date, bot, symbol, price, qty, ema_fast, e
     side = "SELL"
 
     with connection:
-        connection.execute(sql_add_order_sell, (exchange_order_id, date, bot, symbol, side, price, qty, ema_fast, ema_slow, pnl_perc, pnl_value, buy_order_id, exit_reason))
-        return pnl_value, pnl_perc
+        connection.execute(sql_add_order_sell, (str(exchange_order_id), 
+                                                str(date), 
+                                                str(bot), 
+                                                str(symbol), 
+                                                str(side), 
+                                                float(price), 
+                                                float(qty), 
+                                                int(ema_fast), 
+                                                int(ema_slow), 
+                                                float(pnl_perc), 
+                                                float(pnl_value), 
+                                                str(buy_order_id), 
+                                                str(exit_reason)))
+        return float(pnl_value), float(pnl_perc)
 
 sql_get_last_buy_order_by_bot_symbol = """
     SELECT * FROM Orders

@@ -416,7 +416,6 @@ if sell_confirmation1:
 
         sell_expander.success(f"{sell_symbol} SOLD!")
         time.sleep(3)
-        # dasboard refresh
         st.experimental_rerun()
 #----------------------
 
