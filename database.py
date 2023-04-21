@@ -209,7 +209,7 @@ sql_create_positions_table = """
         PnL_Perc REAL,
         PnL_Value REAL,
         Duration TEXT,
-        Buy_Order_Id INTEGER
+        Buy_Order_Id TEXT
     );
 """
 
@@ -387,7 +387,13 @@ sql_set_position_buy = """
 def set_position_buy(bot, symbol, qty, buy_price, date, buy_order_id):
     curr_price = float(buy_price)    
     with connection:
-        connection.execute(sql_set_position_buy, (qty, buy_price, curr_price, date, buy_order_id, bot, symbol))
+        connection.execute(sql_set_position_buy, (float(qty), 
+                                                  float(buy_price), 
+                                                  float(curr_price), 
+                                                  str(date), 
+                                                  str(buy_order_id), 
+                                                  str(bot), 
+                                                  str(symbol)))
 
 sql_set_position_sell = """
     UPDATE Positions
