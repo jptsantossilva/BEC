@@ -58,12 +58,12 @@ def get_symbol_balance(symbol, bot):
         msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
         print(msg)
         telegram.send_telegram_message(telegram_token, telegram.eWarning, msg)
-        # continue
+        return -1
     except Exception as e:
         msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
         print(msg)
         telegram.send_telegram_message(telegram_token, telegram.eWarning, msg)
-        # continue  
+        return -1  
 
 def separate_symbol_and_trade_against(symbol):
     if symbol.endswith("BTC"):
