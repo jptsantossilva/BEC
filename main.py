@@ -343,8 +343,8 @@ def trade():
             if positionSize > 0:
                 if run_mode == "prod":
                     exchange.create_buy_order(symbol=symbol,
-                                       qty=positionSize,
-                                       bot=time_frame)
+                                                qty=positionSize,
+                                                bot=time_frame)
             elif positionSize == -2:
                 num_open_positions = database.get_num_open_positions(bot=time_frame)
                 telegram.send_telegram_message(telegram_token, telegram.eInformation, exchange.client.SIDE_BUY+" "+symbol+" - Max open positions ("+str(num_open_positions)+"/"+str(config.max_number_of_open_positions)+") already occupied!")
