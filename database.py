@@ -5,14 +5,14 @@ from datetime import datetime
 import pandas as pd
 import config
 
-def connect(path=""):
+def connect(path: str = ""):
     file_path = os.path.join(path, "data.db")
     return sqlite3.connect(file_path)
 
 connection = connect()
 
 # change connection from PnL program
-def set_connection(path):
+def set_connection(path: str):
     global connection
     connection = connect(path)
 
@@ -67,13 +67,13 @@ sql_get_months_from_orders_by_year ="""
     WHERE 
         Date LIKE ?
     ORDER BY Month DESC;"""
-def get_months_from_orders_by_year(year):
+def get_months_from_orders_by_year(year: str):
     result = []
 
     if year == None:
         return result
 
-    year = str(year)+"-%"
+    year = year+"-%"
     with connection:
         df = pd.read_sql(sql_get_months_from_orders_by_year, connection, params=(year,))
         if not df.empty:
@@ -97,7 +97,7 @@ sql_add_order_buy = """
         ?,?,?,?,?,?,?,?,?        
         );        
 """
-def add_order_buy(exchange_order_id, date, bot, symbol, price, qty, ema_fast, ema_slow):
+def add_order_buy(exchange_order_id: str, date: str, bot: str, symbol: str, price: float, qty: float, ema_fast: int, ema_slow: int):
     side = "BUY"
     with connection:
         connection.execute(sql_add_order_buy, (exchange_order_id, date, bot, symbol, side, price, qty, ema_fast, ema_slow))
@@ -119,7 +119,7 @@ sql_add_order_sell = """
         Exit_Reason)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?);        
 """
-def add_order_sell(exchange_order_id, date, bot, symbol, price, qty, ema_fast, ema_slow, exit_reason):
+def add_order_sell(exchange_order_id: str, date: str, bot: str, symbol: str, price: float, qty: float, ema_fast: int, ema_slow: int, exit_reason: str):
     # calc
 
     df_last_buy_order = get_last_buy_order_by_bot_symbol(bot, symbol)
@@ -147,19 +147,19 @@ def add_order_sell(exchange_order_id, date, bot, symbol, price, qty, ema_fast, e
     side = "SELL"
 
     with connection:
-        connection.execute(sql_add_order_sell, (str(exchange_order_id), 
-                                                str(date), 
-                                                str(bot), 
-                                                str(symbol), 
-                                                str(side), 
-                                                float(price), 
-                                                float(qty), 
-                                                int(ema_fast), 
-                                                int(ema_slow), 
-                                                float(pnl_perc), 
-                                                float(pnl_value), 
-                                                str(buy_order_id), 
-                                                str(exit_reason)))
+        connection.execute(sql_add_order_sell, (exchange_order_id, 
+                                                date, 
+                                                bot, 
+                                                symbol, 
+                                                side, 
+                                                price, 
+                                                qty, 
+                                                ema_fast, 
+                                                ema_slow, 
+                                                pnl_perc, 
+                                                pnl_value, 
+                                                buy_order_id, 
+                                                exit_reason))
         return float(pnl_value), float(pnl_perc)
 
 sql_get_last_buy_order_by_bot_symbol = """
@@ -170,7 +170,7 @@ sql_get_last_buy_order_by_bot_symbol = """
         AND Symbol = ?
     ORDER BY id DESC LIMIT 1;
 """
-def get_last_buy_order_by_bot_symbol(bot, symbol):
+def get_last_buy_order_by_bot_symbol(bot: str, symbol: str):
     return pd.read_sql(sql_get_last_buy_order_by_bot_symbol, connection, params=(bot, symbol,))
 
 sql_get_orders_by_bot_side_year_month = """
@@ -185,12 +185,19 @@ sql_get_orders_by_bot_side_year_month = """
         AND Side = ?
         AND Date LIKE ?;
 """
-def get_orders_by_bot_side_year_month(bot, side, year, month):
+def get_orders_by_bot_side_year_month(bot: str, side: str, year: str, month: str):
+    if year == None:
+        df = pd.DataFrame(columns=['Bot', 'Date', 'Qty', 'PnL_Perc', 'PnL_Value'])
+        return df
+
     if month == 13:
-        year_month = str(year)+"-%"
+        year_month = year+"-%"
     else:
-        year_month = str(year)+"-"+str(month)+"-%"
+        year_month = year+"-"+month+"-%"
+    
     return pd.read_sql(sql_get_orders_by_bot_side_year_month, connection, params=(bot, side, year_month))
+    
+        
 
 # POSITIONS
 sql_create_positions_table = """
@@ -217,7 +224,7 @@ sql_insert_position = """
     INSERT INTO Positions (Bot, Symbol, Position, Rank)
         VALUES (?,?,0,?);        
 """
-def insert_position(bot, symbol):
+def insert_position(bot: str, symbol: str):
     rank = get_rank_from_symbols_by_market_phase_by_symbol(symbol)
     with connection:
         connection.execute(sql_insert_position, (bot, symbol, rank))
@@ -229,7 +236,7 @@ sql_get_positions_by_bot_position = """
         Bot = ?
         AND Position = ?
 """
-def get_positions_by_bot_position(bot, position):
+def get_positions_by_bot_position(bot: str, position: int):
     return pd.read_sql(sql_get_positions_by_bot_position, connection, params=(bot, position))
 
 sql_get_unrealized_pnl_by_bot = """
@@ -239,7 +246,7 @@ sql_get_unrealized_pnl_by_bot = """
         Bot = ?
         AND Position = ?
 """
-def get_unrealized_pnl_by_bot(bot):
+def get_unrealized_pnl_by_bot(bot: str):
     position = 1
     return pd.read_sql(sql_get_unrealized_pnl_by_bot, connection, params=(bot, position))
 
@@ -251,7 +258,7 @@ sql_get_positions_by_bot_symbol_position = """
         AND Symbol = ?
         AND Position = ?
 """
-def get_positions_by_bot_symbol_position(bot, symbol, position):
+def get_positions_by_bot_symbol_position(bot: str, symbol: str, position: int):
     return pd.read_sql(sql_get_positions_by_bot_symbol_position, connection, params=(bot, symbol, position))
 
 sql_get_all_positions_by_bot_symbol = """
@@ -261,7 +268,7 @@ sql_get_all_positions_by_bot_symbol = """
         Bot = ?
         AND symbol = ?
 """
-def get_all_positions_by_bot_symbol(bot, symbol):
+def get_all_positions_by_bot_symbol(bot: str, symbol: str):
     df = pd.read_sql(sql_get_all_positions_by_bot_symbol, connection, params=(bot, symbol,))
     result = int(df.iloc[0, 0]) == 1
     return result
@@ -284,7 +291,7 @@ sql_get_all_positions_by_bot = """
     ORDER BY
         Rank
 """
-def get_all_positions_by_bot(bot):
+def get_all_positions_by_bot(bot: str):
     return pd.read_sql(sql_get_all_positions_by_bot, connection, params=(bot,))
     
 sql_get_num_open_positions = """
@@ -298,7 +305,7 @@ def get_num_open_positions():
 sql_get_num_open_positions_by_bot = """
     SELECT COUNT(*) FROM Positions WHERE Position = 1 and Bot = ?;
 """
-def get_num_open_positions_by_bot(bot): 
+def get_num_open_positions_by_bot(bot: str): 
     df = pd.read_sql(sql_get_num_open_positions_by_bot, connection, params=(bot,))
     result = int(df.iloc[0, 0])
     return result
@@ -329,7 +336,7 @@ sql_set_rank_from_positions = """
     WHERE 
         Symbol = ?
 """
-def set_rank_from_positions(symbol, rank):
+def set_rank_from_positions(symbol: str, rank: int):
     with connection:
         connection.execute(sql_set_rank_from_positions, (rank, symbol,))
 
@@ -346,7 +353,7 @@ sql_update_position_pnl = """
         AND Symbol = ? 
         AND Position = 1;        
 """
-def update_position_pnl (bot, symbol, curr_price):
+def update_position_pnl (bot: str, symbol: str, curr_price: float):
     df = get_positions_by_bot_symbol_position(bot, symbol, position=1)
     buy_price = float(df.loc[0,'Buy_Price'])
     qty = float(df.loc[0,'Qty'])
@@ -384,16 +391,16 @@ sql_set_position_buy = """
         Bot = ? 
         AND Symbol = ? ;        
 """
-def set_position_buy(bot, symbol, qty, buy_price, date, buy_order_id):
-    curr_price = float(buy_price)    
+def set_position_buy(bot: str, symbol: str, qty: float, buy_price: float, date: str, buy_order_id: str):
+    curr_price = buy_price    
     with connection:
-        connection.execute(sql_set_position_buy, (float(qty), 
-                                                  float(buy_price), 
-                                                  float(curr_price), 
-                                                  str(date), 
-                                                  str(buy_order_id), 
-                                                  str(bot), 
-                                                  str(symbol)))
+        connection.execute(sql_set_position_buy, (qty, 
+                                                  buy_price, 
+                                                  curr_price, 
+                                                  date, 
+                                                  buy_order_id, 
+                                                  bot, 
+                                                  symbol))
 
 sql_set_position_sell = """
     UPDATE Positions
@@ -409,7 +416,7 @@ sql_set_position_sell = """
         Bot = ? 
         AND Symbol = ? ;        
 """
-def set_position_sell(bot, symbol):
+def set_position_sell(bot: str, symbol: str):
     with connection:
         connection.execute(sql_set_position_sell, (bot, symbol))
 
@@ -471,7 +478,7 @@ sql_get_best_ema_by_symbol_timeframe = """
         Symbol = ?
         AND Time_Frame = ?;
 """
-def get_best_ema_by_symbol_timeframe(symbol, time_frame):
+def get_best_ema_by_symbol_timeframe(symbol: str, time_frame: str):
     return pd.read_sql(sql_get_best_ema_by_symbol_timeframe, connection, params=(symbol, time_frame))
 
 sql_add_best_ema = """
@@ -480,9 +487,15 @@ sql_add_best_ema = """
         ) 
         VALUES (?, ?, ? ,? ,? ,? ,?);
 """
-def add_best_ema(timeframe, symbol, ema_fast, ema_slow, return_perc, buy_hold_return_perc, backtest_start_date):
+def add_best_ema(timeframe: str, symbol: str, ema_fast: int, ema_slow: int, return_perc: float, buy_hold_return_perc: float, backtest_start_date: str):
     with connection:
-        connection.execute(sql_add_best_ema, (symbol, int(ema_fast), int(ema_slow), timeframe, return_perc, buy_hold_return_perc, backtest_start_date))
+        connection.execute(sql_add_best_ema, (symbol, 
+                                              ema_fast, 
+                                              ema_slow, 
+                                              timeframe, 
+                                              return_perc, 
+                                              buy_hold_return_perc, 
+                                              backtest_start_date))
     
 sql_delete_all_best_ema = "DELETE FROM Best_Ema;"
 def delete_all_best_ema():
@@ -512,7 +525,7 @@ sql_get_symbols_to_calc_by_calc_completed = """
     WHERE
         Calc_Completed = ?;
 """
-def get_symbols_to_calc_by_calc_completed(completed):
+def get_symbols_to_calc_by_calc_completed(completed: int):
     return pd.read_sql(sql_get_symbols_to_calc_by_calc_completed, connection, params=(completed,))
     
 #    
@@ -523,7 +536,7 @@ sql_set_symbols_to_calc_completed = """
     WHERE
         Symbol = ?;
 """
-def set_symbols_to_calc_completed(symbol):
+def set_symbols_to_calc_completed(symbol: str):
     with connection:
         connection.execute(sql_set_symbols_to_calc_completed, (symbol,))
     
@@ -592,7 +605,7 @@ sql_get_rank_from_symbols_by_market_phase_by_symbol = """
     WHERE Symbol = ?
     ;
 """
-def get_rank_from_symbols_by_market_phase_by_symbol(symbol):
+def get_rank_from_symbols_by_market_phase_by_symbol(symbol: str):
     df = pd.read_sql(sql_get_rank_from_symbols_by_market_phase_by_symbol, connection, params=(symbol,))
     if df.empty:
         result = 1000
@@ -612,7 +625,7 @@ sql_insert_symbols_by_market_phase = """
         Rank)
     VALUES(?,?,?,?,?,?,?,?);
 """
-def insert_symbols_by_market_phase(symbol, price, dsma50, dsma200, market_phase, perc_above_dsma50, perc_above_dsma200, rank):
+def insert_symbols_by_market_phase(symbol: str, price: float, dsma50: float, dsma200: float, market_phase: str, perc_above_dsma50: float, perc_above_dsma200: float, rank: int):
     with connection:
         connection.execute(sql_insert_symbols_by_market_phase,(symbol, price, dsma50, dsma200, market_phase, perc_above_dsma50, perc_above_dsma200, rank))
     
