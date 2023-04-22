@@ -188,6 +188,8 @@ def calculate_realized_pnl(year, month):
     results_df = pd.DataFrame()
     # results_df = pd.DataFrame(columns=['bot','Year','Month','pnl_%','pnl_value','trades'])
     for timeframe, df_month in [('1d', df_month_1d), ('4h', df_month_4h), ('1h', df_month_1h)]:
+        if df_month.empty:
+            continue
         pnl_perc_sum = df_month.PnL_Perc.sum()
         pnl_value_sum = round(df_month.PnL_Value.sum(), num_decimals)
         trades = len(df_month) 
@@ -201,13 +203,22 @@ def calculate_realized_pnl(year, month):
         results_df = pd.concat([results_df, df_new], ignore_index=True)
 
     # Calculate the sum of values in pnl 
-    sum_pnl_perc = round(results_df['PnL_Perc'].sum(), 2)
-    sum_pnl_value = round(results_df['PnL_Value'].sum(), num_decimals)
-    sum_trades = results_df['Trades'].sum()
+    if not results_df.empty:
+        sum_pnl_perc = round(results_df['PnL_Perc'].sum(), 2)
+        sum_pnl_value = round(results_df['PnL_Value'].sum(), num_decimals)
+        sum_trades = results_df['Trades'].sum()
+    else:
+        sum_pnl_perc = 0
+        sum_pnl_value = 0
+        sum_trades = 0
 
     # Add a new row at the end of the dataframe with the sum values
-    results_df.loc[len(results_df)] = ['TOTAL','', '', sum_pnl_perc, sum_pnl_value, sum_trades]
-    
+    if not results_df.empty:
+        results_df.loc[len(results_df)] = ['TOTAL','', '', sum_pnl_perc, sum_pnl_value, sum_trades]
+    else:
+        df_data = [['TOTAL','', '', sum_pnl_perc, sum_pnl_value, sum_trades]]
+        results_df = pd.DataFrame(df_data, columns=['Bot', 'Year', 'Month','PnL_Perc','PnL_Value','Trades'])
+
     return results_df, df_month_1d, df_month_4h, df_month_1h
 
 def calculate_unrealized_pnl():
