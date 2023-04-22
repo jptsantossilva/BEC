@@ -189,7 +189,7 @@ def get_orders_by_bot_side_year_month(bot: str, side: str, year: str, month: str
     if year == None:
         df = pd.DataFrame(columns=['Bot', 'Date', 'Qty', 'PnL_Perc', 'PnL_Value'])
         return df
-
+    
     if month == 13:
         year_month = year+"-%"
     else:
