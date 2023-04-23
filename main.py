@@ -99,13 +99,13 @@ def calc_stake_amount(symbol):
             msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
             print(msg)
             logging.exception(msg)
-            telegram.send_telegram_message(telegram_token, telegram.eWarning, msg)
+            telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
             return 0
         except Exception as e:
             msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
             print(msg)
             logging.exception(msg)
-            telegram.send_telegram_message(telegram_token, telegram.eWarning, msg)
+            telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
             return 0
     
         tradable_balance = balance*config.tradable_balance_ratio 
@@ -185,7 +185,7 @@ def get_data(symbol, time_frame_num, time_frame_type_short):
     except Exception as e:
         msg = sys._getframe(  ).f_code.co_name+" - "+symbol+" - "+repr(e)
         print(msg)
-        telegram.send_telegram_message(telegram_token, telegram.eWarning, msg)
+        telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
         frame = pd.DataFrame()
         return frame 
 
@@ -219,7 +219,7 @@ def get_current_pnl(symbol, current_price):
     except Exception as e:
         msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
         print(msg)
-        telegram.send_telegram_message(telegram_token, telegram.eWarning, msg)
+        telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
 
 def get_open_positions(df):
     try:
@@ -229,11 +229,10 @@ def get_open_positions(df):
     except Exception as e:
         msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
         print(msg)
-        telegram.send_telegram_message(telegram_token, telegram.eWarning, msg)
+        telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
         return -1
 
 def trade():
-
     # Make sure we are only trying to buy positions on symbols included on market phases table
     database.delete_positions_not_top_rank()
 
@@ -253,14 +252,11 @@ def trade():
         if df.empty:
             msg = f'{symbol} - {strategy_name} - Best EMA values missing'
             print(msg)
-            telegram.send_telegram_message(telegram_token, telegram.eWarning, msg)
+            telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
             continue
 
         apply_technicals(df, fast_ema, slow_ema)
         lastrow = df.iloc[-1]
-
-        # separate symbol from stable. example symbol=BTCUSDT coinOnly=BTC coinStable=USDT
-        symbol_only, symbol_stable = exchange.separate_symbol_and_trade_against(symbol)
 
         # if using stop loss
         sell_stop_loss = False
@@ -271,36 +267,15 @@ def trade():
             current_pnl = get_current_pnl(symbol, current_price)
             sell_stop_loss = current_pnl <= -config.stop_loss
 
-        if (lastrow.SlowEMA > lastrow.FastEMA) or sell_stop_loss:
-            
-            # TODO: PASS ALL THIS CODE TO CREATE SELL ORDER FUNCTION 
+        condition_crossover = (lastrow.SlowEMA > lastrow.FastEMA) 
 
-            # get balance
-            balance_qty = exchange.get_symbol_balance(symbol=symbol_only,
-                                                      bot=time_frame)  
+        if condition_crossover or sell_stop_loss:
+            if run_mode == 'prod': 
+                exchange.create_sell_order(symbol=symbol,
+                                           bot=time_frame,
+                                           fast_ema=fast_ema,
+                                           slow_ema=slow_ema)                        
             
-            # verify sell quantity
-            df_pos = database.get_positions_by_bot_symbol_position(bot=time_frame, symbol=symbol, position=1)
-            if not df_pos.empty:
-                buy_order_qty = df_pos['Qty'].iloc[0]
-            
-            sell_qty = buy_order_qty
-            if balance_qty < buy_order_qty:
-                sell_qty = balance_qty
-            sell_qty = exchange.adjust_size(symbol, sell_qty)
-
-            if sell_qty > 0:
-                if run_mode == "prod":
-                    exchange.create_sell_order(symbol=symbol,
-                                                qty=sell_qty,
-                                                bot=time_frame,
-                                                fast_ema=fast_ema,
-                                                slow_ema=slow_ema)                        
-            else:
-                if run_mode == "prod":
-                    # if there is no qty on balance to sell we set the qty on positions file to zero
-                    # this can happen if we sell on the exchange (for example, due to a pump) before the bot sells it. 
-                    database.set_position_sell(time_frame, symbol)
         else:
             msg = f'{symbol} - {strategy_name} - Sell condition not fulfilled'
             print(msg)
@@ -321,43 +296,27 @@ def trade():
         if df.empty:
             msg = f'{symbol} - {strategy_name} - Best EMA values missing'
             print(msg)
-            telegram.send_telegram_message(telegram_token, telegram.eWarning, msg)
+            telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
             continue
 
         apply_technicals(df, fast_ema, slow_ema)
         lastrow = df.iloc[-1]
 
-        # separate symbol from stable. example symbol=BTCUSDT symbol_only=BTC symbol_stable=USDT 
-        symbol_only, symbol_stable = exchange.separate_symbol_and_trade_against(symbol)
-
-        # if we wanna be more agressive we can use the following approach:
-        # since the coin pair by marketphase is already choosing the coins in bullish and accumulation phase on daily time frame 
-        # we can pass the verification of those market phases in lower timeframes, 4h and 1h, otherwise we will loose some oportunities
-        # to be more conservative = use the same approach as the backtesting and keep those market phase verification in lower timeframes
         accumulationPhase = (lastrow.Close > lastrow.SMA50) and (lastrow.Close > lastrow.SMA200) and (lastrow.SMA50 < lastrow.SMA200)
         bullishPhase = (lastrow.Close > lastrow.SMA50) and (lastrow.Close > lastrow.SMA200) and (lastrow.SMA50 > lastrow.SMA200)
         
-        if (accumulationPhase or bullishPhase) and crossover(df.FastEMA, df.SlowEMA):
-            positionSize = calc_stake_amount(symbol=symbol_stable)
-            
-            if positionSize > 0:
-                if run_mode == "prod":
-                    exchange.create_buy_order(symbol=symbol,
-                                                qty=positionSize,
-                                                bot=time_frame)
-            elif positionSize == -2:
-                num_open_positions = database.get_num_open_positions(bot=time_frame)
-                telegram.send_telegram_message(telegram_token, telegram.eInformation, exchange.client.SIDE_BUY+" "+symbol+" - Max open positions ("+str(num_open_positions)+"/"+str(config.max_number_of_open_positions)+") already occupied!")
-            else:
-                telegram.send_telegram_message(telegram_token, telegram.eInformation, exchange.client.SIDE_BUY+" "+symbol+" - Not enough "+symbol_stable+" funds!")
-                
+        condition_phase = accumulationPhase or bullishPhase
+        condition_crossover = crossover(df.FastEMA, df.SlowEMA)
+
+        if condition_phase and condition_crossover:
+            if run_mode == 'prod': 
+                exchange.create_buy_order(symbol=symbol, bot=time_frame, fast_ema=fast_ema, slow_ema=slow_ema)    
         else:
             msg = f'{symbol} - {strategy_name} - Buy condition not fulfilled'
             print(msg)
             telegram.send_telegram_message(telegram_token, "", msg)
 
 def positions_summary():
-        
     df_summary = database.get_positions_by_bot_position(bot=time_frame, position=1)
     
     # remove unwanted columns
@@ -383,7 +342,6 @@ def positions_summary():
 
 
 def main():
-
     read_arguments()
 
     # inform that bot has started
@@ -399,7 +357,7 @@ def main():
     # calculate execution time
     stop = timeit.default_timer()
     total_seconds = stop - start
-    duration = database.duration(total_seconds)
+    duration = database.calc_duration(total_seconds)
 
     msg = f'Execution Time: {duration}'
     print(msg)
@@ -407,6 +365,7 @@ def main():
 
     # inform that bot has finished
     telegram.send_telegram_message(telegram_token, telegram.EMOJI_STOP, "Binance Trader Bot - End")
+
 if __name__ == "__main__":
     main()
 

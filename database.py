@@ -132,7 +132,7 @@ def add_order_sell(exchange_order_id: str, date: str, bot: str, symbol: str, pri
         pnl_perc = 0
         pnl_value = 0
     else:
-        buy_order_id = df_last_buy_order.loc[0, 'Buy_Order_Id']
+        buy_order_id = df_last_buy_order.loc[0, 'Id']
         buy_price = float(df_last_buy_order.loc[0, 'Price'])
         buy_qty = float(df_last_buy_order.loc[0, 'Qty'])
 
@@ -166,9 +166,9 @@ sql_get_last_buy_order_by_bot_symbol = """
     SELECT * FROM Orders
     WHERE 
         Side = 'BUY' 
-        AND bot = ?
+        AND Bot = ?
         AND Symbol = ?
-    ORDER BY id DESC LIMIT 1;
+    ORDER BY Id DESC LIMIT 1;
 """
 def get_last_buy_order_by_bot_symbol(bot: str, symbol: str):
     return pd.read_sql(sql_get_last_buy_order_by_bot_symbol, connection, params=(bot, symbol,))
@@ -191,9 +191,9 @@ def get_orders_by_bot_side_year_month(bot: str, side: str, year: str, month: str
         return df
     
     if month == 13:
-        year_month = year+"-%"
+        year_month = str(year)+"-%"
     else:
-        year_month = year+"-"+month+"-%"
+        year_month = str(year)+"-"+str(month)+"-%"
     
     return pd.read_sql(sql_get_orders_by_bot_side_year_month, connection, params=(bot, side, year_month))
     
@@ -370,10 +370,10 @@ def update_position_pnl (bot: str, symbol: str, curr_price: float):
         datetime_now = datetime.now()
         
         duration = None
-        if date != 'None':
-            datetime_open_position = datetime.strptime(date, '%Y-%m-%d %H:%M:%S')
-            diff_seconds = (datetime_now - datetime_open_position).total_seconds()
-            duration = str(duration(diff_seconds))
+        if date != None:
+            datetime_open_position = datetime.strptime(date, '%Y-%m-%d %H:%M:%S.%f')
+            diff_seconds = int((datetime_now - datetime_open_position).total_seconds())
+            duration = str(calc_duration(diff_seconds))
 
     with connection:
         connection.execute(sql_update_position_pnl, (curr_price, pnl_perc, pnl_value, duration, bot, symbol))
@@ -385,7 +385,7 @@ sql_set_position_buy = """
         Qty = ?,
         Buy_Price = ?,
         Curr_Price = ?,
-        Date = ?
+        Date = ?,
         Buy_Order_Id = ?
     WHERE
         Bot = ? 
@@ -411,7 +411,8 @@ sql_set_position_sell = """
         Curr_Price = 0,
         PnL_Perc = 0,
         PnL_Value = 0,
-        Duration = 0
+        Duration = 0,
+        Date = NULL
     WHERE
         Bot = ? 
         AND Symbol = ? ;        
@@ -655,7 +656,7 @@ def create_tables(connection):
         connection.execute(sql_create_symbols_by_market_phase_table)
     
 # convert 123456 seconds to 1d 2h 3m 4s format    
-def duration(seconds):
+def calc_duration(seconds):
     days, remainder = divmod(seconds, 3600*24)
     hours, remainder = divmod(remainder, 3600)
     minutes, seconds = divmod(remainder, 60)

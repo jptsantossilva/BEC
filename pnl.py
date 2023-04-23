@@ -92,7 +92,7 @@ def get_trade_against(bot):
         msg = msg + " " + sys._getframe(  ).f_code.co_name+" - "+repr(e)
         print(msg)
         # logging.exception(msg)
-        # telegram.send_telegram_message(telegram.telegramToken_errors, telegram.eWarning, msg)
+        # telegram.send_telegram_message(telegram.telegramToken_errors, telegram.EMOJI_WARNING, msg)
         # sys.exit(msg) 
 
     except yaml.YAMLError as e:
@@ -100,7 +100,7 @@ def get_trade_against(bot):
         msg = msg + " " + sys._getframe(  ).f_code.co_name+" - "+repr(e)
         print(msg)
         # logging.exception(msg)
-        # telegram.send_telegram_message(telegram.telegramToken_errors, telegram.eWarning, msg)
+        # telegram.send_telegram_message(telegram.telegramToken_errors, telegram.EMOJI_WARNING, msg)
         # sys.exit(msg)
 
 st.title(f'Dashboard')
@@ -151,13 +151,14 @@ month_selected_name = col2.selectbox(
     (month_names)
 )
 
+disable_full_year = month_selected_name == None
 if month_selected_name == None:
     month_number = 1
 else: # get month number from month name using months dictionary 
     month_number = list(months_dict.keys())[list(months_dict.values()).index(month_selected_name)]
 
 
-if col2.checkbox('Full Year'):
+if col2.checkbox('Full Year', disabled=disable_full_year):
     month_number = 13
 
 # Define a function to get the year and month from a datetime object
@@ -176,9 +177,9 @@ def calculate_realized_pnl(year, month):
     print('---------------------')
     
     
-    df_month_1d = database.get_orders_by_bot_side_year_month(bot="1d", side="SELL", year=year, month=month)
-    df_month_4h = database.get_orders_by_bot_side_year_month(bot="4h", side="SELL", year=year, month=month)
-    df_month_1h = database.get_orders_by_bot_side_year_month(bot="1h", side="SELL", year=year, month=month)
+    df_month_1d = database.get_orders_by_bot_side_year_month(bot="1d", side="SELL", year=year, month=str(month))
+    df_month_4h = database.get_orders_by_bot_side_year_month(bot="4h", side="SELL", year=year, month=str(month))
+    df_month_1h = database.get_orders_by_bot_side_year_month(bot="1h", side="SELL", year=year, month=str(month))
     
     print('')              
     print(df_month_1d)
@@ -421,7 +422,6 @@ if sell_confirmation1:
             sell_qty = balance_qty
         sell_qty = exchange.adjust_size(sell_symbol, sell_qty)
         exchange.create_sell_order(symbol=sell_symbol,
-                                   qty=sell_qty,
                                    bot=sell_bot,
                                    reason=sell_reason) 
 
