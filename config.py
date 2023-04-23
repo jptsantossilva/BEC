@@ -35,7 +35,7 @@ def get_setting(setting_name):
         msg = msg + " " + sys._getframe(  ).f_code.co_name+" - "+repr(e)
         print(msg)
         # logging.exception(msg)
-        telegram.send_telegram_message(telegram.telegramToken_errors, telegram.eWarning, msg)
+        telegram.send_telegram_message(telegram.telegramToken_errors, telegram.EMOJI_WARNING, msg)
         # sys.exit(msg) 
 
     except yaml.YAMLError as e:
@@ -43,7 +43,7 @@ def get_setting(setting_name):
         msg = msg + " " + sys._getframe(  ).f_code.co_name+" - "+repr(e)
         print(msg)
         # logging.exception(msg)
-        telegram.send_telegram_message(telegram.telegramToken_errors, telegram.eWarning, msg)
+        telegram.send_telegram_message(telegram.telegramToken_errors, telegram.EMOJI_WARNING, msg)
         sys.exit(msg)
 
 # environment variables
@@ -60,7 +60,7 @@ def get_env_var(var_name):
         msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
         print(msg)
         # logging.exception(msg)
-        telegram.send_telegram_message(telegram.telegramToken_errors, telegram.eWarning, msg)
+        telegram.send_telegram_message(telegram.telegramToken_errors, telegram.EMOJI_WARNING, msg)
         sys.exit(msg) 
 
 def get_all_settings():

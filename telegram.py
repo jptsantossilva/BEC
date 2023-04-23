@@ -21,7 +21,7 @@ except FileNotFoundError as e:
     msg = msg + " " + sys._getframe(  ).f_code.co_name+" - "+repr(e)
     print(msg)
     logging.exception(msg)
-    # telegram.send_telegram_message(telegram.telegramToken_errors, telegram.eWarning, msg)
+    # telegram.send_telegram_message(telegram.telegramToken_errors, telegram.EMOJI_WARNING, msg)
     sys.exit(msg) 
 
 except yaml.YAMLError as e:
@@ -29,7 +29,7 @@ except yaml.YAMLError as e:
     msg = msg + " " + sys._getframe(  ).f_code.co_name+" - "+repr(e)
     print(msg)
     logging.exception(msg)
-    # telegram.send_telegram_message(telegram.telegramToken_errors, telegram.eWarning, msg)
+    # telegram.send_telegram_message(telegram.telegramToken_errors, telegram.EMOJI_WARNING, msg)
     sys.exit(msg) 
 
 # emoji

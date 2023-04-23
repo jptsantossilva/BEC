@@ -14,7 +14,7 @@ from exchange import client, get_exchange_info
 start = timeit.default_timer() 
 
 # inform start
-telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eStart, "Market Phases - Start")
+telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.EMOJI_START, "Start")
 
 # log file to store error messages
 log_filename = "symbol_by_market_phase.log"
@@ -108,7 +108,7 @@ def get_data(symbol):
     except Exception as e:
         msg = sys._getframe(  ).f_code.co_name+" - "+symbol+" - "+repr(e)
         print(msg)
-        telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eWarning, msg)
+        telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.EMOJI_WARNING, msg)
 
         # return empty dataframe
         frame = pd.DataFrame()
@@ -231,13 +231,13 @@ else:
 database.connection.close()
 
 # inform that ended
-telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eStop, "Market Phases - End")
+telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.EMOJI_STOP, "End")
 
 # calculate execution time
 stop = timeit.default_timer()
 total_seconds = stop - start
 
-duration = database.duration(total_seconds)
+duration = database.calc_duration(total_seconds)
 
 msg = f'Execution Time: {duration}'
 print(msg)

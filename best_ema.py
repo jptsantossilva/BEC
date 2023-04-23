@@ -111,7 +111,7 @@ def get_data(pSymbol, pTimeframe):
     except Exception as e:
         msg = sys._getframe(  ).f_code.co_name+" - "+pSymbol+" - "+repr(e)
         print(msg)
-        telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eWarning, msg)
+        telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.EMOJI_WARNING, msg)
         frame = pd.DataFrame()
         return frame 
 
@@ -215,7 +215,7 @@ def calc_best_ema(symbol, timeframe):
         
         stop = timeit.default_timer()
         total_seconds = stop - start
-        duration = database.duration(total_seconds)
+        duration = database.calc_duration(total_seconds)
         msg = f'Execution Time: {duration}'
         print(msg)
         
@@ -226,7 +226,7 @@ def calc_best_ema(symbol, timeframe):
         msg = sys._getframe(  ).f_code.co_name+f" - " + repr(e)
         print(msg)
         logging.exception(msg)
-        telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.eWarning, msg)
+        telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.EMOJI_WARNING, msg)
         
         return False
     
