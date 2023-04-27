@@ -41,7 +41,7 @@ elif timeframe == "4h": startdate = str(4*200)+" hour ago UTC"
 
 def get_blacklist():
     # read symbols from blacklist to not trade
-    df_blacklist = database.get_all_blacklist()
+    df_blacklist = database.get_symbol_blacklist()
     blacklist = set()
     if not df_blacklist.empty:
         df_blacklist['Symbol'] = df_blacklist['Symbol'].astype(str)+trade_against
