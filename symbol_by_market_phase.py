@@ -14,7 +14,7 @@ from exchange import client, get_exchange_info
 start = timeit.default_timer() 
 
 # inform start
-telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.EMOJI_START, "Start")
+telegram.send_telegram_message(telegram.telegram_token_market_phases, telegram.EMOJI_START, "Start")
 
 # log file to store error messages
 log_filename = "symbol_by_market_phase.log"
@@ -74,7 +74,7 @@ symbols -= blacklist
 symbols = sorted(symbols)
 msg = str(len(symbols))+" symbols found. Calculating..."
 print(msg)
-telegram.send_telegram_message(telegram.telegramToken_market_phases, "", msg)
+telegram.send_telegram_message(telegram.telegram_token_market_phases, "", msg)
 
 def apply_technicals(df):
         df['DSMA50'] = df['Price'].rolling(50).mean()
@@ -108,7 +108,7 @@ def get_data(symbol):
     except Exception as e:
         msg = sys._getframe(  ).f_code.co_name+" - "+symbol+" - "+repr(e)
         print(msg)
-        telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.EMOJI_WARNING, msg)
+        telegram.send_telegram_message(telegram.telegram_token_market_phases, telegram.EMOJI_WARNING, msg)
 
         # return empty dataframe
         frame = pd.DataFrame()
@@ -185,8 +185,8 @@ msg = f"Top {str(config.trade_top_performance)} performance coins:"
 print(msg)
 print(df_top_print.to_string(index=True))
 
-telegram.send_telegram_message(telegram.telegramToken_market_phases, "", msg)
-telegram.send_telegram_message(telegram.telegramToken_market_phases, "", df_top_print.to_string(index=True))
+telegram.send_telegram_message(telegram.telegram_token_market_phases, "", msg)
+telegram.send_telegram_message(telegram.telegram_token_market_phases, "", df_top_print.to_string(index=True))
 
 # create file to import to TradingView with the list of top performers and symbols in position 
 df_tv_list = database.get_distinct_symbol_by_market_phase_and_positions()
@@ -198,8 +198,8 @@ df_tv_list['symbol'] = "BINANCE:"+df_tv_list['symbol']
 filename = "Top_performers_"+trade_against+".txt" 
 df_tv_list.to_csv(filename, header=False, index=False)
 msg = "TradingView List:"
-telegram.send_telegram_message(telegram.telegramToken_market_phases, "", msg)
-telegram.send_telegram_file(telegram.telegramToken_market_phases, filename)
+telegram.send_telegram_message(telegram.telegram_token_market_phases, "", msg)
+telegram.send_telegram_file(telegram.telegram_token_market_phases, filename)
 #---------------------------------------------
 
 if not df_top.empty:
@@ -231,7 +231,7 @@ else:
 database.connection.close()
 
 # inform that ended
-telegram.send_telegram_message(telegram.telegramToken_market_phases, telegram.EMOJI_STOP, "End")
+telegram.send_telegram_message(telegram.telegram_token_market_phases, telegram.EMOJI_STOP, "End")
 
 # calculate execution time
 stop = timeit.default_timer()
@@ -241,6 +241,6 @@ duration = database.calc_duration(total_seconds)
 
 msg = f'Execution Time: {duration}'
 print(msg)
-telegram.send_telegram_message(telegram.telegramToken_market_phases, "", msg)
+telegram.send_telegram_message(telegram.telegram_token_market_phases, "", msg)
 
 
