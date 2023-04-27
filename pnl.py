@@ -10,11 +10,12 @@ import database
 import calendar
 import config
 import exchange
+import streamlit_authenticator as stauth
 
-# Store the initial value of widgets in session state
-# if "visibility" not in st.session_state:
-#     st.session_state.visibility = "visible"
-#     st.session_state.disabled = False
+if "authentication_status" not in st.session_state:
+        st.session_state["authentication_status"] = None
+
+# st.session_state
 
 st.set_page_config(
     page_title="Bot Dashboard App",
@@ -49,23 +50,12 @@ def find_file_paths(filename):
 
     return file_paths
 
-paths = find_file_paths('data.db')
-
 def get_bot_names(paths):
     bot_names = []
     for path in paths:
         bot_names.append(os.path.basename(os.path.normpath(path)))
     
     return bot_names
-
-bot_names = get_bot_names(paths)
-
-#sidebar with available bots
-with st.sidebar:
-    bot_selected = st.radio(
-        "Choose Bot:",
-        (bot_names)
-        )
     
 def set_database_connection(bot):
     # get the current working directory
@@ -103,13 +93,257 @@ def get_trade_against(bot):
         # telegram.send_telegram_message(telegram.telegramToken_errors, telegram.EMOJI_WARNING, msg)
         # sys.exit(msg)
 
-st.title(f'Dashboard')
-set_database_connection(bot_selected)
-trade_against = get_trade_against(bot_selected)
-num_decimals = 8 if trade_against == "BTC" else 2  
-st.caption(f'**{bot_selected}** - {trade_against}')
+def show_main_page():
 
-tab_upnl, tab_rpnl, tab_top_perf, tab_blacklist, tab_best_ema  = st.tabs(["Unrealized PnL", "Realized PnL", "Top Performers", "Blacklist", "Best EMA"])
+    paths = find_file_paths('data.db')
+    bot_names = get_bot_names(paths)
+
+    #sidebar with available bots
+    with st.sidebar:
+        bot_selected = st.radio(
+            "Choose Bot:",
+            (bot_names)
+            )
+
+    set_database_connection(bot_selected)
+    trade_against = get_trade_against(bot_selected)
+    
+    global num_decimals
+    num_decimals = 8 if trade_against == "BTC" else 2  
+
+    st.caption(f'**{bot_selected}** - {trade_against}')
+
+    tab_upnl, tab_rpnl, tab_top_perf, tab_blacklist, tab_best_ema = st.tabs(["Unrealized PnL", "Realized PnL", "Top Performers", "Blacklist", "Best EMA"])
+
+    # get years
+    years = get_years(bot_selected)
+
+    # years empty list
+    if len(years) == 0:
+        tab_rpnl.warning('There are no closed positions yet! 🤞')
+
+    col1, col2, col3 = tab_rpnl.columns(3)
+    # years selectbox
+    year = col1.selectbox(
+        'Year',
+        (years)
+    )
+    # get months
+    months_dict = get_orders_by_month(year, bot_selected)
+    month_names = list(months_dict.values())
+
+    # months selectbox
+    month_selected_name = col2.selectbox(
+        'Month',
+        (month_names)
+    )
+
+    disable_full_year = month_selected_name == None
+    if month_selected_name == None:
+        month_number = 1
+    else: # get month number from month name using months dictionary 
+        month_number = list(months_dict.keys())[list(months_dict.values()).index(month_selected_name)]
+
+
+    if col2.checkbox('Full Year', disabled=disable_full_year):
+        month_number = 13
+
+    result_closed_positions, trades_month_1d, trades_month_4h, trades_month_1h = calculate_realized_pnl(year, month_number)
+    print("\nPnL - Total")
+    # apply the lambda function to make the last row bold
+    # result_closed_positions = result_closed_positions.apply(lambda x: ['font-weight: bold' if i == len(x)-1 else '' for i in range(len(x))], axis=1)
+
+    print(result_closed_positions)
+
+    tab_rpnl.header("Realized PnL - Total")
+    # tab_rpnl.dataframe(result_closed_positions.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['Pnl_Perc','Pnl_Value']))
+    tab_rpnl.dataframe(result_closed_positions.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
+
+    print("Realized PnL - Detail")
+    print(trades_month_1d)
+    print(trades_month_4h)
+    print(trades_month_1h)
+
+    tab_rpnl.header(f"Realized PnL - Detail")
+    tab_rpnl.subheader("Bot 1d")
+    tab_rpnl.dataframe(trades_month_1d.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
+    tab_rpnl.subheader("Bot 4h")
+    tab_rpnl.dataframe(trades_month_4h.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
+    tab_rpnl.subheader("Bot 1h")
+    tab_rpnl.dataframe(trades_month_1h.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
+
+
+    # print('\n----------------------------\n')
+
+    result_open_positions, positions_df_1d, positions_df_4h, positions_df_1h = calculate_unrealized_pnl()
+    print("\nUnrealized PnL - Total")
+    print('-------------------------------')
+    print(result_open_positions)
+
+    if positions_df_1d.empty and positions_df_4h.empty and positions_df_1h.empty:
+        tab_upnl.warning('There are no open positions yet! 🤞') 
+
+    tab_upnl.header("Unrealized PnL - Total")
+
+    # st.sidebar.subheader('Unrealized PnL %')
+    # col1, col2, col3 = st.sidebar.columns(3)
+    currPnL_1d_value = result_open_positions.loc[result_open_positions['Bot'] == '1d', 'PnL_Value'].iloc[0]
+    currPnL_4h_value = result_open_positions.loc[result_open_positions['Bot'] == '4h', 'PnL_Value'].iloc[0]
+    currPnL_1h_value = result_open_positions.loc[result_open_positions['Bot'] == '1h', 'PnL_Value'].iloc[0]
+    currPnL_total_value = float(currPnL_1d_value) + float(currPnL_4h_value) + float(currPnL_1h_value)
+
+    # Convert long numbers into a human-readable format in Python
+    # 1200 to 1.2k; 12345678 to 12.35M 
+    currPnL_1d_value = millify(currPnL_1d_value, precision=num_decimals)
+    currPnL_4h_value = millify(currPnL_4h_value, precision=num_decimals)
+    currPnL_1h_value = millify(currPnL_1h_value, precision=num_decimals)
+    currPnL_total_value = millify(currPnL_total_value, precision=num_decimals)
+
+    currPnL_1d_perc = result_open_positions.loc[result_open_positions['Bot'] == '1d', 'PnL_Perc'].iloc[0]
+    currPnL_4h_perc = result_open_positions.loc[result_open_positions['Bot'] == '4h', 'PnL_Perc'].iloc[0]
+    currPnL_1h_perc = result_open_positions.loc[result_open_positions['Bot'] == '1h', 'PnL_Perc'].iloc[0]
+    currPnL_total_perc = float(currPnL_1d_perc) + float(currPnL_4h_perc) + float(currPnL_1h_perc)
+
+    currPnL_1d_perc = millify(currPnL_1d_perc, precision=2)
+    currPnL_4h_perc = millify(currPnL_4h_perc, precision=2)
+    currPnL_1h_perc = millify(currPnL_1h_perc, precision=2)
+    currPnL_total_perc = millify(currPnL_total_perc, precision=2)
+
+    col1, col2, col3, col4 = tab_upnl.columns(4)
+    col1.metric("1d", currPnL_1d_value, str(currPnL_1d_perc)+"%")
+    col2.metric("4h", currPnL_4h_value, str(currPnL_4h_perc)+"%")
+    col3.metric("1h", currPnL_1h_value, str(currPnL_1h_perc)+"%")
+    col4.metric("Total", currPnL_total_value, str(currPnL_total_perc)+"%")
+
+    tab_upnl.write("")
+
+    tab_upnl.dataframe(data=result_open_positions.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
+
+    print("Unrealized PnL - Detail")
+    print(positions_df_1d)
+    print(positions_df_4h)
+    print(positions_df_1h)
+
+    tab_upnl.header(f"Unrealized PnL - Detail")
+    tab_upnl.subheader("Bot 1d")
+    tab_upnl.dataframe(positions_df_1d.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
+    tab_upnl.subheader("Bot 4h")
+    tab_upnl.dataframe(positions_df_4h.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
+    tab_upnl.subheader("Bot 1h")
+    tab_upnl.dataframe(positions_df_1h.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
+
+    #----------------------
+    # Force Close Position
+    tab_upnl.header("Forced Selling")
+    # add expander
+    sell_expander = tab_upnl.expander("Choose position to sell")
+    bots = ["1d", "4h", "1h"]
+    sell_bot = sell_expander.selectbox(
+        label='Bot?',
+        options=(bots),
+        label_visibility='collapsed')
+    # symbols list
+    if sell_bot == "1d":
+        list_positions = positions_df_1d.Symbol.to_list()
+    elif sell_bot == "4h":
+        list_positions = positions_df_4h.Symbol.to_list()
+    elif sell_bot == "1h":
+        list_positions = positions_df_1h.Symbol.to_list()
+
+    sell_symbol = sell_expander.selectbox(
+        label='Position?',
+        options=(list_positions),
+        label_visibility='collapsed')
+    # sell_expander.write(sell_symbol)
+    disable_sell_confirmation1 = sell_symbol == None 
+    # sell_expander.write(disable_sell_confirmation1)
+    sell_reason = sell_expander.text_input("Reason")
+    sell_confirmation1 = sell_expander.checkbox(f"I confirm the Sell of **{sell_symbol}** in **{sell_bot}** bot", disabled=disable_sell_confirmation1)
+    # if button pressed then sell position
+    if sell_confirmation1:
+        sell_confirmation2 = sell_expander.button("SELL")
+        if sell_confirmation2:
+            # sell
+            symbol_only, symbol_stable = exchange.separate_symbol_and_trade_against(sell_symbol)
+            # get balance
+            balance_qty = exchange.get_symbol_balance(symbol_only, sell_bot)  
+            # verify sell quantity
+            df_pos = database.get_positions_by_bot_symbol_position(bot=sell_bot, symbol=sell_symbol, position=1)
+            if not df_pos.empty:
+                buy_order_qty = df_pos['Qty'].iloc[0]
+            
+            sell_qty = buy_order_qty
+            if balance_qty < buy_order_qty:
+                sell_qty = balance_qty
+            sell_qty = exchange.adjust_size(sell_symbol, sell_qty)
+            exchange.create_sell_order(symbol=sell_symbol,
+                                    bot=sell_bot,
+                                    reason=sell_reason) 
+
+            sell_expander.success(f"{sell_symbol} SOLD!")
+            time.sleep(3)
+            # dasboard refresh
+            st.experimental_rerun()
+    #----------------------
+
+    tab_top_perf.subheader(f"Top {config.trade_top_performance} Performers")
+    df_mp = database.get_all_symbols_by_market_phase()
+    df_mp['Price'] = df_mp['Price'].apply(lambda x:f'{{:.{num_decimals}f}}'.format(x))
+    df_mp['DSMA50'] = df_mp['DSMA50'].apply(lambda x:f'{{:.{num_decimals}f}}'.format(x))
+    df_mp['DSMA200'] = df_mp['DSMA200'].apply(lambda x:f'{{:.{num_decimals}f}}'.format(x))
+    df_mp['Perc_Above_DSMA50'] = df_mp['Perc_Above_DSMA50'].apply(lambda x:'{:.2f}'.format(x))
+    df_mp['Perc_Above_DSMA200'] = df_mp['Perc_Above_DSMA200'].apply(lambda x:'{:.2f}'.format(x))
+    tab_top_perf.dataframe(df_mp)
+
+
+    #----------------------
+
+    tab_blacklist.subheader("Blacklist")
+    df_blacklist = database.get_symbol_blacklist()
+    edited_blacklist = tab_blacklist.experimental_data_editor(df_blacklist, num_rows="dynamic")
+    blacklist_apply_changes = tab_blacklist.button("Save")
+
+    if blacklist_apply_changes:
+        edited_blacklist.to_sql(name='Blacklist',con=database.connection, index=True, if_exists="replace")
+        tab_blacklist.success("Blacklist changes saved")
+
+
+    tab_best_ema.subheader("Best EMA")
+    df_bema = database.get_all_best_ema()
+    tab_best_ema.dataframe(df_bema)
+
+
+def reset_password():
+    # if authentication_status:
+    if st.session_state.authentication_status:
+        try:
+            if authenticator.reset_password(st.session_state.username, 'Reset password'):
+                st.success('Password modified successfully')
+                new_passw = authenticator.credentials['usernames'][st.session_state.username]['password']
+                database.update_user_password(username=st.session_state.username, password=new_passw)
+                # time.sleep(5)  # pause for 5 seconds
+        except Exception as e:
+            st.error(e)
+
+def create_new_user():
+    try:
+        if authenticator.register_user('Register user'):
+            st.success('User registered successfully')
+
+        # authenticator.credentials
+    except Exception as e:
+        st.error(e)
+
+def forgot_password():
+    try:
+        username_forgot_pw, email_forgot_password, random_password = authenticator.forgot_password('Forgot password')
+        if username_forgot_pw:
+            st.success('New password sent securely')
+            # Random password to be transferred to user securely
+        elif username_forgot_pw == False:
+            st.error('Username not found')
+    except Exception as e:
+        st.error(e)
 
 # Get years from orders
 def get_years(bot):
@@ -127,40 +361,6 @@ def get_orders_by_month(year, bot):
         month_dict[month] = month_name
     return month_dict
     
-# get years
-years = get_years(bot_selected)
-
-# years empty list
-if len(years) == 0:
-    tab_rpnl.warning('There are no closed positions yet! 🤞')
-
-col1, col2, col3 = tab_rpnl.columns(3)
-
-# years selectbox
-year = col1.selectbox(
-    'Year',
-    (years)
-)
-# get months
-months_dict = get_orders_by_month(year, bot_selected)
-month_names = list(months_dict.values())
-
-# months selectbox
-month_selected_name = col2.selectbox(
-    'Month',
-    (month_names)
-)
-
-disable_full_year = month_selected_name == None
-if month_selected_name == None:
-    month_number = 1
-else: # get month number from month name using months dictionary 
-    month_number = list(months_dict.keys())[list(months_dict.values()).index(month_selected_name)]
-
-
-if col2.checkbox('Full Year', disabled=disable_full_year):
-    month_number = 13
-
 # Define a function to get the year and month from a datetime object
 def get_year_month(date):
     return date.year, date.month
@@ -293,163 +493,51 @@ def last_row_bold(row):
         return f'background-color: black'
     return ['']*len(row)
 
-result_closed_positions, trades_month_1d, trades_month_4h, trades_month_1h = calculate_realized_pnl(year, month_number)
-print("\nPnL - Total")
-# apply the lambda function to make the last row bold
-# result_closed_positions = result_closed_positions.apply(lambda x: ['font-weight: bold' if i == len(x)-1 else '' for i in range(len(x))], axis=1)
+def show_login_page():
+    # connect to database
+    database.connect()
+    df_users = database.get_all_users()
+    # Convert the DataFrame to a dictionary
+    credentials = df_users.to_dict('index')
+    formatted_credentials = {'usernames': {}}
+    # Iterate over the keys and values of the original `credentials` dictionary
+    for username, user_info in credentials.items():
+        # Add each username and its corresponding user info to the `formatted_credentials` dictionary
+        formatted_credentials['usernames'][username] = user_info
 
-print(result_closed_positions)
+    global authenticator
+    st.title(f'Dashboard')
 
-tab_rpnl.header("Realized PnL - Total")
-# tab_rpnl.dataframe(result_closed_positions.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['Pnl_Perc','Pnl_Value']))
-tab_rpnl.dataframe(result_closed_positions.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
+    authenticator = stauth.Authenticate(
+        credentials=formatted_credentials,
+        cookie_name="dashboard_cookie_name",
+        key="dashboard_cookie_key",
+        cookie_expiry_days=0
+    )
 
-print("Realized PnL - Detail")
-print(trades_month_1d)
-print(trades_month_4h)
-print(trades_month_1h)
+    name, authentication_status, username = authenticator.login('Login', 'main')
 
-tab_rpnl.header(f"Realized PnL - Detail")
-tab_rpnl.subheader("Bot 1d")
-tab_rpnl.dataframe(trades_month_1d.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
-tab_rpnl.subheader("Bot 4h")
-tab_rpnl.dataframe(trades_month_4h.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
-tab_rpnl.subheader("Bot 1h")
-tab_rpnl.dataframe(trades_month_1h.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
+    st.session_state.name = name
+    st.session_state.username = username
+
+    if authentication_status:
+        authenticator.logout('Logout', 'sidebar')
+        st.sidebar.button("Reset", on_click=reset_password)
+        st.sidebar.title(f'Welcome *{st.session_state.name}*')
+        show_main_page()
+    elif authentication_status == False:
+        st.error('Username or password is incorrect')
+    elif authentication_status == None:
+        st.warning('Please enter your username and password')
 
 
-# print('\n----------------------------\n')
+# st.session_state
 
-result_open_positions, positions_df_1d, positions_df_4h, positions_df_1h = calculate_unrealized_pnl()
-print("\nUnrealized PnL - Total")
-print('-------------------------------')
-print(result_open_positions)
+show_login_page()
 
-if positions_df_1d.empty and positions_df_4h.empty and positions_df_1h.empty:
-    tab_upnl.warning('There are no open positions yet! 🤞') 
-
-tab_upnl.header("Unrealized PnL - Total")
-
-# st.sidebar.subheader('Unrealized PnL %')
-# col1, col2, col3 = st.sidebar.columns(3)
-currPnL_1d_value = result_open_positions.loc[result_open_positions['Bot'] == '1d', 'PnL_Value'].iloc[0]
-currPnL_4h_value = result_open_positions.loc[result_open_positions['Bot'] == '4h', 'PnL_Value'].iloc[0]
-currPnL_1h_value = result_open_positions.loc[result_open_positions['Bot'] == '1h', 'PnL_Value'].iloc[0]
-currPnL_total_value = float(currPnL_1d_value) + float(currPnL_4h_value) + float(currPnL_1h_value)
-
-# Convert long numbers into a human-readable format in Python
-# 1200 to 1.2k; 12345678 to 12.35M 
-currPnL_1d_value = millify(currPnL_1d_value, precision=num_decimals)
-currPnL_4h_value = millify(currPnL_4h_value, precision=num_decimals)
-currPnL_1h_value = millify(currPnL_1h_value, precision=num_decimals)
-currPnL_total_value = millify(currPnL_total_value, precision=num_decimals)
-
-currPnL_1d_perc = result_open_positions.loc[result_open_positions['Bot'] == '1d', 'PnL_Perc'].iloc[0]
-currPnL_4h_perc = result_open_positions.loc[result_open_positions['Bot'] == '4h', 'PnL_Perc'].iloc[0]
-currPnL_1h_perc = result_open_positions.loc[result_open_positions['Bot'] == '1h', 'PnL_Perc'].iloc[0]
-currPnL_total_perc = float(currPnL_1d_perc) + float(currPnL_4h_perc) + float(currPnL_1h_perc)
-
-currPnL_1d_perc = millify(currPnL_1d_perc, precision=2)
-currPnL_4h_perc = millify(currPnL_4h_perc, precision=2)
-currPnL_1h_perc = millify(currPnL_1h_perc, precision=2)
-currPnL_total_perc = millify(currPnL_total_perc, precision=2)
-
-col1, col2, col3, col4 = tab_upnl.columns(4)
-col1.metric("1d", currPnL_1d_value, str(currPnL_1d_perc)+"%")
-col2.metric("4h", currPnL_4h_value, str(currPnL_4h_perc)+"%")
-col3.metric("1h", currPnL_1h_value, str(currPnL_1h_perc)+"%")
-col4.metric("Total", currPnL_total_value, str(currPnL_total_perc)+"%")
-
-tab_upnl.write("")
-
-tab_upnl.dataframe(data=result_open_positions.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
-
-print("Unrealized PnL - Detail")
-print(positions_df_1d)
-print(positions_df_4h)
-print(positions_df_1h)
-
-tab_upnl.header(f"Unrealized PnL - Detail")
-tab_upnl.subheader("Bot 1d")
-tab_upnl.dataframe(positions_df_1d.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
-tab_upnl.subheader("Bot 4h")
-tab_upnl.dataframe(positions_df_4h.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
-tab_upnl.subheader("Bot 1h")
-tab_upnl.dataframe(positions_df_1h.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
-
-#----------------------
-# Force Close Position
-tab_upnl.header("Exit")
-# add expander
-sell_expander = tab_upnl.expander("Force Close Position?")
-bots = ["1d", "4h", "1h"]
-sell_bot = sell_expander.selectbox(
-    label='Bot?',
-    options=(bots),
-    label_visibility='collapsed')
-# symbols list
-if sell_bot == "1d":
-    list_positions = positions_df_1d.Symbol.to_list()
-elif sell_bot == "4h":
-    list_positions = positions_df_4h.Symbol.to_list()
-elif sell_bot == "1h":
-    list_positions = positions_df_1h.Symbol.to_list()
-
-sell_symbol = sell_expander.selectbox(
-    label='Position?',
-    options=(list_positions),
-    label_visibility='collapsed')
-# sell_expander.write(sell_symbol)
-disable_sell_confirmation1 = sell_symbol == None 
-# sell_expander.write(disable_sell_confirmation1)
-sell_reason = sell_expander.text_input("Reason")
-sell_confirmation1 = sell_expander.checkbox(f"I confirm the Sell of **{sell_symbol}** in **{sell_bot}** bot", disabled=disable_sell_confirmation1)
-# if button pressed then sell position
-if sell_confirmation1:
-    sell_confirmation2 = sell_expander.button("SELL")
-    if sell_confirmation2:
-        # sell
-        symbol_only, symbol_stable = exchange.separate_symbol_and_trade_against(sell_symbol)
-        # get balance
-        balance_qty = exchange.get_symbol_balance(symbol_only, sell_bot)  
-        # verify sell quantity
-        df_pos = database.get_positions_by_bot_symbol_position(bot=sell_bot, symbol=sell_symbol, position=1)
-        if not df_pos.empty:
-            buy_order_qty = df_pos['Qty'].iloc[0]
-        
-        sell_qty = buy_order_qty
-        if balance_qty < buy_order_qty:
-            sell_qty = balance_qty
-        sell_qty = exchange.adjust_size(sell_symbol, sell_qty)
-        exchange.create_sell_order(symbol=sell_symbol,
-                                   bot=sell_bot,
-                                   reason=sell_reason) 
-
-        sell_expander.success(f"{sell_symbol} SOLD!")
-        time.sleep(3)
-        # dasboard refresh
-        st.experimental_rerun()
-#----------------------
-
-tab_top_perf.subheader(f"Top {config.trade_top_performance} Performers")
-df_mp = database.get_all_symbols_by_market_phase()
-df_mp['Price'] = df_mp['Price'].apply(lambda x:f'{{:.{num_decimals}f}}'.format(x))
-df_mp['DSMA50'] = df_mp['DSMA50'].apply(lambda x:f'{{:.{num_decimals}f}}'.format(x))
-df_mp['DSMA200'] = df_mp['DSMA200'].apply(lambda x:f'{{:.{num_decimals}f}}'.format(x))
-df_mp['Perc_Above_DSMA50'] = df_mp['Perc_Above_DSMA50'].apply(lambda x:'{:.2f}'.format(x))
-df_mp['Perc_Above_DSMA200'] = df_mp['Perc_Above_DSMA200'].apply(lambda x:'{:.2f}'.format(x))
-tab_top_perf.dataframe(df_mp)
-
-tab_blacklist.subheader("Blacklist")
-df_b = database.get_all_blacklist()
-tab_blacklist.dataframe(df_b)
-
-tab_best_ema.subheader("Best EMA")
-df_bema = database.get_all_best_ema()
-tab_best_ema.dataframe(df_bema)
 
 # Close the database connection
-database.connection.close()
+# database.connection.close()
 
 
 
