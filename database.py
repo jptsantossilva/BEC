@@ -4,6 +4,7 @@ import math
 from datetime import datetime
 import pandas as pd
 import config
+import streamlit_authenticator as stauth
 
 def connect(path: str = ""):
     file_path = os.path.join(path, "data.db")
@@ -120,8 +121,6 @@ sql_add_order_sell = """
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?);        
 """
 def add_order_sell(exchange_order_id: str, date: str, bot: str, symbol: str, price: float, qty: float, ema_fast: int, ema_slow: int, exit_reason: str):
-    # calc
-
     df_last_buy_order = get_last_buy_order_by_bot_symbol(bot, symbol)
 
     if df_last_buy_order.empty:
@@ -444,14 +443,24 @@ sql_create_blacklist_table = """
     );
 """
 
-sql_get_all_blacklist = "SELECT * FROM Blacklist;"
-def get_all_blacklist():
-    return pd.read_sql(sql_get_all_blacklist, connection)
+sql_get_symbol_blacklist = "SELECT * FROM Blacklist;"
+def get_symbol_blacklist():
+    return pd.read_sql(sql_get_symbol_blacklist, connection, index_col="Id") 
 
 sql_delete_all_blacklist = "DELETE FROM Blacklist;"
 def delete_all_blacklist():
     with connection:
         connection.execute(sql_delete_all_blacklist)
+
+sql_delete_id_blacklist = "DELETE FROM Blacklist WHERE Id = ?;"
+def delete_id_blacklist(ids: list):
+    with connection:
+        connection.executemany(sql_delete_id_blacklist, [(id,) for id in ids])
+
+sql_add_blacklist = "INSERT OR REPLACE INTO Blacklist (Symbol) VALUES (?);"
+def add_blacklist(symbols: list):
+    with connection:
+        connection.executemany(sql_add_blacklist, [(symbol,) for symbol in symbols])
     
 # BEST_EMA
 sql_create_best_ema_table = """
@@ -470,7 +479,7 @@ sql_create_best_ema_table = """
 
 sql_get_all_best_ema = "SELECT * FROM Best_Ema;"
 def get_all_best_ema():
-    return pd.read_sql(sql_get_all_best_ema, connection)
+    return pd.read_sql(sql_get_all_best_ema, connection, index_col="Id")
     
 sql_get_best_ema_by_symbol_timeframe = """
     SELECT * 
@@ -594,7 +603,7 @@ sql_create_symbols_by_market_phase_table = """
 
 sql_get_all_symbols_by_market_phase = "SELECT * FROM Symbols_By_Market_Phase;"
 def get_all_symbols_by_market_phase():
-    return pd.read_sql(sql_get_all_symbols_by_market_phase, connection)
+    return pd.read_sql(sql_get_all_symbols_by_market_phase, connection, index_col="Id")
     
 sql_get_symbols_from_symbols_by_market_phase = "SELECT symbol FROM Symbols_By_Market_Phase;"
 def get_symbols_from_symbols_by_market_phase():
@@ -645,6 +654,53 @@ SELECT DISTINCT symbol FROM (
 def get_distinct_symbol_by_market_phase_and_positions():
     return pd.read_sql(sql_get_distinct_symbol_by_market_phase_and_positions, connection)
     
+# Users
+sql_create_users_table = """
+    CREATE TABLE IF NOT EXISTS Users (
+        username TEXT PRIMARY KEY,
+        email TEXT,
+        name TEXT,
+        password TEXT
+    );
+"""
+
+sql_users_add_admin = """
+    INSERT OR IGNORE INTO Users (
+        username, email, name, password) 
+    VALUES (
+        ?, ?, ?, ?
+        );
+"""
+
+sql_get_all_users = "SELECT * FROM Users;"
+def get_all_users():
+    return pd.read_sql(sql_get_all_users, connection, index_col="username")
+
+sql_get_user_by_username = "SELECT * FROM Users WHERE username = ?;"
+def get_user_by_username(username: str):
+    return pd.read_sql(sql_get_user_by_username, connection, params=(username,))
+
+sql_add_user = """
+    INSERT OR REPLACE INTO Users (
+        username, email, name, password
+        ) 
+        VALUES (?, ?, ? ,?);
+"""
+def add_user(username: str, email: str, name: str, password: str):
+    with connection:
+        connection.execute(sql_add_user, (username, email, name, password))
+
+sql_update_user_password = """
+    UPDATE Users
+    SET
+        password = ?
+    WHERE 
+        username = ?
+"""
+def update_user_password(username: str, password: int):
+    with connection:
+        connection.execute(sql_set_rank_from_positions, (password, username,))
+
 # create tables
 def create_tables(connection):
     with connection:
@@ -654,6 +710,10 @@ def create_tables(connection):
         connection.execute(sql_create_best_ema_table)
         connection.execute(sql_create_symbols_to_calc_table)
         connection.execute(sql_create_symbols_by_market_phase_table)
+        connection.execute(sql_create_users_table)
+        default_admin_password = "admin"
+        hashed_password = stauth.Hasher([default_admin_password]).generate()
+        connection.execute(sql_users_add_admin, ("admin", "admin@admin.com", "admin", hashed_password[0]))
     
 # convert 123456 seconds to 1d 2h 3m 4s format    
 def calc_duration(seconds):
