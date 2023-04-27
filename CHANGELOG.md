@@ -5,7 +5,17 @@ All notable changes to this project will be documented in this file.
 ## [2023-04-18]
  
 ### Added
+- Dashboard - user login
+### Changed
+- Dashboard - blacklist grid editable
+### Fixed
+- 
+
+## [2023-04-18]
+ 
+### Added
 - Sqlite database. Migration from csv files to database.  
+- Dashboad - force exit position; show top performers, blacklist and Best Ema
 ### Changed
 - 
 ### Fixed
