@@ -10,8 +10,6 @@ if res != "yes":
   msg = "Bye"
   sys.exit(msg)
 
-
-
 # delete orders
 database.delete_all_orders()
 
