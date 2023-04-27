@@ -19,8 +19,8 @@ def main():
     list_not_completed.index += 1
 
     if not list_not_completed.empty: # not empty 
-        telegram.send_telegram_message(telegram.telegramToken_market_phases, "", "Calculating best EMA for the following coins:")
-        telegram.send_telegram_message(telegram.telegramToken_market_phases, "", list_not_completed.to_string(index=True, header = False)) 
+        telegram.send_telegram_message(telegram.telegram_token_market_phases, "", "Calculating best EMA for the following coins:")
+        telegram.send_telegram_message(telegram.telegram_token_market_phases, "", list_not_completed.to_string(index=True, header = False)) 
     
     # calc BestEMA for each symbol and each time frame and save on positions table
     for symbol in list_not_completed.Symbol:
