@@ -1,5 +1,6 @@
 import sqlite3
 import csv
+import database # keep to make sure database is created if not exist
 import config
 
 # Connect to the database
