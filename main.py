@@ -87,7 +87,7 @@ def read_arguments():
 
 def calc_stake_amount(symbol):
     if config.stake_amount_type == "unlimited":
-        num_open_positions = database.get_num_open_positions()
+        num_open_positions = database.get_num_open_positions(database.conn)
 
         if num_open_positions >= config.max_number_of_open_positions:
             return -2 
@@ -146,7 +146,7 @@ def get_data(symbol, time_frame_num, time_frame_type_short):
             time_frame_type_long = "day"
         
         # get best ema
-        df_best_ema = database.get_best_ema_by_symbol_timeframe(symbol=symbol, time_frame=time_frame)
+        df_best_ema = database.get_best_ema_by_symbol_timeframe(database.conn, symbol=symbol, time_frame=time_frame)
 
         if not df_best_ema.empty:
             fast_ema = int(df_best_ema.Ema_Fast.values[0])
@@ -201,7 +201,7 @@ def get_current_pnl(symbol, current_price):
 
     try:
         # get buy price
-        df_buy_price = database.get_positions_by_bot_symbol_position(bot=time_frame, symbol=symbol, position=1)
+        df_buy_price = database.get_positions_by_bot_symbol_position(database.conn, bot=time_frame, symbol=symbol, position=1)
         buy_price = 0
         pnl_perc = 0
         
@@ -234,15 +234,15 @@ def get_open_positions(df):
 
 def trade():
     # Make sure we are only trying to buy positions on symbols included on market phases table
-    database.delete_positions_not_top_rank()
+    database.delete_positions_not_top_rank(database.conn)
 
     # list of symbols in position - SELL
-    df_sell = database.get_positions_by_bot_position(bot=time_frame, position=1)
+    df_sell = database.get_positions_by_bot_position(database.conn, bot=time_frame, position=1)
     list_to_sell = df_sell.Symbol.tolist()
     
     
     # list of symbols in position - BUY
-    df_buy = database.get_positions_by_bot_position(bot=time_frame, position=0)
+    df_buy = database.get_positions_by_bot_position(database.conn, bot=time_frame, position=0)
     list_to_buy = df_buy.Symbol.tolist()
     
     # check open positions and SELL if conditions are fulfilled 
@@ -284,7 +284,8 @@ def trade():
             # set current PnL
             lastrow = df.iloc[-1]
             current_price = lastrow.Close
-            database.update_position_pnl(bot=time_frame,
+            database.update_position_pnl(database.conn,
+                                         bot=time_frame,
                                          symbol=symbol, 
                                          curr_price=current_price)
 
@@ -317,7 +318,8 @@ def trade():
             telegram.send_telegram_message(telegram_token, "", msg)
 
 def positions_summary():
-    df_summary = database.get_positions_by_bot_position(bot=time_frame, position=1)
+    df_summary = database.get_positions_by_bot_position(database.conn,
+                                                        bot=time_frame, position=1)
     
     # remove unwanted columns
     df_dropped = df_summary.drop(columns=['Id','Date','Bot','Position','Rank','Qty','Ema_Fast','Ema_Slow','Buy_Order_Id','Duration'])
@@ -335,7 +337,7 @@ def positions_summary():
         telegram.send_telegram_message(telegram_token, "", df_sorted.to_string())
 
     if config.stake_amount_type == "unlimited":
-        num_open_positions = database.get_num_open_positions()
+        num_open_positions = database.get_num_open_positions(database.conn)
         msg = f"{str(num_open_positions)}/{str(config.max_number_of_open_positions)} positions occupied"
         print(msg)
         telegram.send_telegram_message(telegram_token, "", msg=msg)
@@ -352,7 +354,7 @@ def main():
     positions_summary()
 
     # Close the database connection
-    database.connection.close()
+    database.conn.close()
 
     # calculate execution time
     stop = timeit.default_timer()

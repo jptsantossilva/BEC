@@ -191,7 +191,8 @@ def run_backtest(symbol, timeframe):
     print("Buy & Hold Return [%] = ",round(BuyHoldReturnPerc,2))
     print("Backtest start date =", BacktestStartDate)
 
-    database.add_best_ema(timeframe=timeframe,
+    database.add_best_ema(database.conn,
+                          timeframe=timeframe,
                           symbol=symbol,
                           ema_fast=n1,
                           ema_slow=n2,

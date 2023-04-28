@@ -41,7 +41,7 @@ elif timeframe == "4h": startdate = str(4*200)+" hour ago UTC"
 
 def get_blacklist():
     # read symbols from blacklist to not trade
-    df_blacklist = database.get_symbol_blacklist()
+    df_blacklist = database.get_symbol_blacklist(database.conn)
     blacklist = set()
     if not df_blacklist.empty:
         df_blacklist['Symbol'] = df_blacklist['Symbol'].astype(str)+trade_against
@@ -160,11 +160,11 @@ df_top = df_top.head(config.trade_top_performance)
 df_top['Rank'] = np.arange(len(df_top))+1
 
 # delete existing data
-database.delete_all_symbols_by_market_phase()
+database.delete_all_symbols_by_market_phase(database.conn)
 
 # insert new symbols
 for index, row in df_top.iterrows():
-    database.insert_symbols_by_market_phase( 
+    database.insert_symbols_by_market_phase(database.conn, 
                                             row['Symbol'],
                                             row['Price'],
                                             row['DSMA50'],
@@ -189,7 +189,7 @@ telegram.send_telegram_message(telegram.telegram_token_market_phases, "", msg)
 telegram.send_telegram_message(telegram.telegram_token_market_phases, "", df_top_print.to_string(index=True))
 
 # create file to import to TradingView with the list of top performers and symbols in position 
-df_tv_list = database.get_distinct_symbol_by_market_phase_and_positions()
+df_tv_list = database.get_distinct_symbol_by_market_phase_and_positions(database.conn)
 
 df_top = df_tv_list
 
@@ -205,19 +205,19 @@ telegram.send_telegram_file(telegram.telegram_token_market_phases, filename)
 if not df_top.empty:
 
     # remove coins from position files that are not top performers in accumulation or bullish phase
-    database.delete_positions_not_top_rank()
+    database.delete_positions_not_top_rank(database.conn)
     
     # add top rank coins with positive returns to positions files
-    database.add_top_rank_to_position()
+    database.add_top_rank_to_position(database.conn)
 
     # delete rows with calc completed and keep only symbols with calc not completed
-    database.delete_symbols_to_calc_completed()
+    database.delete_symbols_to_calc_completed(database.conn)
 
     # add the symbols with open positions to calc 
-    database.add_symbols_with_open_positions_to_calc()
+    database.add_symbols_with_open_positions_to_calc(database.conn)
     
     # add the symbols in top rank to calc
-    database.add_symbols_top_rank_to_calc()
+    database.add_symbols_top_rank_to_calc(database.conn)
 
     # calc best ema for each symbol on 1d, 4h and 1h time frame and save on positions table
     add_symbol.main()    
@@ -225,7 +225,7 @@ if not df_top.empty:
 else:
 
     # if there are no symbols in accumulation or bullish phase remove all not open from positions
-    database.delete_all_positions_not_open()
+    database.delete_all_positions_not_open(database.conn)
 
 # Close the database connection
 database.connection.close()

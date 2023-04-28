@@ -11,22 +11,22 @@ if res != "yes":
   sys.exit(msg)
 
 # delete orders
-database.delete_all_orders()
+database.delete_all_orders(database.conn)
 
 # positions
-database.delete_all_positions()
+database.delete_all_positions(database.conn)
 
 # market phase
-database.delete_all_symbols_by_market_phase()
+database.delete_all_symbols_by_market_phase(database.conn)
 
 # symbols_To_Calc
-database.delete_all_symbols_to_calc()
+database.delete_all_symbols_to_calc(database.conn)
 
 # coinpairBestEma - best ema values
-database.delete_all_best_ema()
+database.delete_all_best_ema(database.conn)
 
 # blacklist - coins not to trade
-database.delete_all_blacklist()
+database.delete_all_blacklist(database.conn)
 
 # clean log files
 filename = "main.log"

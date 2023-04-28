@@ -79,7 +79,7 @@ def calc_stake_amount(symbol, bot):
     telegram_token = telegram.get_telegram_token(bot)
 
     if config.stake_amount_type == "unlimited":
-        num_open_positions = database.get_num_open_positions()
+        num_open_positions = database.get_num_open_positions(database.conn)
 
         if num_open_positions >= config.max_number_of_open_positions:
             return -2 
@@ -145,14 +145,16 @@ def create_buy_order(symbol, bot, fast_ema, slow_ema):
             avg_price = round(avg_price,8)
                 
             # update position with the buy order
-            database.set_position_buy(bot=bot, 
+            database.set_position_buy(database.conn,
+                                      bot=bot, 
                                       symbol=symbol,
                                       qty=float(order['executedQty']),
                                       buy_price=avg_price,
                                       date=str(pd.to_datetime(order['transactTime'], unit='ms')),
                                       buy_order_id=str(order['orderId']))
                 
-            database.add_order_buy(exchange_order_id=str(order['orderId']),
+            database.add_order_buy(database.conn,
+                                   exchange_order_id=str(order['orderId']),
                                    date=str(pd.to_datetime(order['transactTime'], unit='ms')),
                                    bot=bot,
                                    symbol=symbol,
@@ -174,7 +176,7 @@ def create_buy_order(symbol, bot, fast_ema, slow_ema):
                                          position_size)  
             
         elif position_size == -2:
-            num_open_positions = database.get_num_open_positions(bot=bot)
+            num_open_positions = database.get_num_open_positions(database.conn, bot=bot)
             telegram.send_telegram_message(telegram_token, telegram.EMOJI_INFORMATION, client.SIDE_BUY+" "+symbol+" - Max open positions ("+str(num_open_positions)+"/"+str(config.max_number_of_open_positions)+") already occupied!")
         else:
             telegram.send_telegram_message(telegram_token, telegram.EMOJI_INFORMATION, client.SIDE_BUY+" "+symbol+" - Not enough "+symbol_stable+" funds!")
@@ -203,7 +205,7 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = ''):
         # get balance
         balance_qty = get_symbol_balance(symbol=symbol_only, bot=bot)  
         # verify sell quantity
-        df_pos = database.get_positions_by_bot_symbol_position(bot=bot, symbol=symbol, position=1)
+        df_pos = database.get_positions_by_bot_symbol_position(database.conn, bot=bot, symbol=symbol, position=1)
         if not df_pos.empty:
             buy_order_qty = df_pos['Qty'].iloc[0]
         
@@ -224,10 +226,13 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = ''):
             avg_price = round(avg_price,8)
 
             # update position with the sell order
-            database.set_position_sell(bot=bot, symbol=symbol)
+            database.set_position_sell(database.conn,
+                                       bot=bot, 
+                                       symbol=symbol)
     
             # add to orders database table
-            pnl_value, pnl_perc = database.add_order_sell(exchange_order_id = str(order['orderId']),
+            pnl_value, pnl_perc = database.add_order_sell(database.conn,
+                                                          exchange_order_id = str(order['orderId']),
                                                           date = str(pd.to_datetime(order['transactTime'], unit='ms')),
                                                           bot = bot,
                                                           symbol = symbol,
@@ -261,7 +266,9 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = ''):
         else:
             # if there is no qty on balance to sell we set the qty on positions table to zero
             # this can happen if we sell on the exchange (for example, due to a pump) before the bot sells it. 
-            database.set_position_sell(bot=bot, symbol=symbol)
+            database.set_position_sell(database.conn,
+                                       bot=bot, 
+                                       symbol=symbol)
         
     except BinanceAPIException as e:
         msg = "create_sell_order - "+repr(e)

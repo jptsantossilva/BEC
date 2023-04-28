@@ -10,12 +10,25 @@ def connect(path: str = ""):
     file_path = os.path.join(path, "data.db")
     return sqlite3.connect(file_path)
 
-connection = connect()
+# change connection on Dashboard
+def connect_to_bot(folder_name: str):
+    #Connects to an SQLite database file located in a child folder of the parent folder.
+    grandparent_folder = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+    child_folder = os.path.join(grandparent_folder, folder_name)
+    # file_path = os.path.join(child_folder, "data.db")
+    return connect(child_folder)
 
-# change connection from PnL program
-def set_connection(path: str):
-    global connection
-    connection = connect(path)
+def get_users_credentials(connection):
+    df_users = get_all_users(connection)
+    # Convert the DataFrame to a dictionary
+    credentials = df_users.to_dict('index')
+    formatted_credentials = {'usernames': {}}
+    # Iterate over the keys and values of the original `credentials` dictionary
+    for username, user_info in credentials.items():
+        # Add each username and its corresponding user info to the `formatted_credentials` dictionary
+        formatted_credentials['usernames'][username] = user_info
+
+    return formatted_credentials
 
 # ORDERS
 create_orders_table = """
@@ -38,15 +51,15 @@ create_orders_table = """
 """
 
 sql_get_all_orders = "SELECT * FROM Orders;"  
-def get_all_orders():
+def get_all_orders(connection):
     return pd.read_sql(sql_get_all_orders, connection)
 
 sql_get_orders_by_bot = "SELECT * FROM Orders WHERE Bot = ?;"
-def get_orders_by_bot(bot):
+def get_orders_by_bot(connection, bot):
     return pd.read_sql(sql_get_orders_by_bot, connection, params=(bot,))
 
 sql_delete_all_orders = "DELETE FROM Orders;"
-def delete_all_orders():
+def delete_all_orders(connection):
     with connection:
         connection.execute(sql_delete_all_orders)
 
@@ -54,7 +67,7 @@ sql_get_years_from_orders = """
     SELECT DISTINCT(strftime('%Y', Date)) AS Year 
     FROM Orders 
     ORDER BY Year DESC;"""
-def get_years_from_orders():
+def get_years_from_orders(connection):
     with connection:
         df = pd.read_sql(sql_get_years_from_orders, connection)
         result = []
@@ -68,7 +81,7 @@ sql_get_months_from_orders_by_year ="""
     WHERE 
         Date LIKE ?
     ORDER BY Month DESC;"""
-def get_months_from_orders_by_year(year: str):
+def get_months_from_orders_by_year(connection, year: str):
     result = []
 
     if year == None:
@@ -98,7 +111,7 @@ sql_add_order_buy = """
         ?,?,?,?,?,?,?,?,?        
         );        
 """
-def add_order_buy(exchange_order_id: str, date: str, bot: str, symbol: str, price: float, qty: float, ema_fast: int, ema_slow: int):
+def add_order_buy(connection, exchange_order_id: str, date: str, bot: str, symbol: str, price: float, qty: float, ema_fast: int, ema_slow: int):
     side = "BUY"
     with connection:
         connection.execute(sql_add_order_buy, (exchange_order_id, date, bot, symbol, side, price, qty, ema_fast, ema_slow))
@@ -120,8 +133,8 @@ sql_add_order_sell = """
         Exit_Reason)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?);        
 """
-def add_order_sell(exchange_order_id: str, date: str, bot: str, symbol: str, price: float, qty: float, ema_fast: int, ema_slow: int, exit_reason: str):
-    df_last_buy_order = get_last_buy_order_by_bot_symbol(bot, symbol)
+def add_order_sell(connection, exchange_order_id: str, date: str, bot: str, symbol: str, price: float, qty: float, ema_fast: int, ema_slow: int, exit_reason: str):
+    df_last_buy_order = get_last_buy_order_by_bot_symbol(connection, bot, symbol)
 
     if df_last_buy_order.empty:
         print("DataFrame is empty")
@@ -169,7 +182,7 @@ sql_get_last_buy_order_by_bot_symbol = """
         AND Symbol = ?
     ORDER BY Id DESC LIMIT 1;
 """
-def get_last_buy_order_by_bot_symbol(bot: str, symbol: str):
+def get_last_buy_order_by_bot_symbol(connection, bot: str, symbol: str):
     return pd.read_sql(sql_get_last_buy_order_by_bot_symbol, connection, params=(bot, symbol,))
 
 sql_get_orders_by_bot_side_year_month = """
@@ -184,7 +197,7 @@ sql_get_orders_by_bot_side_year_month = """
         AND Side = ?
         AND Date LIKE ?;
 """
-def get_orders_by_bot_side_year_month(bot: str, side: str, year: str, month: str):
+def get_orders_by_bot_side_year_month(connection, bot: str, side: str, year: str, month: str):
     if year == None:
         df = pd.DataFrame(columns=['Bot', 'Date', 'Qty', 'PnL_Perc', 'PnL_Value'])
         return df
@@ -223,8 +236,8 @@ sql_insert_position = """
     INSERT INTO Positions (Bot, Symbol, Position, Rank)
         VALUES (?,?,0,?);        
 """
-def insert_position(bot: str, symbol: str):
-    rank = get_rank_from_symbols_by_market_phase_by_symbol(symbol)
+def insert_position(connection, bot: str, symbol: str):
+    rank = get_rank_from_symbols_by_market_phase_by_symbol(connection, symbol)
     with connection:
         connection.execute(sql_insert_position, (bot, symbol, rank))
   
@@ -235,7 +248,7 @@ sql_get_positions_by_bot_position = """
         Bot = ?
         AND Position = ?
 """
-def get_positions_by_bot_position(bot: str, position: int):
+def get_positions_by_bot_position(connection, bot: str, position: int):
     return pd.read_sql(sql_get_positions_by_bot_position, connection, params=(bot, position))
 
 sql_get_unrealized_pnl_by_bot = """
@@ -245,7 +258,7 @@ sql_get_unrealized_pnl_by_bot = """
         Bot = ?
         AND Position = ?
 """
-def get_unrealized_pnl_by_bot(bot: str):
+def get_unrealized_pnl_by_bot(connection, bot: str):
     position = 1
     return pd.read_sql(sql_get_unrealized_pnl_by_bot, connection, params=(bot, position))
 
@@ -257,7 +270,7 @@ sql_get_positions_by_bot_symbol_position = """
         AND Symbol = ?
         AND Position = ?
 """
-def get_positions_by_bot_symbol_position(bot: str, symbol: str, position: int):
+def get_positions_by_bot_symbol_position(connection, bot: str, symbol: str, position: int):
     return pd.read_sql(sql_get_positions_by_bot_symbol_position, connection, params=(bot, symbol, position))
 
 sql_get_all_positions_by_bot_symbol = """
@@ -267,7 +280,7 @@ sql_get_all_positions_by_bot_symbol = """
         Bot = ?
         AND symbol = ?
 """
-def get_all_positions_by_bot_symbol(bot: str, symbol: str):
+def get_all_positions_by_bot_symbol(connection, bot: str, symbol: str):
     df = pd.read_sql(sql_get_all_positions_by_bot_symbol, connection, params=(bot, symbol,))
     result = int(df.iloc[0, 0]) == 1
     return result
@@ -279,7 +292,7 @@ sql_get_distinct_symbol_from_positions_where_position1 = """
     WHERE 
         Position = 1
 """
-def get_distinct_symbol_from_positions_where_position1():
+def get_distinct_symbol_from_positions_where_position1(connection):
     return pd.read_sql(sql_get_distinct_symbol_from_positions_where_position1, connection)
     
 sql_get_all_positions_by_bot = """
@@ -290,13 +303,13 @@ sql_get_all_positions_by_bot = """
     ORDER BY
         Rank
 """
-def get_all_positions_by_bot(bot: str):
+def get_all_positions_by_bot(connection, bot: str):
     return pd.read_sql(sql_get_all_positions_by_bot, connection, params=(bot,))
     
 sql_get_num_open_positions = """
     SELECT COUNT(*) FROM Positions WHERE Position = 1;
 """
-def get_num_open_positions(): 
+def get_num_open_positions(connection): 
     df = pd.read_sql(sql_get_num_open_positions, connection)
     result = int(df.iloc[0, 0])
     return result
@@ -304,7 +317,7 @@ def get_num_open_positions():
 sql_get_num_open_positions_by_bot = """
     SELECT COUNT(*) FROM Positions WHERE Position = 1 and Bot = ?;
 """
-def get_num_open_positions_by_bot(bot: str): 
+def get_num_open_positions_by_bot(connection, bot: str): 
     df = pd.read_sql(sql_get_num_open_positions_by_bot, connection, params=(bot,))
     result = int(df.iloc[0, 0])
     return result
@@ -324,7 +337,7 @@ sql_add_top_rank_to_position = """
             WHERE Bot = be.Time_Frame AND Symbol = mp.Symbol
         );
 """
-def add_top_rank_to_position():
+def add_top_rank_to_position(connection):
     with connection:
         connection.execute(sql_add_top_rank_to_position)
 
@@ -335,7 +348,7 @@ sql_set_rank_from_positions = """
     WHERE 
         Symbol = ?
 """
-def set_rank_from_positions(symbol: str, rank: int):
+def set_rank_from_positions(connection, symbol: str, rank: int):
     with connection:
         connection.execute(sql_set_rank_from_positions, (rank, symbol,))
 
@@ -352,8 +365,8 @@ sql_update_position_pnl = """
         AND Symbol = ? 
         AND Position = 1;        
 """
-def update_position_pnl (bot: str, symbol: str, curr_price: float):
-    df = get_positions_by_bot_symbol_position(bot, symbol, position=1)
+def update_position_pnl (connection, bot: str, symbol: str, curr_price: float):
+    df = get_positions_by_bot_symbol_position(connection, bot, symbol, position=1)
     buy_price = float(df.loc[0,'Buy_Price'])
     qty = float(df.loc[0,'Qty'])
     date = str(df.loc[0,'Date'])
@@ -390,7 +403,7 @@ sql_set_position_buy = """
         Bot = ? 
         AND Symbol = ? ;        
 """
-def set_position_buy(bot: str, symbol: str, qty: float, buy_price: float, date: str, buy_order_id: str):
+def set_position_buy(connection, bot: str, symbol: str, qty: float, buy_price: float, date: str, buy_order_id: str):
     curr_price = buy_price    
     with connection:
         connection.execute(sql_set_position_buy, (qty, 
@@ -416,22 +429,22 @@ sql_set_position_sell = """
         Bot = ? 
         AND Symbol = ? ;        
 """
-def set_position_sell(bot: str, symbol: str):
+def set_position_sell(connection, bot: str, symbol: str):
     with connection:
         connection.execute(sql_set_position_sell, (bot, symbol))
 
 sql_delete_all_positions = "DELETE FROM Positions;"
-def delete_all_positions():
+def delete_all_positions(connection):
     with connection:
         connection.execute(sql_delete_all_positions)
 
 sql_delete_positions_not_top_rank = "DELETE FROM Positions where Position = 0 and Symbol not in (select Symbol from Symbols_By_Market_Phase);"
-def delete_positions_not_top_rank():
+def delete_positions_not_top_rank(connection):
     with connection:
         connection.execute(sql_delete_positions_not_top_rank)
     
 sql_delete_all_positions_not_open = "DELETE FROM Positions where Position = 0"
-def delete_all_positions_not_open():
+def delete_all_positions_not_open(connection):
     with connection:
         connection.execute(sql_delete_all_positions_not_open)
 
@@ -444,21 +457,21 @@ sql_create_blacklist_table = """
 """
 
 sql_get_symbol_blacklist = "SELECT * FROM Blacklist;"
-def get_symbol_blacklist():
+def get_symbol_blacklist(connection):
     return pd.read_sql(sql_get_symbol_blacklist, connection, index_col="Id") 
 
 sql_delete_all_blacklist = "DELETE FROM Blacklist;"
-def delete_all_blacklist():
+def delete_all_blacklist(connection):
     with connection:
         connection.execute(sql_delete_all_blacklist)
 
 sql_delete_id_blacklist = "DELETE FROM Blacklist WHERE Id = ?;"
-def delete_id_blacklist(ids: list):
+def delete_id_blacklist(connection, ids: list):
     with connection:
         connection.executemany(sql_delete_id_blacklist, [(id,) for id in ids])
 
 sql_add_blacklist = "INSERT OR REPLACE INTO Blacklist (Symbol) VALUES (?);"
-def add_blacklist(symbols: list):
+def add_blacklist(connection, symbols: list):
     with connection:
         connection.executemany(sql_add_blacklist, [(symbol,) for symbol in symbols])
     
@@ -478,7 +491,7 @@ sql_create_best_ema_table = """
 """
 
 sql_get_all_best_ema = "SELECT * FROM Best_Ema;"
-def get_all_best_ema():
+def get_all_best_ema(connection):
     return pd.read_sql(sql_get_all_best_ema, connection, index_col="Id")
     
 sql_get_best_ema_by_symbol_timeframe = """
@@ -488,7 +501,7 @@ sql_get_best_ema_by_symbol_timeframe = """
         Symbol = ?
         AND Time_Frame = ?;
 """
-def get_best_ema_by_symbol_timeframe(symbol: str, time_frame: str):
+def get_best_ema_by_symbol_timeframe(connection, symbol: str, time_frame: str):
     return pd.read_sql(sql_get_best_ema_by_symbol_timeframe, connection, params=(symbol, time_frame))
 
 sql_add_best_ema = """
@@ -497,18 +510,20 @@ sql_add_best_ema = """
         ) 
         VALUES (?, ?, ? ,? ,? ,? ,?);
 """
-def add_best_ema(timeframe: str, symbol: str, ema_fast: int, ema_slow: int, return_perc: float, buy_hold_return_perc: float, backtest_start_date: str):
+def add_best_ema(connection, timeframe: str, symbol: str, ema_fast: int, ema_slow: int, return_perc: float, buy_hold_return_perc: float, backtest_start_date: str):
     with connection:
-        connection.execute(sql_add_best_ema, (symbol, 
-                                              ema_fast, 
-                                              ema_slow, 
-                                              timeframe, 
-                                              return_perc, 
-                                              buy_hold_return_perc, 
-                                              backtest_start_date))
+        connection.execute(sql_add_best_ema, (str(symbol), 
+                                              int(ema_fast), 
+                                              int(ema_slow), 
+                                              str(timeframe), 
+                                              float(return_perc), 
+                                              float(buy_hold_return_perc), 
+                                              str(backtest_start_date)
+                                              )
+                            )
     
 sql_delete_all_best_ema = "DELETE FROM Best_Ema;"
-def delete_all_best_ema():
+def delete_all_best_ema(connection):
     with connection:
         connection.execute(sql_delete_all_best_ema)
 
@@ -525,7 +540,7 @@ sql_create_symbols_to_calc_table = """
 
 #
 sql_get_all_symbols_to_calc = "SELECT * FROM Symbols_To_Calc;"
-def get_all_symbols_to_calc():
+def get_all_symbols_to_calc(connection):
     return pd.read_sql(sql_get_all_symbols_to_calc, connection)
 
 #    
@@ -535,7 +550,7 @@ sql_get_symbols_to_calc_by_calc_completed = """
     WHERE
         Calc_Completed = ?;
 """
-def get_symbols_to_calc_by_calc_completed(completed: int):
+def get_symbols_to_calc_by_calc_completed(connection, completed: int):
     return pd.read_sql(sql_get_symbols_to_calc_by_calc_completed, connection, params=(completed,))
     
 #    
@@ -546,7 +561,7 @@ sql_set_symbols_to_calc_completed = """
     WHERE
         Symbol = ?;
 """
-def set_symbols_to_calc_completed(symbol: str):
+def set_symbols_to_calc_completed(connection, symbol: str):
     with connection:
         connection.execute(sql_set_symbols_to_calc_completed, (symbol,))
     
@@ -554,12 +569,12 @@ sql_delete_symbols_to_calc_completed = """
     DELETE FROM Symbols_To_Calc 
     WHERE Calc_Completed = 1;
 """
-def delete_symbols_to_calc_completed():
+def delete_symbols_to_calc_completed(connection):
     with connection:
         connection.execute(sql_delete_symbols_to_calc_completed)
 
 sql_delete_all_symbols_to_calc = "DELETE FROM Symbols_To_Calc;"
-def delete_all_symbols_to_calc():
+def delete_all_symbols_to_calc(connection):
     with connection:
         connection.execute(sql_delete_all_symbols_to_calc)
     
@@ -571,7 +586,7 @@ FROM Positions
 WHERE Position = 1
     AND Symbol NOT IN (SELECT Symbol FROM Symbols_To_Calc WHERE Calc_Completed = 0)
 """
-def add_symbols_with_open_positions_to_calc():
+def add_symbols_with_open_positions_to_calc(connection):
     with connection:
         connection.execute(sql_add_symbols_with_open_positions_to_calc)
     
@@ -582,7 +597,7 @@ SELECT DISTINCT Symbol, 0, datetime('now')
 FROM Symbols_By_Market_Phase 
 WHERE Symbol NOT IN (SELECT Symbol FROM Symbols_To_Calc WHERE Calc_Completed = 0)
 """
-def add_symbols_top_rank_to_calc():
+def add_symbols_top_rank_to_calc(connection):
     with connection:
         connection.execute(sql_add_symbols_top_rank_to_calc)
     
@@ -602,11 +617,11 @@ sql_create_symbols_by_market_phase_table = """
 """
 
 sql_get_all_symbols_by_market_phase = "SELECT * FROM Symbols_By_Market_Phase;"
-def get_all_symbols_by_market_phase():
+def get_all_symbols_by_market_phase(connection):
     return pd.read_sql(sql_get_all_symbols_by_market_phase, connection, index_col="Id")
     
 sql_get_symbols_from_symbols_by_market_phase = "SELECT symbol FROM Symbols_By_Market_Phase;"
-def get_symbols_from_symbols_by_market_phase():
+def get_symbols_from_symbols_by_market_phase(connection):
     return pd.read_sql(sql_get_symbols_from_symbols_by_market_phase, connection)
 
 sql_get_rank_from_symbols_by_market_phase_by_symbol = """
@@ -615,7 +630,7 @@ sql_get_rank_from_symbols_by_market_phase_by_symbol = """
     WHERE Symbol = ?
     ;
 """
-def get_rank_from_symbols_by_market_phase_by_symbol(symbol: str):
+def get_rank_from_symbols_by_market_phase_by_symbol(connection, symbol: str):
     df = pd.read_sql(sql_get_rank_from_symbols_by_market_phase_by_symbol, connection, params=(symbol,))
     if df.empty:
         result = 1000
@@ -635,12 +650,12 @@ sql_insert_symbols_by_market_phase = """
         Rank)
     VALUES(?,?,?,?,?,?,?,?);
 """
-def insert_symbols_by_market_phase(symbol: str, price: float, dsma50: float, dsma200: float, market_phase: str, perc_above_dsma50: float, perc_above_dsma200: float, rank: int):
+def insert_symbols_by_market_phase(connection, symbol: str, price: float, dsma50: float, dsma200: float, market_phase: str, perc_above_dsma50: float, perc_above_dsma200: float, rank: int):
     with connection:
         connection.execute(sql_insert_symbols_by_market_phase,(symbol, price, dsma50, dsma200, market_phase, perc_above_dsma50, perc_above_dsma200, rank))
     
 sql_delete_all_symbols_by_market_phase = "DELETE FROM Symbols_By_Market_Phase;"
-def delete_all_symbols_by_market_phase():
+def delete_all_symbols_by_market_phase(connection):
     with connection:
         connection.execute(sql_delete_all_symbols_by_market_phase)
 
@@ -651,7 +666,7 @@ SELECT DISTINCT symbol FROM (
     SELECT symbol FROM Positions WHERE Position=1
 ) AS symbols;
 """
-def get_distinct_symbol_by_market_phase_and_positions():
+def get_distinct_symbol_by_market_phase_and_positions(connection):
     return pd.read_sql(sql_get_distinct_symbol_by_market_phase_and_positions, connection)
     
 # Users
@@ -673,11 +688,11 @@ sql_users_add_admin = """
 """
 
 sql_get_all_users = "SELECT * FROM Users;"
-def get_all_users():
+def get_all_users(connection):
     return pd.read_sql(sql_get_all_users, connection, index_col="username")
 
 sql_get_user_by_username = "SELECT * FROM Users WHERE username = ?;"
-def get_user_by_username(username: str):
+def get_user_by_username(connection, username: str):
     return pd.read_sql(sql_get_user_by_username, connection, params=(username,))
 
 sql_add_user = """
@@ -686,7 +701,7 @@ sql_add_user = """
         ) 
         VALUES (?, ?, ? ,?);
 """
-def add_user(username: str, email: str, name: str, password: str):
+def add_user(connection, username: str, email: str, name: str, password: str):
     with connection:
         connection.execute(sql_add_user, (username, email, name, password))
 
@@ -697,7 +712,7 @@ sql_update_user_password = """
     WHERE 
         username = ?
 """
-def update_user_password(username: str, password: int):
+def update_user_password(connection, username: str, password: int):
     with connection:
         connection.execute(sql_set_rank_from_positions, (password, username,))
 
@@ -739,7 +754,10 @@ def calc_duration(seconds):
 
 ##############################
 
-create_tables(connection)
+conn = connect()
+
+# make sure all tables are created
+create_tables(conn)
 
 
     

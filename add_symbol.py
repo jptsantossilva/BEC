@@ -12,7 +12,7 @@ timeframe = ["1d", "4h", "1h"]
 
 def main():
     
-    list_not_completed = database.get_symbols_to_calc_by_calc_completed(completed = 0)
+    list_not_completed = database.get_symbols_to_calc_by_calc_completed(database.conn, completed = 0)
 
     # reset the index and set number beginning from 1
     list_not_completed = list_not_completed.reset_index(drop=True)
@@ -30,7 +30,7 @@ def main():
             resultBestEma = calc_best_ema(symbol, tf)
             
             # get best ema
-            df_best_ema = database.get_best_ema_by_symbol_timeframe(symbol=symbol, time_frame=tf)
+            df_best_ema = database.get_best_ema_by_symbol_timeframe(database.conn, symbol=symbol, time_frame=tf)
 
             # if return percentage of best ema is < 0 we dont want to trade that coin pair
             if not df_best_ema.empty:
@@ -38,16 +38,16 @@ def main():
                     continue        
             
             # if symbol do not exist in positions table then add it
-            symbol_exist = database.get_all_positions_by_bot_symbol(bot=tf, symbol=symbol)
+            symbol_exist = database.get_all_positions_by_bot_symbol(database.conn, bot=tf, symbol=symbol)
             if not symbol_exist:
-                database.insert_position(bot=tf, symbol=symbol)
+                database.insert_position(database.conn, bot=tf, symbol=symbol)
             else:
             # if exist update rank
-                rank = database.get_rank_from_symbols_by_market_phase_by_symbol(symbol)
-                database.set_rank_from_positions(symbol=symbol, rank=rank)
+                rank = database.get_rank_from_symbols_by_market_phase_by_symbol(database.conn, symbol)
+                database.set_rank_from_positions(database.conn, symbol=symbol, rank=rank)
         
         # mark as calc completed
-        database.set_symbols_to_calc_completed(symbol=symbol)
+        database.set_symbols_to_calc_completed(database.conn, symbol=symbol)
 
 if __name__ == "__main__":
     main()
