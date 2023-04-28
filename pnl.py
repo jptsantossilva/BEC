@@ -24,8 +24,7 @@ st.set_page_config(
     }
 )
 
-st.session_state
-
+# st.session_state
 
 # im using to find which bots are running
 def find_file_paths(filename):
