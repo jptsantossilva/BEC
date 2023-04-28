@@ -11,7 +11,7 @@ Follow the last updates from the change log [here](https://github.com/jptsantoss
 Check [here](https://github.com/jptsantossilva/Binance-Trading-bot-EMA-Cross/blob/main/Prod/coinpairBestEma%20Full%20List.csv) the returns in % using last 4 years of backtest data. Results from 9th january 2023.
 
 ## Features
-- Runs 1D, 4H and 1H timeframes independently.
+- Runs 1D, 4H and 1H time frames.
 - Trade against stables pairs (BUSD or USDT) or against BTC.
 - Automatically chooses, on a daily basis, trading coins that are in accumulation phase (price close>DSMA200>DSMA50) and bullish phase (price close>DSMA50>DSMA200).
 - For those trading coins in accumulation and bullish phases, calculates EMA cross combination (with [backtesting python library](https://kernc.github.io/backtesting.py)) with highest returns for 1D, 4H and 1H timeframes. 4-years of historicals prices are used in backtesting. 
