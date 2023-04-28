@@ -12,10 +12,9 @@ def connect(path: str = ""):
 
 # change connection on Dashboard
 def connect_to_bot(folder_name: str):
-    #Connects to an SQLite database file located in a child folder of the parent folder.
+    #Connects to an SQLite database file located in a child folder of the grandparent folder.
     grandparent_folder = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
     child_folder = os.path.join(grandparent_folder, folder_name)
-    # file_path = os.path.join(child_folder, "data.db")
     return connect(child_folder)
 
 def get_users_credentials(connection):
