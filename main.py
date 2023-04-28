@@ -330,7 +330,7 @@ def positions_summary():
     # df_cp_to_print.rename(columns={"Currency": "Symbol", "Close": "Price", }, inplace=True)
     df_sorted.reset_index(drop=True, inplace=True) # gives consecutive numbers to each row
     if df_sorted.empty:
-        print("Result: no open positions yet")
+        print("Result: no open positions")
         telegram.send_telegram_message(telegram_token, "", "Result: no open positions")
     else:
         print(df_sorted)
