@@ -12,11 +12,6 @@ import config
 import exchange
 import streamlit_authenticator as stauth
 
-if "authentication_status" not in st.session_state:
-        st.session_state["authentication_status"] = None
-
-# st.session_state
-
 st.set_page_config(
     page_title="Bot Dashboard App",
     page_icon="random",
@@ -28,6 +23,9 @@ st.set_page_config(
         'About': "# I am a Trading Bot \nI do not have a name yet but I'm trying to be an *extremely* cool app!"
     }
 )
+
+st.session_state
+
 
 # im using to find which bots are running
 def find_file_paths(filename):
@@ -56,12 +54,6 @@ def get_bot_names(paths):
         bot_names.append(os.path.basename(os.path.normpath(path)))
     
     return bot_names
-    
-def set_database_connection(bot):
-    # get the current working directory
-    cwd = os.getcwd()
-    file_path = os.path.join(cwd, '..', bot)    
-    database.set_connection(file_path)
     
 def get_trade_against(bot):
 
@@ -94,18 +86,17 @@ def get_trade_against(bot):
         # sys.exit(msg)
 
 def show_main_page():
-
+    
     paths = find_file_paths('data.db')
     bot_names = get_bot_names(paths)
 
     #sidebar with available bots
     with st.sidebar:
-        bot_selected = st.radio(
-            "Choose Bot:",
-            (bot_names)
-            )
+        bot_selected = st.radio("Choose Bot:",(bot_names))
 
-    set_database_connection(bot_selected)
+    global connection
+    connection = database.connect_to_bot(bot_selected)
+    
     trade_against = get_trade_against(bot_selected)
     
     global num_decimals
@@ -268,7 +259,7 @@ def show_main_page():
             # get balance
             balance_qty = exchange.get_symbol_balance(symbol_only, sell_bot)  
             # verify sell quantity
-            df_pos = database.get_positions_by_bot_symbol_position(bot=sell_bot, symbol=sell_symbol, position=1)
+            df_pos = database.get_positions_by_bot_symbol_position(connection, bot=sell_bot, symbol=sell_symbol, position=1)
             if not df_pos.empty:
                 buy_order_qty = df_pos['Qty'].iloc[0]
             
@@ -287,7 +278,7 @@ def show_main_page():
     #----------------------
 
     tab_top_perf.subheader(f"Top {config.trade_top_performance} Performers")
-    df_mp = database.get_all_symbols_by_market_phase()
+    df_mp = database.get_all_symbols_by_market_phase(connection)
     df_mp['Price'] = df_mp['Price'].apply(lambda x:f'{{:.{num_decimals}f}}'.format(x))
     df_mp['DSMA50'] = df_mp['DSMA50'].apply(lambda x:f'{{:.{num_decimals}f}}'.format(x))
     df_mp['DSMA200'] = df_mp['DSMA200'].apply(lambda x:f'{{:.{num_decimals}f}}'.format(x))
@@ -299,17 +290,17 @@ def show_main_page():
     #----------------------
 
     tab_blacklist.subheader("Blacklist")
-    df_blacklist = database.get_symbol_blacklist()
+    df_blacklist = database.get_symbol_blacklist(connection)
     edited_blacklist = tab_blacklist.experimental_data_editor(df_blacklist, num_rows="dynamic")
     blacklist_apply_changes = tab_blacklist.button("Save")
 
     if blacklist_apply_changes:
-        edited_blacklist.to_sql(name='Blacklist',con=database.connection, index=True, if_exists="replace")
+        edited_blacklist.to_sql(name='Blacklist',con=connection, index=True, if_exists="replace")
         tab_blacklist.success("Blacklist changes saved")
 
 
     tab_best_ema.subheader("Best EMA")
-    df_bema = database.get_all_best_ema()
+    df_bema = database.get_all_best_ema(connection)
     tab_best_ema.dataframe(df_bema)
 
 
@@ -320,8 +311,10 @@ def reset_password():
             if authenticator.reset_password(st.session_state.username, 'Reset password'):
                 st.success('Password modified successfully')
                 new_passw = authenticator.credentials['usernames'][st.session_state.username]['password']
-                database.update_user_password(username=st.session_state.username, password=new_passw)
-                # time.sleep(5)  # pause for 5 seconds
+                database.update_user_password(connection, username=st.session_state.username, password=new_passw)
+            else:
+                new_passw = authenticator.credentials['usernames'][st.session_state.username]['password']
+
         except Exception as e:
             st.error(e)
 
@@ -347,13 +340,13 @@ def forgot_password():
 
 # Get years from orders
 def get_years(bot):
-    years = database.get_years_from_orders()
+    years = database.get_years_from_orders(connection)
     return years
 
 # get months with orders within the year
 def get_orders_by_month(year, bot):
 
-    months = database.get_months_from_orders_by_year(year)
+    months = database.get_months_from_orders_by_year(connection, year)
 
     month_dict = {}
     for month in months:
@@ -377,9 +370,9 @@ def calculate_realized_pnl(year, month):
     print('---------------------')
     
     
-    df_month_1d = database.get_orders_by_bot_side_year_month(bot="1d", side="SELL", year=year, month=str(month))
-    df_month_4h = database.get_orders_by_bot_side_year_month(bot="4h", side="SELL", year=year, month=str(month))
-    df_month_1h = database.get_orders_by_bot_side_year_month(bot="1h", side="SELL", year=year, month=str(month))
+    df_month_1d = database.get_orders_by_bot_side_year_month(connection, bot="1d", side="SELL", year=year, month=str(month))
+    df_month_4h = database.get_orders_by_bot_side_year_month(connection, bot="4h", side="SELL", year=year, month=str(month))
+    df_month_1h = database.get_orders_by_bot_side_year_month(connection, bot="1h", side="SELL", year=year, month=str(month))
     
     print('')              
     print(df_month_1d)
@@ -429,9 +422,9 @@ def calculate_unrealized_pnl():
 
     # results_df = pd.DataFrame(columns=['bot','pnl_%','pnl_value','positions'])
 
-    df_positions_1d = database.get_unrealized_pnl_by_bot(bot="1d")
-    df_positions_4h = database.get_unrealized_pnl_by_bot(bot="4h")
-    df_positions_1h = database.get_unrealized_pnl_by_bot(bot="1h")
+    df_positions_1d = database.get_unrealized_pnl_by_bot(connection, bot="1d")
+    df_positions_4h = database.get_unrealized_pnl_by_bot(connection, bot="4h")
+    df_positions_1h = database.get_unrealized_pnl_by_bot(connection, bot="1h")
 
     print('')              
     
@@ -494,9 +487,12 @@ def last_row_bold(row):
     return ['']*len(row)
 
 def show_login_page():
+
     # connect to database
-    database.connect()
-    df_users = database.get_all_users()
+    global connection
+    connection = database.connect()
+
+    df_users = database.get_all_users(connection)
     # Convert the DataFrame to a dictionary
     credentials = df_users.to_dict('index')
     formatted_credentials = {'usernames': {}}
@@ -512,11 +508,10 @@ def show_login_page():
         credentials=formatted_credentials,
         cookie_name="dashboard_cookie_name",
         key="dashboard_cookie_key",
-        cookie_expiry_days=0
+        cookie_expiry_days=30
     )
 
     name, authentication_status, username = authenticator.login('Login', 'main')
-
     st.session_state.name = name
     st.session_state.username = username
 
@@ -530,14 +525,20 @@ def show_login_page():
     elif authentication_status == None:
         st.warning('Please enter your username and password')
 
-
-# st.session_state
+    # if st.session_state["authentication_status"]:
+    #     authenticator.logout('Logout', 'main')
+    #     st.write(f'Welcome *{st.session_state["name"]}*')
+    #     st.title('Some content')
+    # elif st.session_state["authentication_status"] is False:
+    #     st.error('Username/password is incorrect')
+    # elif st.session_state["authentication_status"] is None:
+    #     st.warning('Please enter your username and password')
 
 show_login_page()
 
 
-# Close the database connection
-# database.connection.close()
+
+
 
 
 
