@@ -366,7 +366,7 @@ def main():
     telegram.send_telegram_message(telegram_token, "", msg)
 
     # inform that bot has finished
-    telegram.send_telegram_message(telegram_token, telegram.EMOJI_STOP, "Binance Trader Bot - End")
+    telegram.send_telegram_message(telegram_token, telegram.EMOJI_STOP, "End")
 
 if __name__ == "__main__":
     main()
