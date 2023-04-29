@@ -205,7 +205,7 @@ def get_orders_by_bot_side_year_month(connection, bot: str, side: str, year: str
         df = pd.DataFrame(columns=['Bot', 'Symbol', 'Date', 'Qty', 'PnL_Perc', 'PnL_Value'])
         return df
     
-    if month == 13:
+    if month == '13':
         year_month = str(year)+"-%"
     else:
         year_month = str(year)+"-"+str(month)+"-%"
