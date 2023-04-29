@@ -197,6 +197,9 @@ sql_get_orders_by_bot_side_year_month = """
         AND Date LIKE ?;
 """
 def get_orders_by_bot_side_year_month(connection, bot: str, side: str, year: str, month: str):
+    # add a leading zero if necessary
+    month = month.zfill(2)
+
     if year == None:
         df = pd.DataFrame(columns=['Bot', 'Date', 'Qty', 'PnL_Perc', 'PnL_Value'])
         return df
@@ -381,7 +384,7 @@ def update_position_pnl (connection, bot: str, symbol: str, curr_price: float):
         datetime_now = datetime.now()
         
         duration = None
-        if date != None:
+        if date != 'None':
             datetime_open_position = datetime.strptime(date, '%Y-%m-%d %H:%M:%S.%f')
             diff_seconds = int((datetime_now - datetime_open_position).total_seconds())
             duration = str(calc_duration(diff_seconds))
