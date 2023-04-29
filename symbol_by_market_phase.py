@@ -228,7 +228,7 @@ else:
     database.delete_all_positions_not_open(database.conn)
 
 # Close the database connection
-database.connection.close()
+database.conn.close()
 
 # inform that ended
 telegram.send_telegram_message(telegram.telegram_token_market_phases, telegram.EMOJI_STOP, "End")
