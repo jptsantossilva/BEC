@@ -8,7 +8,7 @@ import streamlit_authenticator as stauth
 
 def connect(path: str = ""):
     file_path = os.path.join(path, "data.db")
-    return sqlite3.connect(file_path)
+    return sqlite3.connect(file_path, check_same_thread=False)
 
 # change connection on Dashboard
 def connect_to_bot(folder_name: str):
@@ -143,7 +143,7 @@ def add_order_sell(connection, exchange_order_id: str, date: str, bot: str, symb
         pnl_perc = 0
         pnl_value = 0
     else:
-        buy_order_id = df_last_buy_order.loc[0, 'Id']
+        buy_order_id = str(df_last_buy_order.loc[0, 'Id'])
         buy_price = float(df_last_buy_order.loc[0, 'Price'])
         buy_qty = float(df_last_buy_order.loc[0, 'Qty'])
 
