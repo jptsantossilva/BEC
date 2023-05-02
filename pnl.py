@@ -53,14 +53,12 @@ def get_bot_names(paths):
         bot_names.append(os.path.basename(os.path.normpath(path)))
     
     return bot_names
-    
-def get_trade_against(bot):
+
+def get_trade_against():
 
     # get settings from config file
     try:
-        # get the current working directory
-        cwd = os.getcwd()
-        file_path = os.path.join(cwd, '..', bot, 'config.yaml')
+        file_path = 'config.yaml'
         with open(file_path, "r") as file:
             config = yaml.safe_load(file)
 
@@ -86,21 +84,27 @@ def get_trade_against(bot):
 
 def show_main_page():
     
-    paths = find_file_paths('data.db')
-    bot_names = get_bot_names(paths)
+    # paths = find_file_paths('data.db')
+    # bot_names = get_bot_names(paths)
 
     #sidebar with available bots
-    with st.sidebar:
-        bot_selected = st.radio("Choose Bot:",(bot_names))
+    # with st.sidebar:
+    #     bot_selected = st.radio("Choose Bot:",(bot_names))
 
-    global connection
-    connection = database.connect_to_bot(bot_selected)
+    # global connection
+    # connection = database.connect_to_bot(bot_selected)
     
-    trade_against = get_trade_against(bot_selected)
-    
+    # trade_against = get_trade_against(bot_selected)
+    trade_against = get_trade_against()
+
     global num_decimals
     num_decimals = 8 if trade_against == "BTC" else 2  
 
+    # Get the current directory
+    current_dir = os.getcwd()
+    # Get the parent directory
+    parent_dir = os.path.basename(current_dir)
+    bot_selected = parent_dir
     st.caption(f'**{bot_selected}** - {trade_against}')
 
     tab_upnl, tab_rpnl, tab_top_perf, tab_blacklist, tab_best_ema = st.tabs(["Unrealized PnL", "Realized PnL", "Top Performers", "Blacklist", "Best EMA"])
@@ -253,22 +257,9 @@ def show_main_page():
     if sell_confirmation1:
         sell_confirmation2 = sell_expander.button("SELL")
         if sell_confirmation2:
-            # sell
-            symbol_only, symbol_stable = exchange.separate_symbol_and_trade_against(sell_symbol)
-            # get balance
-            balance_qty = exchange.get_symbol_balance(symbol_only, sell_bot)  
-            # verify sell quantity
-            df_pos = database.get_positions_by_bot_symbol_position(connection, bot=sell_bot, symbol=sell_symbol, position=1)
-            if not df_pos.empty:
-                buy_order_qty = df_pos['Qty'].iloc[0]
-            
-            sell_qty = buy_order_qty
-            if balance_qty < buy_order_qty:
-                sell_qty = balance_qty
-            sell_qty = exchange.adjust_size(sell_symbol, sell_qty)
             exchange.create_sell_order(symbol=sell_symbol,
-                                    bot=sell_bot,
-                                    reason=sell_reason) 
+                                       bot=sell_bot,
+                                       reason=sell_reason) 
 
             sell_expander.success(f"{sell_symbol} SOLD!")
             time.sleep(3)
