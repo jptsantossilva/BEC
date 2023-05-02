@@ -124,7 +124,7 @@ def calc_stake_amount(symbol, bot):
     else:
         return 0
 
-def create_buy_order(symbol, bot, fast_ema, slow_ema):
+def create_buy_order(symbol: str, bot: str, fast_ema: int, slow_ema: int):
     telegram_token = telegram.get_telegram_token(bot)
 
     try:
@@ -151,6 +151,8 @@ def create_buy_order(symbol, bot, fast_ema, slow_ema):
                                       qty=float(order['executedQty']),
                                       buy_price=avg_price,
                                       date=str(pd.to_datetime(order['transactTime'], unit='ms')),
+                                      ema_fast = fast_ema,
+                                      ema_slow = slow_ema,
                                       buy_order_id=str(order['orderId']))
                 
             database.add_order_buy(database.conn,
