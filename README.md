@@ -8,7 +8,7 @@ EMA-Cross fully automatic trading bot for Binance Spot with Telegram integration
 Follow the last updates from the change log [here](https://github.com/jptsantossilva/BEC/blob/main/CHANGELOG.md)
 
 ## Backtest results
-Check [here](https://github.com/jptsantossilva/BEC/blob/main/Prod/coinpairBestEma%20Full%20List.csv) the returns in % using last 4 years of backtest data. Results from 9th january 2023.
+Check [here](https://github.com/jptsantossilva/BEC/blob/main/coinpairBestEma%20Full%20List.csv) the returns in % using last 4 years of backtest data. Results from 9th january 2023.
 
 ## Features
 - Runs 1D, 4H and 1H time frames.
