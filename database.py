@@ -401,18 +401,22 @@ sql_set_position_buy = """
         Buy_Price = ?,
         Curr_Price = ?,
         Date = ?,
+        Ema_Fast = ?,
+        Ema_Slow = ?,
         Buy_Order_Id = ?
     WHERE
         Bot = ? 
         AND Symbol = ? ;        
 """
-def set_position_buy(connection, bot: str, symbol: str, qty: float, buy_price: float, date: str, buy_order_id: str):
+def set_position_buy(connection, bot: str, symbol: str, qty: float, buy_price: float, date: str, ema_fast: int, ema_slow: int, buy_order_id: str):
     curr_price = buy_price    
     with connection:
         connection.execute(sql_set_position_buy, (qty, 
                                                   buy_price, 
                                                   curr_price, 
-                                                  date, 
+                                                  date,
+                                                  ema_fast,
+                                                  ema_slow, 
                                                   buy_order_id, 
                                                   bot, 
                                                   symbol))
@@ -427,7 +431,9 @@ sql_set_position_sell = """
         PnL_Perc = 0,
         PnL_Value = 0,
         Duration = 0,
-        Date = NULL
+        Date = NULL,
+        Ema_Fast = NULL,
+        Ema_Slow = NULL
     WHERE
         Bot = ? 
         AND Symbol = ? ;        
