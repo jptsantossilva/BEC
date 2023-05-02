@@ -210,6 +210,8 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = ''):
         df_pos = database.get_positions_by_bot_symbol_position(database.conn, bot=bot, symbol=symbol, position=1)
         if not df_pos.empty:
             buy_order_qty = df_pos['Qty'].iloc[0]
+        else:
+            buy_order_qty = 0
         
         sell_qty = buy_order_qty
         if balance_qty < buy_order_qty:
