@@ -673,11 +673,13 @@ def delete_all_symbols_by_market_phase(connection):
         connection.execute(sql_delete_all_symbols_by_market_phase)
 
 sql_get_distinct_symbol_by_market_phase_and_positions = """  
-SELECT DISTINCT symbol FROM (
-    SELECT symbol FROM Symbols_By_Market_Phase
-    UNION
-    SELECT symbol FROM Positions WHERE Position=1
-) AS symbols;
+    SELECT DISTINCT symbol 
+    FROM (
+        SELECT symbol, Rank FROM Symbols_By_Market_Phase
+        UNION
+        SELECT symbol, 100 as Rank FROM Positions WHERE Position=1
+    ) AS symbols
+    ORDER BY Rank ASC;
 """
 def get_distinct_symbol_by_market_phase_and_positions(connection):
     return pd.read_sql(sql_get_distinct_symbol_by_market_phase_and_positions, connection)
