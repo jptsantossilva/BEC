@@ -65,18 +65,30 @@ def read_arguments():
         run_mode = sys.argv[2]
 
     if time_frame == "1h":
+        if not config.bot_1h:
+            msg = f"Bot {time_frame} is inactive. Check Config file. Bye"
+            sys.exit(msg)
+            
         time_frame_num = int("1")
         time_frame_type_short = "h" # h, d
         time_frame_type_long = "hour" # hour, day
         telegram_token = telegram.telegram_token_1h
 
     elif time_frame == "4h":
+        if not config.bot_4h:
+            msg = f"Bot {time_frame} is inactive. Check Config file. Bye"
+            sys.exit(msg)
+        
         time_frame_num = int("4")
         time_frame_type_short = "h" # h, d
         time_frame_type_long = "hour" # hour, day
         telegram_token = telegram.telegram_token_4h
 
     elif time_frame == "1d":
+        if not config.bot_1d:
+            msg = f"Bot {time_frame} is inactive. Check Config file. Bye"
+            sys.exit(msg)
+            
         time_frame_num = int("1")
         time_frame_type_short = "d" # h, d
         time_frame_type_long = "day" # hour, day
@@ -84,54 +96,6 @@ def read_arguments():
     else:
         msg = "Incorrect time frame. Bye"
         sys.exit(msg)
-
-def calc_stake_amount(symbol):
-    if config.stake_amount_type == "unlimited":
-        num_open_positions = database.get_num_open_positions(database.conn)
-
-        if num_open_positions >= config.max_number_of_open_positions:
-            return -2 
-
-        try:
-            balance = float(exchange.client.get_asset_balance(asset = symbol)['free'])
-            
-        except BinanceAPIException as e:
-            msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
-            print(msg)
-            logging.exception(msg)
-            telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
-            return 0
-        except Exception as e:
-            msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
-            print(msg)
-            logging.exception(msg)
-            telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
-            return 0
-    
-        tradable_balance = balance*config.tradable_balance_ratio 
-        
-        stake_amount = tradable_balance/(config.max_number_of_open_positions-num_open_positions)
-        
-        if symbol == "BTC":
-            stake_amount = round(stake_amount, 8)
-        elif symbol in ("BUSD", "USDT"):
-            stake_amount = int(stake_amount)
-        
-        # make sure the size is >= the minimum size
-        if stake_amount < config.min_position_size:
-            stake_amount = config.min_position_size
-
-        # make sure there are enough funds otherwise abort the buy position
-        if balance < stake_amount:
-            stake_amount = 0
-
-        return stake_amount
-    
-    elif int(config.stake_amount_type) >= 0:
-        return config.stake_amount_type
-    else:
-        return 0
-    
 
 def get_data(symbol, time_frame_num, time_frame_type_short):
 

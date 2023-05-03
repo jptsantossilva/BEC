@@ -27,7 +27,7 @@ st.set_page_config(
 # st.session_state
 
 # im using to find which bots are running
-def find_file_paths(filename):
+def find_file_paths(filename: str):
     
     # get the current working directory
     cwd = os.getcwd()
@@ -47,12 +47,12 @@ def find_file_paths(filename):
 
     return file_paths
 
-def get_bot_names(paths):
-    bot_names = []
-    for path in paths:
-        bot_names.append(os.path.basename(os.path.normpath(path)))
+# def get_bot_names(paths):
+#     bot_names = []
+#     for path in paths:
+#         bot_names.append(os.path.basename(os.path.normpath(path)))
     
-    return bot_names
+#     return bot_names
 
 def get_trade_against():
 
@@ -70,16 +70,12 @@ def get_trade_against():
         msg = "Error: The file config.yaml could not be found."
         msg = msg + " " + sys._getframe(  ).f_code.co_name+" - "+repr(e)
         print(msg)
-        # logging.exception(msg)
-        # telegram.send_telegram_message(telegram.telegramToken_errors, telegram.EMOJI_WARNING, msg)
         # sys.exit(msg) 
 
     except yaml.YAMLError as e:
         msg = "Error: There was an issue with the YAML file."
         msg = msg + " " + sys._getframe(  ).f_code.co_name+" - "+repr(e)
         print(msg)
-        # logging.exception(msg)
-        # telegram.send_telegram_message(telegram.telegramToken_errors, telegram.EMOJI_WARNING, msg)
         # sys.exit(msg)
 
 def show_main_page():
@@ -107,7 +103,8 @@ def show_main_page():
     bot_selected = parent_dir
     st.caption(f'**{bot_selected}** - {trade_against}')
 
-    tab_upnl, tab_rpnl, tab_top_perf, tab_blacklist, tab_best_ema = st.tabs(["Unrealized PnL", "Realized PnL", "Top Performers", "Blacklist", "Best EMA"])
+    global tab_settings
+    tab_upnl, tab_rpnl, tab_top_perf, tab_blacklist, tab_best_ema, tab_settings = st.tabs(["Unrealized PnL", "Realized PnL", "Top Performers", "Blacklist", "Best EMA", "Settings"])
 
     # get years
     years = get_years(bot_selected)
@@ -123,7 +120,8 @@ def show_main_page():
         (years)
     )
     # get months
-    months_dict = get_orders_by_month(year, bot_selected)
+    # months_dict = get_orders_by_month(year, bot_selected)
+    months_dict = get_orders_by_month(year)
     month_names = list(months_dict.values())
 
     # months selectbox
@@ -142,7 +140,7 @@ def show_main_page():
     if col2.checkbox('Full Year', disabled=disable_full_year):
         month_number = 13
 
-    result_closed_positions, trades_month_1d, trades_month_4h, trades_month_1h = calculate_realized_pnl(year, month_number)
+    result_closed_positions, trades_month_1d, trades_month_4h, trades_month_1h = calculate_realized_pnl(str(year), str(month_number))
     print("\nPnL - Total")
     # apply the lambda function to make the last row bold
     # result_closed_positions = result_closed_positions.apply(lambda x: ['font-weight: bold' if i == len(x)-1 else '' for i in range(len(x))], axis=1)
@@ -293,6 +291,169 @@ def show_main_page():
     df_bema = database.get_all_best_ema(connection)
     tab_best_ema.dataframe(df_bema)
 
+    manage_config()
+
+def check_open_positions(bot: str):
+    num = database.get_num_open_positions_by_bot(connection=connection, bot=bot)
+    if num > 0:
+        msg = f"There are {num} open position on Bot_{bot}. If you turn the bot OFF this positions will remain open. Make sure you close them."
+        st.warning(msg) 
+
+def manage_config():
+
+    try:
+        # Read the YAML file
+        with open('config.yaml', 'r') as f:
+            config = yaml.safe_load(f)
+    except FileNotFoundError:
+        st.warning('Config file not found!')
+        st.stop()
+
+    # Create Streamlit widgets for each configuration option
+    col1_cfg, col2_cfg, col3_cfg = tab_settings.columns(3)
+    if tab_settings: 
+        with col1_cfg:
+            try:
+                prev_bot_1d = config['bot_1d']
+                bot_1d = st.checkbox(label='Bot 1D', value=prev_bot_1d,
+                                     help="""Turn the Bot ON or OFF""")
+                # Check if the value of bot has changed
+                if prev_bot_1d and not bot_1d:
+                    check_open_positions("1d")
+            except KeyError:
+                st.warning('Invalid or missing configuration: Bot 1D')
+                st.stop()
+            try:
+                prev_bot_4h = config['bot_4h']
+                bot_4h = st.checkbox(label='Bot 4H', value=prev_bot_4h,
+                                     help="""Turn the Bot ON or OFF""")
+                # Check if the value of bot has changed
+                if prev_bot_4h and not bot_4h:
+                    check_open_positions("4h")
+            except KeyError:
+                st.warning('Invalid or missing configuration: Bot 4h')
+                st.stop()
+            try:
+                prev_bot_1h = config['bot_1h']
+                bot_1h = st.checkbox(label='Bot 1h', value=config['bot_1h'],
+                                    help="""Turn the Bot ON or OFF""")
+                # Check if the value of bot has changed
+                if prev_bot_1h and not bot_1h:
+                    check_open_positions("1h")
+            except KeyError:
+                st.warning('Invalid or missing configuration: Bot 1h')
+                st.stop()
+            try:
+                stake_amount_type = st.selectbox('Stake Amount Type', ['unlimited'], 
+                                                help="""Stake_amount is the amount of stake the bot will use for each trade. 
+                                                    \nIf stake_amount = "unlimited" the increasing/decreasing of stakes will depend on the performance of the bot. Lower stakes if the bot is losing, higher stakes if the bot has a winning record since higher balances are available and will result in profit compounding.
+                                                    \nIf stake amount = static number, that is the amount per trade
+                                                """)
+            except KeyError:
+                st.warning('Invalid or missing configuration: stake_amount_type')
+                st.stop()
+            try:
+                max_number_of_open_positions = st.number_input(label="Max Number of Open Positions", 
+                                                            min_value=1,
+                                                            value=int(config['max_number_of_open_positions']),
+                                                            max_value=50,
+                                                            step=1,
+                                                            help="""
+                                                            If tradable balance = 1000 and max_number_of_open_positions = 10, the stake_amount = 1000/10 = 100
+                                                            """)
+            except KeyError:
+                st.warning('Invalid or missing configuration: max_number_of_open_positions')
+                st.stop()
+            try:
+                tradable_balance_ratio = st.slider(label='Tradable Balance Ratio', 
+                                                min_value=0.0, 
+                                                max_value=1.0, 
+                                                value=float(config['tradable_balance_ratio']), 
+                                                step=0.01,
+                                                help="""Tradable percentage of the balance
+                                                """)
+            except KeyError:
+                st.warning('Invalid or missing configuration: tradable_balance_ratio')
+                st.stop()
+            try:
+                trade_against = st.selectbox('Trade Against', ['BUSD', 'USDT', 'BTC'], index=['BUSD', 'USDT', 'BTC'].index(config['trade_against']),
+                                            help="""Trade against BUSD, USDT or BTC
+                                            """)
+            except KeyError:
+                st.warning('Invalid or missing configuration: trade_against')
+                st.stop()
+            try:
+                if trade_against in ["BUSD","USDT"]:
+                    trade_min_val = 0
+                    trade_step = 1
+                    trade_format = None
+                    if int(config['min_position_size']) < 20:
+                        trade_min_pos_size = 20
+                    else:
+                        trade_min_pos_size = int(config['min_position_size'])
+                elif trade_against == "BTC":
+                    trade_min_val = 0.0
+                    trade_step = 0.0001
+                    trade_format = "%.4f"
+                    if float(config['min_position_size']) > 0.0001:
+                        trade_min_pos_size = 0.0001
+                    else:
+                        trade_min_pos_size = float(config['min_position_size'])
+
+                min_position_size = st.number_input(label='Minimum Position Size', 
+                                                    min_value=trade_min_val, 
+                                                    value=trade_min_pos_size, 
+                                                    step=trade_step,
+                                                    format=trade_format,
+                                                    help="""If trade_against = BUSD or USDT => min_position_size = 20
+                                                        \nIf trade_against = BTC => min_position_size = 0.001
+                                                    """)
+            except KeyError:
+                st.warning('Invalid or missing configuration: min_position_size')
+                st.stop()
+            try:
+                trade_top_performance = st.slider('Trade Top Performance Coins', 1, 50, config['trade_top_performance'],
+                                                help="""
+                                                    Trade top X performance coins                                              
+                                                """)
+            except KeyError:
+                st.warning('Invalid or missing configuration: trade_top_performance')
+                st.stop()
+            try:
+                stop_loss = st.number_input(label='Stop Loss %', 
+                                            min_value=0.0, 
+                                            value=float(config['stop_loss']), 
+                                            step=0.01,
+                                            help="""Set stop loss to automatically sell if its price falls below a certain percentage.
+                                                \nExamples:
+                                                \n stop_loss = 0 => will not use stop loss. The stop loss used will be triggered when slow_ema > fast_ema
+                                                \n stop_loss = 10 => 10%   
+                                            """)
+            except KeyError:
+                st.warning('Invalid or missing configuration: stop_loss')
+                st.stop()
+
+    # Update the configuration dictionary with the modified values
+    config['stake_amount_type'] = stake_amount_type
+    config['max_number_of_open_positions'] = max_number_of_open_positions
+    config['tradable_balance_ratio'] = tradable_balance_ratio
+    config['min_position_size'] = min_position_size
+    config['trade_top_performance'] = trade_top_performance
+    config['trade_against'] = trade_against
+    config['stop_loss'] = stop_loss
+    config['bot_1d'] = bot_1d
+    config['bot_4h'] = bot_4h
+    config['bot_1h'] = bot_1h
+
+    # Write the modified configuration dictionary back to the YAML file
+    try:
+        with open('config.yaml', 'w') as f:
+            yaml.dump(config, f)
+    except PermissionError:
+        st.warning('Permission denied: could not write to config file!')
+        st.stop()
+
+    
 
 def reset_password():
     # if authentication_status:
@@ -334,7 +495,7 @@ def get_years(bot):
     return years
 
 # get months with orders within the year
-def get_orders_by_month(year, bot):
+def get_orders_by_month(year: str):
 
     months = database.get_months_from_orders_by_year(connection, year)
 
@@ -348,10 +509,10 @@ def get_orders_by_month(year, bot):
 def get_year_month(date):
     return date.year, date.month
 
-def calculate_realized_pnl(year, month):
+def calculate_realized_pnl(year: str, month: str):
 
     print(f'Year = {year}')
-    if month == 13:
+    if month == '13':
         print(f'Month = ALL')
     else:
         print(f'Month = {month}')
@@ -360,9 +521,9 @@ def calculate_realized_pnl(year, month):
     print('---------------------')
     
     
-    df_month_1d = database.get_orders_by_bot_side_year_month(connection, bot="1d", side="SELL", year=year, month=str(month))
-    df_month_4h = database.get_orders_by_bot_side_year_month(connection, bot="4h", side="SELL", year=year, month=str(month))
-    df_month_1h = database.get_orders_by_bot_side_year_month(connection, bot="1h", side="SELL", year=year, month=str(month))
+    df_month_1d = database.get_orders_by_bot_side_year_month(connection, bot="1d", side="SELL", year=year, month=month)
+    df_month_4h = database.get_orders_by_bot_side_year_month(connection, bot="4h", side="SELL", year=year, month=month)
+    df_month_1h = database.get_orders_by_bot_side_year_month(connection, bot="1h", side="SELL", year=year, month=month)
     
     print('')              
     print(df_month_1d)

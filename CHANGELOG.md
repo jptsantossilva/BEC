@@ -2,6 +2,15 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2023-05-03]
+ 
+### Added
+- Dashboard - Settings tab to adjust bot settings
+### Changed
+- 
+### Fixed
+- 
+
 ## [2023-04-18]
  
 ### Added

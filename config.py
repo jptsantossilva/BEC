@@ -26,7 +26,16 @@ def get_setting(setting_name):
         with open("config.yaml", "r") as file:
             config = yaml.safe_load(file)
 
-        setting_value = config[setting_name]
+        # Check if a variable exists in the dictionary
+        if setting_name in config:
+            setting_value = config[setting_name]
+        else:
+            # if variable not exists add it to the dictionary
+            if setting_name in ["bot_1d","bot_4h","bot_1h"]:
+                setting_value = True
+                config[setting_name] = setting_value
+            with open("config.yaml", "w") as f:
+                yaml.dump(config, f)
 
         return setting_value
 
@@ -65,7 +74,9 @@ def get_env_var(var_name):
 
 def get_all_settings():
         
-    global stake_amount_type, max_number_of_open_positions, tradable_balance_ratio, min_position_size, trade_against, stop_loss, trade_top_performance
+    global stake_amount_type, max_number_of_open_positions, tradable_balance_ratio, min_position_size 
+    global trade_against, stop_loss, trade_top_performance
+    global bot_1d, bot_4h, bot_1h
 
     # get settings from config file
     stake_amount_type            = get_setting("stake_amount_type")
@@ -75,6 +86,9 @@ def get_all_settings():
     trade_against                = get_setting("trade_against")
     stop_loss                    = get_setting("stop_loss")
     trade_top_performance        = get_setting("trade_top_performance")
+    bot_1d                       = get_setting("bot_1d")
+    bot_4h                       = get_setting("bot_4h")
+    bot_1h                       = get_setting("bot_1h")
 
     global n_decimals
     if trade_against == "BTC":

@@ -457,6 +457,10 @@ def delete_all_positions_not_open(connection):
     with connection:
         connection.execute(sql_delete_all_positions_not_open)
 
+sql_total_value = """
+    SELECT SUM(Curr_Price*Qty) as Total_Value({})
+"""
+
 # BLACKLIST
 sql_create_blacklist_table = """
     CREATE TABLE IF NOT EXISTS Blacklist (
