@@ -653,7 +653,7 @@ def show_login_page():
         formatted_credentials['usernames'][username] = user_info
 
     global authenticator
-    st.title(f'Dashboard')
+    st.title(f'BEC Dashboard')
 
     authenticator = stauth.Authenticate(
         credentials=formatted_credentials,
