@@ -80,7 +80,7 @@ def get_trade_against():
         # sys.exit(msg)
 
 def get_chart_total_balance_usd_last_30_days():
-    expander_total_balances_30_days = st.expander("Total Balance Last 30 Days")
+    expander_total_balances_30_days = st.expander(label="Total Balance Last 30 Days", expanded=True)
     with expander_total_balances_30_days:
         source = database.get_total_balance_usd_last_30_days(connection)
         hover = alt.selection_single(
@@ -90,7 +90,9 @@ def get_chart_total_balance_usd_last_30_days():
             empty="none",
         )
         lines = (
-            alt.Chart(source, title="Total Balance USD Last 30 Days")
+            alt.Chart(source, 
+                    #   title="Total Balance USD Last 30 Days"
+                      )
             .mark_line()
             .encode(
                 x="Date",
@@ -122,7 +124,7 @@ def get_chart_total_balance_usd_last_30_days():
 
 
 def get_chart_30_days():
-    expander_balances_30_days = st.expander("Asset Balances Last 30 Days")
+    expander_balances_30_days = st.expander(label="Asset Balances Last 30 Days", expanded=True)
     with expander_balances_30_days:
         source = database.get_balances_last_30_days(connection)
         hover = alt.selection_single(
@@ -133,7 +135,9 @@ def get_chart_30_days():
         )
 
         lines = (
-            alt.Chart(source, title="Asset Balances Last 30 Days")
+            alt.Chart(source, 
+                    #   title="Asset Balances Last 30 Days"
+                      )
             .mark_line()
             .encode(
                 x="Date",
