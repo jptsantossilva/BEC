@@ -5,19 +5,12 @@ All notable changes to this project will be documented in this file.
 ## [2023-05-05]
  
 ### Added
+- Dashboard - user login
+- Dashboard - blacklist grid editable
 - Dashboard - Settings tab to adjust bot settings
 - Dashboard - Charts  - Assets balances and Total USD balance 
 ### Changed
 - 
-### Fixed
-- 
-
-## [2023-04-18]
- 
-### Added
-- Dashboard - user login
-### Changed
-- Dashboard - blacklist grid editable
 ### Fixed
 - 
 
