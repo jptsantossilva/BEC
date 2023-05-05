@@ -2,10 +2,11 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
-## [2023-05-03]
+## [2023-05-05]
  
 ### Added
 - Dashboard - Settings tab to adjust bot settings
+- Dashboard - Charts  - Assets balances and Total USD balance 
 ### Changed
 - 
 ### Fixed

@@ -131,14 +131,13 @@ def get_data(symbol, time_frame_num, time_frame_type_short):
         sma200 = 200
         # lstartDate = str(sma200*aTimeframeNum)+" "+lTimeframeTypeLong+" ago UTC" 
         # time_frame = str(time_frame_num)+time_frame_type_short
-        frame = pd.DataFrame(exchange.client.get_historical_klines(symbol
-                                                        ,time_frame    
-                                                        # better get all historical data. 
-                                                        # Using a defined start date will affect ema values. 
-                                                        # To get same ema and sma values of tradingview all historical data must be used. 
-                                                        # ,lstartDate
-                                                        
-                                                        ))
+        frame = pd.DataFrame(exchange.client.get_historical_klines(symbol,
+                                                                   time_frame    
+                                                                   # better get all historical data. 
+                                                                   # Using a defined start date will affect ema values. 
+                                                                   # To get same ema and sma values of tradingview all historical data must be used. 
+                                                                   # ,lstartDate)
+                                                                   ))
 
         frame = frame[[0,4]]
         frame.columns = ['Time','Close']

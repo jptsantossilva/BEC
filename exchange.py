@@ -7,6 +7,8 @@ import logging
 import telegram
 import database
 import pandas as pd
+from datetime import datetime, date, timedelta
+from dateutil.relativedelta import relativedelta
 
 client: Client = None
 
@@ -286,4 +288,41 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = ''):
         msg = "create_sell_order - "+repr(e)
         print(msg)
         telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
+
+def get_price_close_by_symbol_and_date(symbol: str, date: date):
+    try:
+        # Convert date to timestamp
+        # start_date_str = date.strftime('%Y-%m-%d')
+        timestamp = int(datetime.timestamp(date))
+        start_date = str(timestamp)
+
+        end_date = date + timedelta(days=1)
+        # end_date_str = date.strftime('%Y-%m-%d')
+        timestamp = int(datetime.timestamp(end_date))
+        end_date = str(timestamp)
+
+        # Get historical klines for symbol on date
+        df = pd.DataFrame(client.get_historical_klines(symbol=symbol,
+                                                       interval=Client.KLINE_INTERVAL_1DAY,
+                                                       start_str=start_date,
+                                                       end_str=end_date
+                                                       ))
+
+        if df.empty:
+            return float(0)
+
+        df = df[[0,4]]
+        df.columns = ['Time','Close']
+        df.Close = df.Close.astype(float)
+        df.Time = pd.to_datetime(df.Time, unit='ms')
+
+        # Return closing price
+        return float(df['Close'][0])
+    except BinanceAPIException as e:
+        print(f"Binance API exception occurred: {e} - {symbol} - {date}")
+        return float(0)
+    except Exception as e:
+        print(f"An unexpected error occurred: {e} - {symbol} - {date}")
+        return float(0)
+
 

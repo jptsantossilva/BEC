@@ -731,6 +731,58 @@ def update_user_password(connection, username: str, password: int):
     with connection:
         connection.execute(sql_set_rank_from_positions, (password, username,))
 
+# Balances
+sql_create_balances_table = """
+    CREATE TABLE IF NOT EXISTS Balances (
+    Date TEXT,
+    Asset TEXT,
+    Balance REAL,
+    Balance_USD REAL,
+    Total_Balance_Of_BTC REAL,
+    PRIMARY KEY (Date, Asset)
+);
+"""
+
+sql_add_balances = """
+    INSERT OR IGNORE INTO Balances (Date, Asset, Balance, Balance_USD, Total_Balance_Of_BTC) VALUES (?, ?, ?, ?, ?);
+"""
+def add_balances(connection, balances: pd.DataFrame):
+    # convert dataframe to a list of tuples
+    data = list(balances.to_records(index=False))
+    for row in data:
+        with connection:
+            connection.execute(sql_add_balances, row)
+    
+sql_get_balances_last_30_days = """  
+    SELECT Date, Asset, ROUND(Balance_USD, 2) as Balance_USD
+    FROM Balances
+    WHERE date(Date) >= date('now', '-30 days')
+    AND Balance_USD > 1;
+"""
+def get_balances_last_30_days(connection):
+    return pd.read_sql(sql_get_balances_last_30_days, connection)
+
+sql_get_total_balance_usd_last_30_days = """
+    SELECT Date, ROUND(SUM(Balance_USD), 2) as Total_Balance_USD
+    FROM Balances
+    WHERE Date >= date('now', '-30 days')
+    GROUP BY Date
+"""
+def get_total_balance_usd_last_30_days(connection):
+    return pd.read_sql(sql_get_total_balance_usd_last_30_days, connection)
+
+sql_get_last_date_from_balances="""
+    SELECT Date FROM Balances ORDER BY Date DESC LIMIT 1;
+"""
+def get_last_date_from_balances(connection):
+    df = pd.read_sql(sql_get_last_date_from_balances, connection)
+    if df.empty:
+        result = '0'
+    else:
+        result = str(df.iloc[0, 0])
+    return result
+
+
 # create tables
 def create_tables(connection):
     with connection:
@@ -740,10 +792,13 @@ def create_tables(connection):
         connection.execute(sql_create_best_ema_table)
         connection.execute(sql_create_symbols_to_calc_table)
         connection.execute(sql_create_symbols_by_market_phase_table)
+        # users
         connection.execute(sql_create_users_table)
         default_admin_password = "admin"
         hashed_password = stauth.Hasher([default_admin_password]).generate()
         connection.execute(sql_users_add_admin, ("admin", "admin@admin.com", "admin", hashed_password[0]))
+        # balances
+        connection.execute(sql_create_balances_table)
     
 # convert 123456 seconds to 1d 2h 3m 4s format    
 def calc_duration(seconds):

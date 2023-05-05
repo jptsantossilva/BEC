@@ -11,6 +11,7 @@ import calendar
 import config
 import exchange
 import streamlit_authenticator as stauth
+import altair as alt
 
 st.set_page_config(
     page_title="Bot Dashboard App",
@@ -78,6 +79,92 @@ def get_trade_against():
         print(msg)
         # sys.exit(msg)
 
+def get_chart_total_balance_usd_last_30_days():
+    expander_total_balances_30_days = st.expander("Total Balance Last 30 Days")
+    with expander_total_balances_30_days:
+        source = database.get_total_balance_usd_last_30_days(connection)
+        hover = alt.selection_single(
+            fields=["Date"],
+            nearest=True,
+            on="mouseover",
+            empty="none",
+        )
+        lines = (
+            alt.Chart(source, title="Total Balance USD Last 30 Days")
+            .mark_line()
+            .encode(
+                x="Date",
+                y="Total_Balance_USD",
+                # color="Total_Balance_USD",
+            )
+        )
+
+        # Draw points on the line, and highlight based on selection
+        points = lines.transform_filter(hover).mark_circle(size=70)
+
+        # Draw a rule at the location of the selection
+        tooltips = (
+            alt.Chart(source)
+            .mark_rule()
+            .encode(
+                x="Date",
+                y="Total_Balance_USD",
+                opacity=alt.condition(hover, alt.value(0.3), alt.value(0)),
+                tooltip=[
+                    alt.Tooltip("Date", title="Date"),
+                    alt.Tooltip("Total_Balance_USD", title="Total_Balance_USD"),
+                ],
+            )
+            .add_selection(hover)
+        )
+        chart = (lines + points + tooltips).interactive()
+        st.altair_chart(chart, use_container_width=True)
+
+
+def get_chart_30_days():
+    expander_balances_30_days = st.expander("Asset Balances Last 30 Days")
+    with expander_balances_30_days:
+        source = database.get_balances_last_30_days(connection)
+        hover = alt.selection_single(
+            fields=["Date"],
+            nearest=True,
+            on="mouseover",
+            empty="none",
+        )
+
+        lines = (
+            alt.Chart(source, title="Asset Balances Last 30 Days")
+            .mark_line()
+            .encode(
+                x="Date",
+                y="Balance_USD",
+                color="Asset",
+            )
+        )
+
+        # Draw points on the line, and highlight based on selection
+        points = lines.transform_filter(hover).mark_circle(size=70)
+
+        # Draw a rule at the location of the selection
+        tooltips = (
+            alt.Chart(source)
+            .mark_rule()
+            .encode(
+                x="Date",
+                y="Balance_USD",
+                opacity=alt.condition(hover, alt.value(0.3), alt.value(0)),
+                tooltip=[
+                    alt.Tooltip("Date", title="Date"),
+                    alt.Tooltip("Asset", title="Asset"),
+                    alt.Tooltip("Balance_USD", title="Balance_USD"),
+                ],
+            )
+            .add_selection(hover)
+        )
+        # chart = (lines + points + tooltips).properties(height=800).interactive()
+        chart = (lines + points + tooltips).interactive()
+        st.altair_chart(chart, use_container_width=True)
+
 def show_main_page():
     
     # paths = find_file_paths('data.db')
@@ -102,6 +189,9 @@ def show_main_page():
     parent_dir = os.path.basename(current_dir)
     bot_selected = parent_dir
     st.caption(f'**{bot_selected}** - {trade_against}')
+
+    get_chart_total_balance_usd_last_30_days()
+    get_chart_30_days()
 
     global tab_settings
     tab_upnl, tab_rpnl, tab_top_perf, tab_blacklist, tab_best_ema, tab_settings = st.tabs(["Unrealized PnL", "Realized PnL", "Top Performers", "Blacklist", "Best EMA", "Settings"])
