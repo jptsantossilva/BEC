@@ -72,7 +72,7 @@ for s in exchange_info['symbols']:
 symbols -= blacklist
 
 symbols = sorted(symbols)
-msg = str(len(symbols))+" symbols found. Calculating..."
+msg = str(len(symbols))+" symbols found. Calculating market phases..."
 print(msg)
 telegram.send_telegram_message(telegram.telegram_token_market_phases, "", msg)
 
@@ -115,7 +115,7 @@ def get_data(symbol):
         return frame 
 
 def create_balance_snapshot():
-    msg = "Creating balance snapshot"
+    msg = "Creating balance snapshot..."
     print(msg)
     telegram.send_telegram_message(telegram.telegram_token_market_phases, "", msg)
 
