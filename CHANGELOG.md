@@ -10,7 +10,7 @@ All notable changes to this project will be documented in this file.
 - Dashboard - Settings tab to adjust bot settings
 - Dashboard - Charts  - Assets balances and Total USD balance 
 ### Changed
-- 
+- Web dashboard - web dashboard no longer supports multiple bots with different trading pairs. Instead, each bot/trading pair now has its own dashboard.  
 ### Fixed
 - 
 
