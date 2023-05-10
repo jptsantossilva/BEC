@@ -1,29 +1,26 @@
 """
-SUPER-RSI
+Bollinger-Bands Width
 
 The strategy roughly goes like this:
 
 send alerts when:
-    RSI 1d / 4h / 1h / 30m / 15m <= 25
-    RSI 1d / 4h / 1h / 30m / 15m >= 80
+
+
 """
 
+# import os
 import sys
 import pandas as pd
 import datetime
 from datetime import date
 from dateutil.relativedelta import relativedelta
 import time
-
+import utils.telegram as telegram
+import docs.database.database as database
+import utils.exchange as exchange
 import ta
 
-import utils.telegram as telegram
-import utils.database as database 
-import utils.exchange as exchange
-
-
 def get_data(Symbol, time_frame, start_date):
-    print(f"{Symbol} - getting data...")
     df = pd.DataFrame(exchange.client.get_historical_klines(Symbol,
                                                             time_frame,
                                                             start_date
@@ -67,7 +64,6 @@ def super_rsi(symbol):
     rsi_1h = 14
     rsi_30m = 14
     rsi_15m = 14
-
     rsi_low = 25
     rsi_high = 80
 
@@ -96,7 +92,7 @@ def super_rsi(symbol):
         # print(msg) 
         # telegram.send_telegram_message(telegram.telegram_token_main,'', msg)
     
-    # result_low = True # tests
+    result_low = True
     if not result_low and not result_high:
         return  # Exit the function
     
@@ -128,7 +124,7 @@ def super_rsi(symbol):
             # print(msg) 
             # telegram.send_telegram_message(telegram.telegram_token_main,'', msg)
         
-        # result_low = True # tests
+        result_low = True
         if not result_low and not result_high:
             return  # Exit the function
         
@@ -154,7 +150,7 @@ def super_rsi(symbol):
             # print(msg) 
             # telegram.send_telegram_message(telegram.telegram_token_main,'', msg)
         
-        # result_low = True # tests
+        result_low = True
         if not result_low and not result_high:
             return  # Exit the function
     
@@ -163,84 +159,73 @@ def super_rsi(symbol):
         apply_technicals(df_4h, rsi_4h)
         
         value = round(df_4h['rsi'].iloc[-2],1)
-        result_low_4h = value <= rsi_low
-        result_high_4h = value >= rsi_high
+        result_low = value <= rsi_low
+        result_high = value >= rsi_high
         
         msg_4h = f"{symbol} - RSI({rsi_4h}) 4H = {value}"
         print(msg_4h)
         telegram.send_telegram_message(telegram.telegram_token_main,'', msg_4h)
          
-        if not result_low_4h:
+        if not result_low:
             msg = f"{symbol} - RSI({rsi_4h}) 4H ≤ {rsi_low} - condition not fulfilled"
             # print(msg) 
             # telegram.send_telegram_message(telegram.telegram_token_main,'', msg)
 
-        if not result_high_4h:
+        if not result_high:
             msg = f"{symbol} - RSI({rsi_4h}) 4H ≥ {rsi_high} - condition not fulfilled"
             # print(msg) 
             # telegram.send_telegram_message(telegram.telegram_token_main,'', msg)
 
-        # result_low_4h = True # tests
-        if not result_low_4h and not result_high_4h:
+        result_low = True
+        if not result_low and not result_high:
             return  # Exit the function
         
-    if result_low_4h or result_high_4h:
+    if result_low or result_high:
         df_1d = df_15m.resample('D').last()
         apply_technicals(df_1d, rsi_1d)
         
         value = round(df_1d['rsi'].iloc[-2],1)
-        result_low_1d = value <= rsi_low
-        result_high_1d = value >= rsi_high
+        result_low = value <= rsi_low
+        result_high = value >= rsi_high
         
         msg_1d = f"{symbol} - RSI({rsi_1d}) 1D = {value}"
         print(msg_1d)
         telegram.send_telegram_message(telegram.telegram_token_main,'', msg_1d)
          
-        if not result_low_1d:
+        if not result_low:
             msg = f"{symbol} - RSI({rsi_1d}) 1D ≤ {rsi_low} - condition not fulfilled"
             # print(msg) 
             # telegram.send_telegram_message(telegram.telegram_token_main,'', msg)
         
-        if not result_high_1d:
+        if not result_high:
             msg = f"{symbol} - RSI({rsi_1d}) 1D ≥ {rsi_high} - condition not fulfilled"
             # print(msg) 
             # telegram.send_telegram_message(telegram.telegram_token_main,'', msg)
 
-        # result_low_1d = True # tests
-        # if not result_low_1d and not result_high_1d:
-        #     return  # Exit the function
+        result_low = True
+        if not result_low and not result_high:
+            return  # Exit the function
 
     # if rsi is below min level or above max level in all timeframes we have a super rsi alert!
-    if result_low_4h or result_high_4h or result_low_1d or result_high_1d:
+    if result_low or result_high:
         # get current date and time
         now = datetime.datetime.now()
         # format the current date and time
         formatted_now = now.strftime("%Y-%m-%d %H:%M:%S")
 
-        msg = f"SUPER-RSI alert!\n{formatted_now}\n{symbol}\n{msg_15m}\n{msg_30m}\n{msg_1h}\n{msg_4h}"
-        if result_high_1d or result_low_1d:
-            msg = msg + f"\n{msg_1d}"        
+        msg = f"SUPER-RSI alert!\n{formatted_now}\n{symbol}\n{msg_15m}\n{msg_30m}\n{msg_1h}\n{msg_4h}\n{msg_1d}"
         
-        if result_low_4h or result_low_1d:
-            add_note = "Consider Buying"
-            msg = msg + f"\nNote: {add_note}"
+        if result_low:
             telegram.send_telegram_message(telegram.telegram_token_signals,telegram.EMOJI_ENTER_TRADE, msg)
-            if result_low_1d:
-                signal_message = f"RSI(14) 1d,4h,1h,30m,15m < {rsi_low}"
-            else:
-                signal_message = f"RSI(14) 4h,1h,30m,15m < {rsi_low}"
-            
-        elif result_high_4h or result_high_1d:
-            add_note = "Consider Selling"
-            msg = msg + f"\nNote: {add_note}"
+            signal_message = f"RSI(14) 1d,4h,1h,30m,15m < {rsi_low}"
+            notes = "Consider Buying"
+        elif result_high:
             telegram.send_telegram_message(telegram.telegram_token_signals, telegram.EMOJI_EXIT_TRADE, msg)
-            if result_high_1d:
-                signal_message = f"RSI(14) 1d,4h,1h,30m,15m > {rsi_high}"
-            else:
-                signal_message = f"RSI(14) 4h,1h,30m,15m > {rsi_high}"
+            signal_message = f"RSI(14) 1d,4h,1h,30m,15m > {rsi_high}"
+            notes = "Consider Selling"
 
         # add signal to database
-        database.add_signal_log(database.conn, date=now, signal="Super-RSI", signal_message=signal_message, symbol=symbol, notes=add_note)
+        database.add_signal_log(database.conn, date=now, signal="Super-RSI", signal_message=signal_message, symbol=symbol, notes=notes)
 
 def run():
     # msg = 'SUPER-RSI - Start'
