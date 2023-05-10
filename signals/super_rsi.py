@@ -84,6 +84,7 @@ def super_rsi(symbol):
     result_high = value >= rsi_high
 
     msg_15m = f"{symbol} - RSI({rsi_15m}) 15m = {value}"
+    msg_15m = telegram.telegram_prefix_signals_sl + msg_15m
     print(msg_15m)
     telegram.send_telegram_message(telegram.telegram_token_main, '', msg_15m)
     
@@ -115,6 +116,7 @@ def super_rsi(symbol):
             result_high = value >= rsi_high
         
         msg_30m = f"{symbol} - RSI({rsi_30m}) 30m = {value}"
+        msg_30m = telegram.telegram_prefix_signals_sl + msg_30m
         print(msg_30m)
         telegram.send_telegram_message(telegram.telegram_token_main,'', msg_30m)
 
@@ -141,6 +143,7 @@ def super_rsi(symbol):
         result_high = value >= rsi_high
         
         msg_1h = f"{symbol} - RSI({rsi_1h}) 1H = {value}"
+        msg_1h = telegram.telegram_prefix_signals_sl + msg_1h
         print(msg_1h)
         telegram.send_telegram_message(telegram.telegram_token_main,'', msg_1h)
         
@@ -167,6 +170,7 @@ def super_rsi(symbol):
         result_high_4h = value >= rsi_high
         
         msg_4h = f"{symbol} - RSI({rsi_4h}) 4H = {value}"
+        msg_4h = telegram.telegram_prefix_signals_sl + msg_4h
         print(msg_4h)
         telegram.send_telegram_message(telegram.telegram_token_main,'', msg_4h)
          
@@ -193,6 +197,7 @@ def super_rsi(symbol):
         result_high_1d = value >= rsi_high
         
         msg_1d = f"{symbol} - RSI({rsi_1d}) 1D = {value}"
+        msg_1d = telegram.telegram_prefix_signals_sl + msg_1d
         print(msg_1d)
         telegram.send_telegram_message(telegram.telegram_token_main,'', msg_1d)
          
@@ -224,6 +229,7 @@ def super_rsi(symbol):
         if result_low_4h or result_low_1d:
             add_note = "Consider Buying"
             msg = msg + f"\nNote: {add_note}"
+            msg = telegram.telegram_prefix_signals_sl + msg
             telegram.send_telegram_message(telegram.telegram_token_signals,telegram.EMOJI_ENTER_TRADE, msg)
             if result_low_1d:
                 signal_message = f"RSI(14) 1d,4h,1h,30m,15m < {rsi_low}"
@@ -233,6 +239,7 @@ def super_rsi(symbol):
         elif result_high_4h or result_high_1d:
             add_note = "Consider Selling"
             msg = msg + f"\nNote: {add_note}"
+            msg = telegram.telegram_prefix_signals_sl + msg
             telegram.send_telegram_message(telegram.telegram_token_signals, telegram.EMOJI_EXIT_TRADE, msg)
             if result_high_1d:
                 signal_message = f"RSI(14) 1d,4h,1h,30m,15m > {rsi_high}"
