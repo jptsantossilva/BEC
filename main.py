@@ -326,7 +326,7 @@ def positions_summary():
         telegram.send_telegram_message(telegram_token, "", msg)
 
 
-def main():
+def run():
     read_arguments()
 
     # inform that bot has started
@@ -357,10 +357,10 @@ def main():
     msg = "End"
     msg = telegram_prefix_sl + msg
     print(msg)
-    telegram.send_telegram_message(telegram_token, telegram.EMOJI_STOP, "End")
+    telegram.send_telegram_message(telegram_token, telegram.EMOJI_STOP, msg)
 
 if __name__ == "__main__":
-    main()
+    run()
 
 
 
