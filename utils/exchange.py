@@ -172,7 +172,11 @@ def create_buy_order(symbol: str, bot: str, fast_ema: int, slow_ema: int):
                                     
             strategy_name = str(fast_ema)+"/"+str(slow_ema)+" EMA cross"
 
-            telegram.send_telegram_alert(telegram_token, telegram.EMOJI_ENTER_TRADE,
+            telegram_prefix = telegram.get_telegram_prefix(bot)
+
+            telegram.send_telegram_alert(telegram_token, 
+                                         telegram_prefix,
+                                         telegram.EMOJI_ENTER_TRADE,
                                          pd.to_datetime(order['transactTime'], unit='ms'),
                                          order['symbol'], 
                                          bot, 
@@ -259,8 +263,11 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = ''):
 
             strategy_name = str(fast_ema)+"/"+str(slow_ema)+" EMA cross"
 
+            telegram_prefix = telegram.get_telegram_prefix(bot)
+
             # call send_telegram_alert with the appropriate alert type
-            telegram.send_telegram_alert(telegram_token, 
+            telegram.send_telegram_alert(telegram_token,
+                                         telegram_prefix,
                                          alert_type,
                                          pd.to_datetime(order['transactTime'], unit='ms'), 
                                          order['symbol'], 
