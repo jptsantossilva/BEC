@@ -1,8 +1,10 @@
 import sys
 import yaml
-import telegram
 import os
+
 import pandas as pd
+
+from utils import telegram
 
 # sets the output display precision in terms of decimal places to 8.
 # this is helpful when trading against BTC. The value in the dataframe has the precision 8 but when we display it 

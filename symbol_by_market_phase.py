@@ -1,27 +1,29 @@
-import config
 import pandas as pd
 from datetime import datetime
 import numpy as np
 import sys
 import timeit
-import add_symbol
-import telegram
 import logging
-import database
-# from exchange import client, get_exchange_info, create_balance_snapshot
-import exchange
+
+import utils.config as config
+import utils.database as database
+import utils.exchange as exchange
+import utils.telegram as telegram
+import add_symbol
 
 # calculate program run time
 start = timeit.default_timer() 
 
 # inform start
-telegram.send_telegram_message(telegram.telegram_token_market_phases, telegram.EMOJI_START, "Start")
+msg = "Start"
+msg = telegram.telegram_prefix_market_phases_sl + msg
+print(msg)
+telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_START, msg)
 
 # log file to store error messages
 log_filename = "symbol_by_market_phase.log"
 logging.basicConfig(filename=log_filename, level=logging.INFO,
                     format='%(asctime)s %(message)s', datefmt='%Y-%m-%d %I:%M:%S %p -')
-
 
 # Arguments
 n = len(sys.argv)
@@ -74,8 +76,9 @@ symbols -= blacklist
 
 symbols = sorted(symbols)
 msg = str(len(symbols))+" symbols found. Calculating market phases..."
+msg = telegram.telegram_prefix_market_phases_sl + msg
 print(msg)
-telegram.send_telegram_message(telegram.telegram_token_market_phases, "", msg)
+telegram.send_telegram_message(telegram.telegram_token_main, "", msg)
 
 def apply_technicals(df):
         df['DSMA50'] = df['Price'].rolling(50).mean()
@@ -108,8 +111,9 @@ def get_data(symbol):
         return frame
     except Exception as e:
         msg = sys._getframe(  ).f_code.co_name+" - "+symbol+" - "+repr(e)
+        msg = telegram.telegram_prefix_market_phases_sl + msg
         print(msg)
-        telegram.send_telegram_message(telegram.telegram_token_market_phases, telegram.EMOJI_WARNING, msg)
+        telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_WARNING, msg)
 
         # return empty dataframe
         frame = pd.DataFrame()
@@ -183,11 +187,14 @@ df_top_print = df_top_print.reset_index(drop=True)
 df_top_print.index += 1
 
 msg = f"Top {str(config.trade_top_performance)} performance coins:"
+msg = telegram.telegram_prefix_market_phases_sl + msg
 print(msg)
-print(df_top_print.to_string(index=True))
+telegram.send_telegram_message(telegram.telegram_token_main, "", msg)
 
-telegram.send_telegram_message(telegram.telegram_token_market_phases, "", msg)
-telegram.send_telegram_message(telegram.telegram_token_market_phases, "", df_top_print.to_string(index=True))
+msg = df_top_print.to_string(index=True)
+msg = telegram.telegram_prefix_market_phases_ml + msg
+print(msg)
+telegram.send_telegram_message(telegram.telegram_token_main, "", msg)
 
 # create file to import to TradingView with the list of top performers and symbols in position 
 df_tv_list = database.get_distinct_symbol_by_market_phase_and_positions(database.conn)
@@ -197,12 +204,13 @@ df_tv_list['symbol'] = "BINANCE:"+df_tv_list['symbol']
 filename = "Top_performers_"+trade_against+".txt" 
 df_tv_list.to_csv(filename, header=False, index=False)
 msg = "TradingView List:"
-telegram.send_telegram_message(telegram.telegram_token_market_phases, "", msg)
-telegram.send_telegram_file(telegram.telegram_token_market_phases, filename)
+msg = telegram.telegram_prefix_market_phases_sl + msg
+telegram.send_telegram_message(telegram.telegram_token_main, "", msg)
+telegram.send_telegram_file(telegram.telegram_token_main, filename)
 #---------------------------------------------
 
 # save each symbol balance to database to be used on dashboard charts
-exchange.create_balance_snapshot()
+exchange.create_balance_snapshot(telegram.telegram_prefix_market_phases_sl)
 
 if not df_top.empty:
     # remove coins from position files that are not top performers in accumulation or bullish phase
@@ -221,7 +229,7 @@ if not df_top.empty:
     database.add_symbols_top_rank_to_calc(database.conn)
 
     # calc best ema for each symbol on 1d, 4h and 1h time frame and save on positions table
-    add_symbol.main()    
+    add_symbol.run()    
 
 else:
 
@@ -231,17 +239,21 @@ else:
 # Close the database connection
 database.conn.close()
 
-# inform that ended
-telegram.send_telegram_message(telegram.telegram_token_market_phases, telegram.EMOJI_STOP, "End")
-
 # calculate execution time
 stop = timeit.default_timer()
 total_seconds = stop - start
-
 duration = database.calc_duration(total_seconds)
-
 msg = f'Execution Time: {duration}'
+msg = telegram.telegram_prefix_market_phases_sl + msg
 print(msg)
-telegram.send_telegram_message(telegram.telegram_token_market_phases, "", msg)
+telegram.send_telegram_message(telegram.telegram_token_main, "", msg)
+
+# inform that ended
+msg = "End"
+msg = telegram.telegram_prefix_market_phases_sl + msg
+print(msg)
+telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_STOP, msg)
+
+
 
 

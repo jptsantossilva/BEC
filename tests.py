@@ -1,110 +1,119 @@
-# %%
-import pandas as pd
-import sqlite3
 import os
-import datetime
-
-def connect(path: str = ""):
-    file_path = os.path.join(path, "data.db")
-    return sqlite3.connect(file_path)
-
-conn = connect()
-
-n_decimals = 8
+from binance.client import Client
+from datetime import datetime, timedelta
+import utils.config as config
+import pandas as pd
+import docs.database.database as database
+import exchange.exchange as exchange
 
 
-sql_get_last_buy_order_by_bot_symbol = """
-    SELECT * FROM Orders
-    WHERE 
-        Side = 'BUY' 
-        AND Bot = ?
-        AND Symbol = ?
-    ORDER BY Id DESC LIMIT 1;
-"""
-def get_last_buy_order_by_bot_symbol(connection, bot: str, symbol: str):
-    return pd.read_sql(sql_get_last_buy_order_by_bot_symbol, connection, params=(bot, symbol,))
+client: Client = None
 
-sql_add_order_sell = """
-    INSERT INTO Orders (
-        Exchange_Order_Id,
-        Date,
-        Bot,
-        Symbol,
-        Side,
-        Price,
-        Qty,
-        Ema_Fast,
-        Ema_Slow,
-        PnL_Perc,
-        PnL_Value,
-        Buy_Order_Id,
-        Exit_Reason)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?);        
-"""
-def add_order_sell(connection, exchange_order_id: str, date: str, bot: str, symbol: str, price: float, qty: float, ema_fast: int, ema_slow: int, exit_reason: str):
-    df_last_buy_order = get_last_buy_order_by_bot_symbol(connection, bot, symbol)
+def connect():
+    api_key = config.get_env_var('binance_api')
+    api_secret = config.get_env_var('binance_secret')
 
-    if df_last_buy_order.empty:
-        print("DataFrame is empty")
-        buy_order_id = ''
-        buy_price = 0
-        buy_qty = 0
-        pnl_perc = 0
-        pnl_value = 0
+    # Binance Client
+    try:
+        global client
+        client = Client(api_key, api_secret)
+    except Exception as e:
+            msg = "Error connecting to Binance. "+ repr(e)
+            print(msg)
+            # logging.exception(msg)
+            # telegram.send_telegram_message(telegram.telegram_token_errors, telegram.EMOJI_WARNING, msg)
+            # sys.exit(msg) 
+
+connect()
+
+
+# Set start and end date for daily account snapshots
+# start_date = datetime.now() - timedelta(days=10) # 30 days ago
+# end_date = datetime.now() # today
+
+
+
+def create_account_snapshot():
+
+    last_date = database.get_last_date_from_balances(database.conn)
+    if last_date == '0':
+         today = datetime.now()
+         start_date = today - timedelta(days=30)
     else:
-        buy_order_id = str(df_last_buy_order.loc[0, 'Id'])
-        buy_price = float(df_last_buy_order.loc[0, 'Price'])
-        buy_qty = float(df_last_buy_order.loc[0, 'Qty'])
+         start_date = datetime.strptime(last_date, '%Y-%m-%d')        
 
-        sell_price = price
-        sell_qty = qty
+    snapshots = client.get_account_snapshot(type="SPOT",
+                                            startTime=int(start_date.timestamp()*1000), 
+                                            # endTime=int(end_date.timestamp()*1000)
+                                            limit=30 #max                                        
+                                            )
 
-        pnl_perc = (((sell_price*sell_qty)-(buy_price*buy_qty))/(buy_price*buy_qty))*100
-        pnl_perc = float(round(pnl_perc, 2))
-        pnl_value = (sell_price*sell_qty)-(buy_price*buy_qty)
-        pnl_value = float(round(pnl_value, n_decimals))
-  
-    side = "SELL"
+    code = snapshots['code']
+    msg = snapshots['msg']
 
-    with connection:
-        connection.execute(sql_add_order_sell, (exchange_order_id, 
-                                                date, 
-                                                bot, 
-                                                symbol, 
-                                                side, 
-                                                price, 
-                                                qty, 
-                                                ema_fast, 
-                                                ema_slow, 
-                                                pnl_perc, 
-                                                pnl_value, 
-                                                buy_order_id, 
-                                                exit_reason))
-        return float(pnl_value), float(pnl_perc)
+    # get list of available symbols. 
+    # This is usefull to avoid getting price from symbol that do not trade against stable
+    exchange_info = exchange.get_exchange_info()
+    symbols = set()
+    trade_against = "BUSD"
+    for s in exchange_info['symbols']:
+        if (s['symbol'].endswith(trade_against)
+            and s['status'] == 'TRADING'):
+                symbols.add(s['symbol']) 
 
-# %%
-# add to orders database table
-orderId = "123"
-current_time = datetime.datetime.now()
-transactTime = str(pd.to_datetime(current_time.timestamp() * 1000, unit='ms'))
-bot="1d"
-symbol="TOMOBTC"
-avg_price=2.87e-05
-executedQty=71.6
-fast_ema=45
-slow_ema=120
-reason="testes"
+    # Create a Pandas DataFrame to store the daily balances for each asset
+    df_balance = pd.DataFrame()
+
+    # Iterate through the snapshots and get the daily balance for each asset
+    for snapshot in snapshots['snapshotVos']:
+        if snapshot['type'] == 'spot' and snapshot['data'] is not None:
+            snapshot_date = datetime.fromtimestamp(snapshot['updateTime']/1000).date()
+            totalAssetOfBtc = snapshot['data']['totalAssetOfBtc']
+            for balance in snapshot['data']['balances']:
+                asset = balance['asset']
+                daily_balance = float(balance['free'])
+
+                print(f"{snapshot_date}-{asset}")
+                
+                # ignore if balance = 0
+                if daily_balance == 0.0:
+                    continue
+
+                symbol_with_trade_against = asset+trade_against
+
+                if asset in [trade_against]:
+                     balance_usd = daily_balance
+                elif symbol_with_trade_against not in symbols:
+                     print(f"{asset} not in available symbols")
+                     balance_usd = 0
+                else:
+                    # convert snapshot_date from date to datetime
+                    date = datetime.combine(snapshot_date, datetime.min.time())
+                    unit_price = exchange.get_price_close_by_symbol_and_date(symbol_with_trade_against, date)
+                    balance_usd = unit_price * daily_balance
+
+                df_new = pd.DataFrame({
+                    'Date': [snapshot_date],
+                    'Asset': [asset],
+                    'Balance': [daily_balance],
+                    'Balance_USD': [balance_usd],
+                    'Total_Balance_Of_BTC': [totalAssetOfBtc]
+                    })
+                # add to total
+                df_balance = pd.concat([df_balance, df_new], ignore_index=True)
+
+    # Print the daily balances for each asset
+    # print(df_balance)
+
+    # add data to table Balance
+    database.add_balances(database.conn, df_balance)
 
 
-pnl_value, pnl_perc = add_order_sell(conn,
-                                                exchange_order_id = str(orderId),
-                                                date = str(transactTime),
-                                                bot = bot,
-                                                symbol = symbol,
-                                                price = avg_price,
-                                                qty = float(executedQty),
-                                                ema_fast = fast_ema,
-                                                ema_slow = slow_ema,
-                                                exit_reason = reason) 
+create_account_snapshot()
 
+# symbol = "BTCUSDT"
+# date = datetime(2023, 5, 2)
 
+# price = exchange.get_price_close_by_symbol_and_date(symbol, date)
+# print(price)
+    

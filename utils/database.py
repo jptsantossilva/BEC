@@ -3,12 +3,23 @@ import os
 import math
 from datetime import datetime
 import pandas as pd
-import config
+
 import streamlit_authenticator as stauth
 
+from utils import config
+
 def connect(path: str = ""):
-    file_path = os.path.join(path, "data.db")
-    return sqlite3.connect(file_path, check_same_thread=False)
+    conn = None
+    
+    try:
+        file_path = os.path.join(path, "data.db")
+        conn = sqlite3.connect(file_path, check_same_thread=False)
+        # create tables if not exist
+        create_tables(conn)
+    except sqlite3.Error as e:
+        print(e)
+
+    return conn
 
 # change connection on Dashboard
 def connect_to_bot(folder_name: str):
@@ -243,6 +254,15 @@ def insert_position(connection, bot: str, symbol: str):
     rank = get_rank_from_symbols_by_market_phase_by_symbol(connection, symbol)
     with connection:
         connection.execute(sql_insert_position, (bot, symbol, rank))
+
+sql_get_positions_by_position = """
+    SELECT *
+    FROM Positions 
+    WHERE 
+        Position = ?
+"""
+def get_positions_by_position(connection, position):
+    return pd.read_sql(sql_get_positions_by_position, connection, params=(position,))
   
 sql_get_positions_by_bot_position = """
     SELECT *
@@ -782,6 +802,32 @@ def get_last_date_from_balances(connection):
         result = str(df.iloc[0, 0])
     return result
 
+# SIGNALS LOG
+sql_create_signals_log_table ="""
+    CREATE TABLE IF NOT EXISTS Signals_Log (
+    Date TEXT NOT NULL,
+    Signal TEXT NOT NULL,
+    Signal_Message TEXT,
+    Symbol TEXT NOT NULL,
+    Notes TEXT
+);
+"""
+sql_get_all_signals_log = """
+    SELECT *
+    FROM Signals_Log
+    ORDER BY Date DESC LIMIT ?;
+"""
+def get_all_signals_log(connection, num_rows):
+    return pd.read_sql(sql_get_all_signals_log, connection, params=(num_rows,))
+
+sql_add_signal_log = """
+    INSERT INTO Signals_Log (Date, Signal, Signal_Message, Symbol, Notes) VALUES (?, ?, ?, ?, ?);
+"""
+def add_signal_log(connection, date: datetime, signal: str, signal_message: str, symbol: str, notes: str):
+    # format the current date and time
+    date_formatted = date.strftime("%Y-%m-%d %H:%M:%S")
+    with connection:
+        connection.execute(sql_add_signal_log, (date_formatted, signal, signal_message, symbol, notes))
 
 # create tables
 def create_tables(connection):
@@ -799,6 +845,8 @@ def create_tables(connection):
         connection.execute(sql_users_add_admin, ("admin", "admin@admin.com", "admin", hashed_password[0]))
         # balances
         connection.execute(sql_create_balances_table)
+        # signals log
+        connection.execute(sql_create_signals_log_table)
     
 # convert 123456 seconds to 1d 2h 3m 4s format    
 def calc_duration(seconds):
@@ -826,8 +874,7 @@ def calc_duration(seconds):
 
 conn = connect()
 
-# make sure all tables are created
-create_tables(conn)
+
 
 
     

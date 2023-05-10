@@ -5,11 +5,11 @@ import sys
 from datetime import date
 from dateutil.relativedelta import relativedelta
 import time
-import telegram
+import utils.telegram as telegram
 import logging
 import timeit
-import database
-from exchange import client
+import utils.database as database
+from utils.exchange import client
 
 # sets the output display precision in terms of decimal places to 8.
 # this is helpful when trading against BTC. The value in the dataframe has the precision 8 but when we display it 
@@ -110,8 +110,9 @@ def get_data(pSymbol, pTimeframe):
         return frame
     except Exception as e:
         msg = sys._getframe(  ).f_code.co_name+" - "+pSymbol+" - "+repr(e)
+        msg = telegram.telegram_prefix_market_phases_sl + msg
         print(msg)
-        telegram.send_telegram_message(telegram.telegram_token_market_phases, telegram.EMOJI_WARNING, msg)
+        telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_WARNING, msg)
         frame = pd.DataFrame()
         return frame 
 
@@ -225,9 +226,10 @@ def calc_best_ema(symbol, timeframe):
     
     except Exception as e:
         msg = sys._getframe(  ).f_code.co_name+f" - " + repr(e)
+        msg = telegram.telegram_prefix_market_phases_sl + msg
         print(msg)
         logging.exception(msg)
-        telegram.send_telegram_message(telegram.telegram_token_market_phases, telegram.EMOJI_WARNING, msg)
+        telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_WARNING, msg)
         
         return False
     

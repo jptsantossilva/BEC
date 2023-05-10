@@ -1,17 +1,18 @@
 
 import pandas as pd
-import config
-import exchange
-from binance.exceptions import BinanceAPIException
 import sys
 import math
 import numpy as np
-from backtesting.lib import crossover
 import logging
-import telegram
 import timeit
-import config
-import database
+
+from binance.exceptions import BinanceAPIException
+from backtesting.lib import crossover
+
+import utils.config as config
+import utils.database as database
+import utils.exchange as exchange
+import utils.telegram as telegram
 
 # sets the output display precision in terms of decimal places to 8.
 # this is helpful when trading against BTC. The value in the dataframe has the precision 8 but when we display it 
@@ -33,7 +34,11 @@ run_mode = ''
 time_frame_num = ''
 time_frame_type_short = ''
 time_frame_type_long = ''
-telegram_token = ''
+telegram_token = telegram.telegram_token_main
+
+# sl = single line message; ml = multi line message
+telegram_prefix_sl = ''
+telegram_prefix_ml = ''
 
 # strategy
 strategy_name = ''
@@ -44,12 +49,9 @@ def read_arguments():
     # total arguments
     n = len(sys.argv)
     
-    global time_frame
-    global run_mode
-    global time_frame_num
-    global time_frame_type_short
-    global time_frame_type_long
-    global telegram_token
+    global time_frame, run_mode
+    global time_frame_num, time_frame_type_short, time_frame_type_long
+    global telegram_token, telegram_prefix_ml, telegram_prefix_sl
 
     if n < 2:
         print("Argument is missing")
@@ -72,7 +74,9 @@ def read_arguments():
         time_frame_num = int("1")
         time_frame_type_short = "h" # h, d
         time_frame_type_long = "hour" # hour, day
-        telegram_token = telegram.telegram_token_1h
+        
+        telegram_prefix_sl = telegram.telegram_prefix_bot_1h_sl
+        telegram_prefix_ml = telegram.telegram_prefix_bot_1h_ml
 
     elif time_frame == "4h":
         if not config.bot_4h:
@@ -82,7 +86,9 @@ def read_arguments():
         time_frame_num = int("4")
         time_frame_type_short = "h" # h, d
         time_frame_type_long = "hour" # hour, day
-        telegram_token = telegram.telegram_token_4h
+        
+        telegram_prefix_sl = telegram.telegram_prefix_bot_4h_sl
+        telegram_prefix_ml = telegram.telegram_prefix_bot_4h_ml
 
     elif time_frame == "1d":
         if not config.bot_1d:
@@ -92,7 +98,9 @@ def read_arguments():
         time_frame_num = int("1")
         time_frame_type_short = "d" # h, d
         time_frame_type_long = "day" # hour, day
-        telegram_token = telegram.telegram_token_1d
+        
+        telegram_prefix_sl = telegram.telegram_prefix_bot_1d_sl
+        telegram_prefix_ml = telegram.telegram_prefix_bot_1d_ml
     else:
         msg = "Incorrect time frame. Bye"
         sys.exit(msg)
@@ -147,6 +155,7 @@ def get_data(symbol, time_frame_num, time_frame_type_short):
     
     except Exception as e:
         msg = sys._getframe(  ).f_code.co_name+" - "+symbol+" - "+repr(e)
+        msg = telegram_prefix_sl + msg
         print(msg)
         telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
         frame = pd.DataFrame()
@@ -181,6 +190,7 @@ def get_current_pnl(symbol, current_price):
     
     except Exception as e:
         msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
+        msg = telegram_prefix_sl + msg
         print(msg)
         telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
 
@@ -191,6 +201,7 @@ def get_open_positions(df):
 
     except Exception as e:
         msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
+        msg = telegram_prefix_sl + msg
         print(msg)
         telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
         return -1
@@ -214,6 +225,7 @@ def trade():
 
         if df.empty:
             msg = f'{symbol} - {strategy_name} - Best EMA values missing'
+            msg = telegram_prefix_sl + msg
             print(msg)
             telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
             continue
@@ -241,6 +253,7 @@ def trade():
             
         else:
             msg = f'{symbol} - {strategy_name} - Sell condition not fulfilled'
+            msg = telegram_prefix_sl + msg
             print(msg)
             telegram.send_telegram_message(telegram_token, "", msg)
             
@@ -259,6 +272,7 @@ def trade():
 
         if df.empty:
             msg = f'{symbol} - {strategy_name} - Best EMA values missing'
+            msg = telegram_prefix_sl + msg
             print(msg)
             telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
             continue
@@ -277,6 +291,7 @@ def trade():
                 exchange.create_buy_order(symbol=symbol, bot=time_frame, fast_ema=fast_ema, slow_ema=slow_ema)    
         else:
             msg = f'{symbol} - {strategy_name} - Buy condition not fulfilled'
+            msg = telegram_prefix_sl + msg
             print(msg)
             telegram.send_telegram_message(telegram_token, "", msg)
 
@@ -293,28 +308,37 @@ def positions_summary():
     # df_cp_to_print.rename(columns={"Currency": "Symbol", "Close": "Price", }, inplace=True)
     df_sorted.reset_index(drop=True, inplace=True) # gives consecutive numbers to each row
     if df_sorted.empty:
-        print("Result: no open positions")
-        telegram.send_telegram_message(telegram_token, "", "Result: no open positions")
+        msg = "Positions Summary: no open positions"
+        msg = telegram_prefix_sl + msg
+        print(msg)
+        telegram.send_telegram_message(telegram_token, "", msg)
     else:
-        print(df_sorted)
-        telegram.send_telegram_message(telegram_token, "", df_sorted.to_string())
+        msg = df_sorted.to_string()
+        msg = telegram_prefix_sl + "Positions Summary:\n" + msg
+        print(msg)
+        telegram.send_telegram_message(telegram_token, "", msg)
 
     if config.stake_amount_type == "unlimited":
         num_open_positions = database.get_num_open_positions(database.conn)
         msg = f"{str(num_open_positions)}/{str(config.max_number_of_open_positions)} positions occupied"
+        msg = telegram_prefix_sl + msg
         print(msg)
-        telegram.send_telegram_message(telegram_token, "", msg=msg)
+        telegram.send_telegram_message(telegram_token, "", msg)
 
 
 def main():
     read_arguments()
 
     # inform that bot has started
-    telegram.send_telegram_message(telegram_token, telegram.EMOJI_START, "Start")
+    msg = "Start"
+    msg = telegram_prefix_sl + msg
+    telegram.send_telegram_message(telegram_token, telegram.EMOJI_START, msg)
     
     trade()
 
     positions_summary()
+
+    exchange.create_balance_snapshot(telegram_prefix_sl)
 
     # Close the database connection
     database.conn.close()
@@ -325,10 +349,14 @@ def main():
     duration = database.calc_duration(total_seconds)
 
     msg = f'Execution Time: {duration}'
+    msg = telegram_prefix_sl + msg
     print(msg)
     telegram.send_telegram_message(telegram_token, "", msg)
 
     # inform that bot has finished
+    msg = "End"
+    msg = telegram_prefix_sl + msg
+    print(msg)
     telegram.send_telegram_message(telegram_token, telegram.EMOJI_STOP, "End")
 
 if __name__ == "__main__":

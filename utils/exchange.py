@@ -1,14 +1,17 @@
 import sys
-from binance.client import Client
-from binance.exceptions import BinanceAPIException, BinanceOrderException
-from binance.helpers import round_step_size
-import config
 import logging
-import telegram
-import database
 import pandas as pd
 from datetime import datetime, date, timedelta
 from dateutil.relativedelta import relativedelta
+
+from binance.client import Client
+from binance.exceptions import BinanceAPIException, BinanceOrderException
+from binance.helpers import round_step_size
+
+import utils.config as config
+import utils.telegram as telegram
+import utils.database as database
+
 
 client: Client = None
 
@@ -325,10 +328,11 @@ def get_price_close_by_symbol_and_date(symbol: str, date: date):
         print(f"An unexpected error occurred: {e} - {symbol} - {date}")
         return float(0)
 
-def create_balance_snapshot():
+def create_balance_snapshot(telegram_prefix: str):
     msg = "Creating balance snapshot..."
+    msg = telegram_prefix + msg
     print(msg)
-    telegram.send_telegram_message(telegram.telegram_token_market_phases, "", msg)
+    telegram.send_telegram_message(telegram.telegram_token_main, "", msg)
 
     last_date = database.get_last_date_from_balances(database.conn)
     if last_date == '0':
@@ -402,6 +406,5 @@ def create_balance_snapshot():
 
     # add data to table Balance
     database.add_balances(database.conn, df_balance)
-
 
 

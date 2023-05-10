@@ -11,7 +11,7 @@ pipenv shell
 ##Any time you want to use the new environment, you first need to go to your project folder (where the Pipenv file lives) and run:
 pipenv shell
 
---
+---
 
 #Virtual env - option 2
 

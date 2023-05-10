@@ -1,7 +1,7 @@
 from best_ema import calc_best_ema
 import pandas as pd
-import telegram
-import database
+import utils.telegram as telegram
+import utils.database as database
 
 # sets the output display precision in terms of decimal places to 8.
 # this is helpful when trading against BTC. The value in the dataframe has the precision 8 but when we display it 
@@ -10,7 +10,7 @@ pd.set_option("display.precision", 8)
 
 timeframe = ["1d", "4h", "1h"]
 
-def main():
+def run():
     
     list_not_completed = database.get_symbols_to_calc_by_calc_completed(database.conn, completed = 0)
 
@@ -19,8 +19,10 @@ def main():
     list_not_completed.index += 1
 
     if not list_not_completed.empty: # not empty 
-        telegram.send_telegram_message(telegram.telegram_token_market_phases, "", "Calculating best EMA for the following coins:")
-        telegram.send_telegram_message(telegram.telegram_token_market_phases, "", list_not_completed.to_string(index=True, header = False)) 
+        msg = f"{telegram.telegram_prefix_market_phases_sl}Calculating best EMA for the following coins:"
+        telegram.send_telegram_message(telegram.telegram_token_main, "", msg)
+        msg = telegram.telegram_prefix_market_phases_sl + list_not_completed.to_string(index=True, header = False)
+        telegram.send_telegram_message(telegram.telegram_token_main, "", msg) 
     
     # calc BestEMA for each symbol and each time frame and save on positions table
     for symbol in list_not_completed.Symbol:
@@ -50,4 +52,4 @@ def main():
         database.set_symbols_to_calc_completed(database.conn, symbol=symbol)
 
 if __name__ == "__main__":
-    main()
+    run()

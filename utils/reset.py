@@ -1,8 +1,9 @@
 
-import pandas as pd
 import os
 import sys
-import database
+import pandas as pd
+
+import utils.database as database
 
 res = input('This procedure will ERASE ALL DATA from positions and orders. Are you sure? [yes/no]\n')     # \n ---> newline  ---> It causes a line break
 

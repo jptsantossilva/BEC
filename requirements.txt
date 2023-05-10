@@ -76,6 +76,7 @@ smmap==5.0.0
 stack-data==0.6.2
 streamlit==1.22.0
 streamlit-authenticator==0.2.1
+ta==0.10.2
 tenacity==8.2.2
 toml==0.10.2
 toolz==0.12.0
