@@ -1,3 +1,71 @@
+"""
+Step-by-step to migrate BEC from csv to sqlite database
+
+- save BEC from github to local BEC_BUSD / BEC_BTC
+
+    https://github.com/jptsantossilva/BEC
+
+    copy config.yaml from old csv bot to new. Make sure config.yaml file is fulfilled.
+
+- update crontab and leave the crons as comment to be disabled 
+
+    crontab -e
+
+    # BUSD
+    0 * * * * cd ~/Documents/BEC_BUSD && python3 main.py 1h prod
+    0 */4 * * * cd ~/Documents/BEC_BUSD && python3 main.py 4h prod
+    0 0 * * * cd ~/Documents/BEC_BUSD && python3 main.py 1d prod
+    0 0 * * * cd ~/Documents/BEC_BUSD && python3 symbol_by_market_phase.py 1d BUSD
+    */15 * * * * cd ~/Documents/BEC_BUSD && python3 super_rsi.py
+    # BTC
+    0 * * * * cd ~/Documents/BEC_BTC && python3 main.py 1h prod
+    0 */4 * * * cd ~/Documents/BEC_BTC && python3 main.py 4h prod
+    0 0 * * * cd ~/Documents/BEC_BTC && python3 main.py 1d prod
+    0 0 * * * cd ~/Documents/BEC_BTC && python3 symbol_by_market_phase.py 1d BTC
+    */15 * * * * cd ~/Documents/BEC_BTC && python3 super_rsi.py
+
+    # dashboard
+    @reboot cd ~/Documents/BEC_BUSD && python3 -m streamlit run pnl.py
+    @reboot cd ~/Documents/BEC_BTC && python3 -m streamlit run pnl.py
+
+    */5 * * * * ~/Documents/duckdns/duck.sh >/dev/null 2>&1
+
+- update environment vars
+
+    sudo nano /etc/environment
+
+    binance_api=""
+    binance_secret=""
+
+    telegram_chat_id=""
+
+    telegram_token_closed_positions=""
+    telegram_token_errors=""
+    telegram_token_signals=""
+    telegram_token_main=""
+
+    telegram_token_closed_positions_btc=""
+    telegram_token_errors_btc=""
+    telegram_token_signals_btc=""
+    telegram_token_main_btc=""
+
+- run csv_to_sqlite.py
+    install db browser - https://sqlitebrowser.org/
+    check positions, orders, best ema,... tables if they are fulfilled
+
+- restart server
+
+- Tests
+    - run main.py 1d
+    - run symbol_by_market_phases.py
+
+- renomear telegram bots
+    bot1d passa a main
+    bot4h passa a signals
+
+
+"""
+
 import sqlite3
 import csv
 
@@ -5,11 +73,6 @@ import csv
 from utils import database
 import utils.config as config
 
-# Connect to the database
-# conn = sqlite3.connect('data.db')
-
-# Create a cursor object
-# cursor = conn.cursor()
 
 # Create a cursor object
 cursor = database.conn.cursor()
