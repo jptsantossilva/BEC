@@ -12,7 +12,6 @@ import utils.config as config
 import utils.telegram as telegram
 import utils.database as database
 
-
 client: Client = None
 
 def connect():
