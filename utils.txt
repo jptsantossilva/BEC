@@ -28,3 +28,6 @@ source env/bin/activate
 
 save python libraries to requirements file 
 pip freeze > requirements.txt
+
+install libraries from requirements file
+pip install -r requirements.txt
