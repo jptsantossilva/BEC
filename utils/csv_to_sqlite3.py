@@ -5,6 +5,9 @@ Step-by-step to migrate BEC from csv to sqlite database
 
     https://github.com/jptsantossilva/BEC
 
+    install libraries from requirements file
+    pip install -r requirements.txt
+
     copy config.yaml from old csv bot to new. Make sure config.yaml file is fulfilled.
 
 - update crontab and leave the crons as comment to be disabled 
