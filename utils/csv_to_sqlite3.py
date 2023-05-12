@@ -52,9 +52,11 @@ Step-by-step to migrate BEC from csv to sqlite database
     telegram_token_signals_btc=""
     telegram_token_main_btc=""
 
-- run csv_to_sqlite.py
+- move from csv to database
+    copy csv files: positions, orders, coinpairBestEma, blacklist, addcoinpair, coinpairByMarketPhase 
+    run csv_to_sqlite.py
     install db browser - https://sqlitebrowser.org/
-    check positions, orders, best ema,... tables if they are fulfilled
+    check positions, orders, best ema, ... tables if they are fulfilled
 
 - restart server
 
@@ -73,7 +75,7 @@ import sqlite3
 import csv
 
 # import utils.database as database # keep to make sure database tables are created if not exist
-from utils import database
+import utils. database as database
 import utils.config as config
 
 
