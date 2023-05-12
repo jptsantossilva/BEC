@@ -677,6 +677,18 @@ def calculate_realized_pnl(year: str, month: str):
         df_data = [['TOTAL','', '', sum_pnl_perc, sum_pnl_value, sum_trades]]
         results_df = pd.DataFrame(df_data, columns=['Bot', 'Year', 'Month','PnL_Perc','PnL_Value','Trades'])
 
+    # format the pnl_perc and pnl_value decimal places
+    # format the pnl_value decimal places depending on trade against
+    results_df['PnL_Perc'] = results_df['PnL_Perc'].apply(lambda x:'{:.2f}'.format(x))
+    results_df['PnL_Value'] = results_df['PnL_Value'].apply(lambda x:f'{{:.{num_decimals}f}}'.format(x))
+
+    df_month_1d['PnL_Perc'] = df_month_1d['PnL_Perc'].apply(lambda x:'{:.2f}'.format(x))
+    df_month_1d['PnL_Value'] = df_month_1d['PnL_Value'].apply(lambda x:f'{{:.{num_decimals}f}}'.format(x))
+    df_month_4h['PnL_Perc'] = df_month_4h['PnL_Perc'].apply(lambda x:'{:.2f}'.format(x))
+    df_month_4h['PnL_Value'] = df_month_4h['PnL_Value'].apply(lambda x:f'{{:.{num_decimals}f}}'.format(x))
+    df_month_1h['PnL_Perc'] = df_month_1h['PnL_Perc'].apply(lambda x:'{:.2f}'.format(x))
+    df_month_1h['PnL_Value'] = df_month_1h['PnL_Value'].apply(lambda x:f'{{:.{num_decimals}f}}'.format(x))
+
     return results_df, df_month_1d, df_month_4h, df_month_1h
 
 def calculate_unrealized_pnl():
