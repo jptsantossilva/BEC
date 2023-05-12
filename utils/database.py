@@ -275,7 +275,7 @@ def get_positions_by_bot_position(connection, bot: str, position: int):
     return pd.read_sql(sql_get_positions_by_bot_position, connection, params=(bot, position))
 
 sql_get_unrealized_pnl_by_bot = """
-    SELECT Bot, Symbol, Qty, Buy_Price, PnL_Value, PnL_Perc, Duration
+    SELECT Bot, Symbol, Qty, Buy_Price, PnL_Perc, PnL_Value, Duration, Ema_Fast, Ema_Slow
     FROM Positions 
     WHERE 
         Bot = ?
