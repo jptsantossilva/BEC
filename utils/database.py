@@ -767,6 +767,8 @@ sql_add_balances = """
     INSERT OR IGNORE INTO Balances (Date, Asset, Balance, Balance_USD, Total_Balance_Of_BTC) VALUES (?, ?, ?, ?, ?);
 """
 def add_balances(connection, balances: pd.DataFrame):
+    if balances.empty:
+        return
     # convert dataframe to a list of tuples
     data = list(balances.to_records(index=False))
     for row in data:
