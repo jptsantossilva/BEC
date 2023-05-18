@@ -344,6 +344,15 @@ def top_performers():
         df_mp['Perc_Above_DSMA200'] = df_mp['Perc_Above_DSMA200'].apply(lambda x:'{:.2f}'.format(x))
         st.dataframe(df_mp)
 
+        filename = "Top_performers_"+config.trade_against+".txt"
+        with open(filename, "rb") as file:
+            st.download_button(
+                label="Download as TradingView List",
+                data=file,
+                file_name=filename,
+                mime='text/csv',
+            ) 
+
 def signals():
     with tab_signals:
         st.subheader(f"Signals Log")
