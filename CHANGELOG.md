@@ -2,6 +2,19 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2023-05-19]
+ 
+### Added
+- Dashboard - Total Balance and Asset Balances - get data from last 7d, 30d, 90d, YTD and All-Time
+- Dashboard - Top Performers - Download as a TradingView List
+- Dashboard - Unrealized PnL - Show ema_slow and ema_fast columns
+- Database - csv_to_sqlite.py file update with step-by-step to migrate BEC from csv to sqlite database
+### Changed
+- Dashboard - Realized PnL - format decimal places on PnL_Perc and PnL_Value columns
+- General - Updated files sctructure and number of telegram bots was reduced 
+### Fixed
+- Database - Ignore when there is no new data to add to balances table
+
 ## [2023-05-05]
  
 ### Added
@@ -10,7 +23,7 @@ All notable changes to this project will be documented in this file.
 - Dashboard - Settings tab to adjust bot settings
 - Dashboard - Charts  - Assets balances and Total USD balance 
 ### Changed
-- Web dashboard - web dashboard no longer supports multiple bots with different trading pairs. Instead, each bot/trading pair now has its own dashboard.  
+- Dashboard - web dashboard no longer supports multiple bots with different trading pairs. Instead, each bot/trading pair now has its own dashboard.  
 ### Fixed
 - 
 
