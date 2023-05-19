@@ -81,10 +81,31 @@ def get_trade_against():
         print(msg)
         # sys.exit(msg)
 
-def get_chart_total_balance_usd_last_30_days():
-    expander_total_balances_30_days = st.expander(label="Total Balance Last 30 Days", expanded=True)
-    with expander_total_balances_30_days:
-        source = database.get_total_balance_usd_last_30_days(connection)
+def get_chart_total_balance():
+    expander_total_balance = st.expander(label=f"Total Balance", expanded=True)
+    with expander_total_balance:
+        period_selected_balances = st.radio(
+            label='Choose Period',
+            options=('Last 7 days','Last 30 days', 'Last 90 days', 'YTD', 'All Time'),
+            index=1,
+            horizontal=True,
+            label_visibility='collapsed',
+            key='period_selected_balances')
+
+        if period_selected_balances == 'Last 7 days':
+            n_days = 7
+            source = database.get_total_balance_usd_last_n_days(connection, n_days)
+        elif period_selected_balances == 'Last 30 days':
+            n_days = 30
+            source = database.get_total_balance_usd_last_n_days(connection, n_days)
+        elif period_selected_balances == 'Last 90 days':
+            n_days = 90
+            source = database.get_total_balance_usd_last_n_days(connection, n_days)
+        elif period_selected_balances == 'YTD':
+            source = database.get_total_balance_usd_ytd(connection)
+        elif period_selected_balances == 'All Time':
+            source = database.get_total_balance_usd_all_time(connection)
+        
         hover = alt.selection_single(
             fields=["Date"],
             nearest=True,
@@ -125,10 +146,31 @@ def get_chart_total_balance_usd_last_30_days():
         st.altair_chart(chart, use_container_width=True)
 
 
-def get_chart_asset_balances_last_30_days():
-    expander_balances_30_days = st.expander(label="Asset Balances Last 30 Days", expanded=True)
-    with expander_balances_30_days:
-        source = database.get_balances_last_30_days(connection)
+def get_chart_asset_balances():
+    expander_asset_balances = st.expander(label="Asset Balances", expanded=True)
+    with expander_asset_balances:
+        period_selected_asset = st.radio(
+            label='Choose Period',
+            options=('Last 7 days','Last 30 days', 'Last 90 days', 'YTD', 'All Time'),
+            index=1,
+            horizontal=True,
+            label_visibility='collapsed',
+            key='period_selected_asset')
+
+        if period_selected_asset == 'Last 7 days':
+            n_days = 7
+            source = database.get_asset_balances_last_n_days(connection, n_days)
+        elif period_selected_asset == 'Last 30 days':
+            n_days = 30
+            source = database.get_asset_balances_last_n_days(connection, n_days)
+        elif period_selected_asset == 'Last 90 days':
+            n_days = 90
+            source = database.get_asset_balances_last_n_days(connection, n_days)
+        elif period_selected_asset == 'YTD':
+            source = database.get_asset_balances_ytd(connection)
+        elif period_selected_asset == 'All Time':
+            source = database.get_asset_balances_all_time(connection)
+
         hover = alt.selection_single(
             fields=["Date"],
             nearest=True,
@@ -557,8 +599,8 @@ def show_main_page():
     bot_selected = parent_dir
     st.caption(f'**{bot_selected}** - {trade_against}')
 
-    get_chart_total_balance_usd_last_30_days()
-    get_chart_asset_balances_last_30_days()
+    get_chart_total_balance()
+    get_chart_asset_balances()
 
     global tab_upnl, tab_rpnl, tab_top_perf, tab_signals, tab_blacklist, tab_best_ema, tab_settings
     tab_upnl, tab_rpnl, tab_signals, tab_top_perf, tab_blacklist, tab_best_ema, tab_settings = st.tabs(["Unrealized PnL", "Realized PnL", "Signals", "Top Performers", "Blacklist", "Best EMA", "Settings"])

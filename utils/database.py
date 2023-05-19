@@ -775,23 +775,59 @@ def add_balances(connection, balances: pd.DataFrame):
         with connection:
             connection.execute(sql_add_balances, row)
     
-sql_get_balances_last_30_days = """  
-    SELECT Date, Asset, ROUND(Balance_USD, 2) as Balance_USD
-    FROM Balances
-    WHERE date(Date) >= date('now', '-30 days')
-    AND Balance_USD > 1;
-"""
-def get_balances_last_30_days(connection):
-    return pd.read_sql(sql_get_balances_last_30_days, connection)
+def get_asset_balances_last_n_days(connection, n_days):
+    sql_get_balances_last_n_days = """  
+        SELECT Date, Asset, ROUND(Balance_USD, 2) as Balance_USD
+        FROM Balances
+        WHERE Date >= date('now', ? || ' days')
+        AND Balance_USD > 1;
+    """
+    params = (str(-n_days),)  # Convert n_days to a negative string for date subtraction
+    return pd.read_sql(sql_get_balances_last_n_days, connection, params=params)
 
-sql_get_total_balance_usd_last_30_days = """
-    SELECT Date, ROUND(SUM(Balance_USD), 2) as Total_Balance_USD
-    FROM Balances
-    WHERE Date >= date('now', '-30 days')
-    GROUP BY Date
-"""
-def get_total_balance_usd_last_30_days(connection):
-    return pd.read_sql(sql_get_total_balance_usd_last_30_days, connection)
+def get_asset_balances_ytd(connection):
+    sql_get_balances_ytd = """  
+        SELECT Date, Asset, ROUND(Balance_USD, 2) as Balance_USD
+        FROM Balances
+        WHERE strftime('%Y', Date) = strftime('%Y', 'now')
+        AND Balance_USD > 1;
+    """
+    return pd.read_sql(sql_get_balances_ytd, connection)
+
+def get_asset_balances_all_time(connection):
+    sql_get_balances_all_time = """  
+        SELECT Date, Asset, ROUND(Balance_USD, 2) as Balance_USD
+        FROM Balances
+        WHERE Balance_USD > 1;
+    """
+    return pd.read_sql(sql_get_balances_all_time, connection)
+
+def get_total_balance_usd_last_n_days(connection, n_days):
+    sql_get_total_balance_usd_last_n_days = """
+        SELECT Date, ROUND(SUM(Balance_USD), 2) as Total_Balance_USD
+        FROM Balances
+        WHERE Date >= date('now', ? || ' days')
+        GROUP BY Date
+    """
+    params = (str(-n_days),)  # Convert n_days to a negative string for date subtraction
+    return pd.read_sql(sql_get_total_balance_usd_last_n_days, connection, params=params)
+
+def get_total_balance_usd_ytd(connection):
+    sql_get_total_balance_usd_last_n_days = """
+        SELECT Date, ROUND(SUM(Balance_USD), 2) as Total_Balance_USD
+        FROM Balances
+        WHERE strftime('%Y', Date) = strftime('%Y', 'now')
+        GROUP BY Date
+    """
+    return pd.read_sql(sql_get_total_balance_usd_last_n_days, connection)
+
+def get_total_balance_usd_all_time(connection):
+    sql_get_total_balance_usd_all_time = """
+        SELECT Date, ROUND(SUM(Balance_USD), 2) as Total_Balance_USD
+        FROM Balances
+        GROUP BY Date
+    """
+    return pd.read_sql(sql_get_total_balance_usd_all_time, connection)
 
 sql_get_last_date_from_balances="""
     SELECT Date FROM Balances ORDER BY Date DESC LIMIT 1;
