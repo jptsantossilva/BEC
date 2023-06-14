@@ -64,9 +64,9 @@ Step-by-step to migrate BEC from csv to sqlite database
     - run main.py 1d
     - run symbol_by_market_phases.py
 
-- renomear telegram bots
-    bot1d passa a main
-    bot4h passa a signals
+- rename telegram bots
+    bot1d to bot_main
+    bot4h to bot_signals
 
 
 """
