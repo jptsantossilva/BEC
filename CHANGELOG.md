@@ -2,6 +2,18 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+
+## [2023-06-15]
+ 
+### Added
+
+### Changed
+- General - avoid error message in telegram if error is related to non-existing trading pair 
+
+### Fixed
+
+
+
 ## [2023-05-19]
  
 ### Added
