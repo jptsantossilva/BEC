@@ -13,8 +13,6 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
-
-
 ## [2023-05-19]
  
 ### Added
