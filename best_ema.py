@@ -112,7 +112,13 @@ def get_data(pSymbol, pTimeframe):
         msg = sys._getframe(  ).f_code.co_name+" - "+pSymbol+" - "+repr(e)
         msg = telegram.telegram_prefix_market_phases_sl + msg
         print(msg)
-        telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_WARNING, msg)
+
+        # avoid error message in telegram if error is related to non-existing trading pair
+        # example: CREAMUSDT - BinanceAPIException(Response [400], 400, code:-1121,msg:Invalid symbol.)
+        invalid_symbol_error = '"code":-1121,"msg":"Invalid symbol.'
+        if invalid_symbol_error not in msg:             
+            telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_WARNING, msg)
+
         frame = pd.DataFrame()
         return frame 
 
