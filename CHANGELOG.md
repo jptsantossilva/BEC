@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - General - avoid error message in telegram if error is related to non-existing trading pair 
+- Dashboard - Auto adjust height on chart asset balances
 
 ### Fixed
 

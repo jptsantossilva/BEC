@@ -185,7 +185,7 @@ def get_chart_asset_balances():
             .mark_line()
             .encode(
                 x="Date",
-                y="Balance_USD",
+                y=alt.Y("Total_Balance_USD", scale=alt.Scale(domain=[source.Total_Balance_USD.min(),source.Total_Balance_USD.max()])),
                 color="Asset",
             )
         )
