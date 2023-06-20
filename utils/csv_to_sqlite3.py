@@ -71,7 +71,7 @@ Step-by-step to migrate BEC from csv to sqlite database
 
 """
 
-import sqlite3
+# import sqlite3
 import csv
 
 # import utils.database as database # keep to make sure database tables are created if not exist
