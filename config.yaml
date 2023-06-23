@@ -1,6 +1,6 @@
 bot_1d: false
 bot_1h: true
-bot_4h: false
+bot_4h: true
 max_number_of_open_positions: 10
 min_position_size: 0.0001
 stake_amount_type: unlimited
