@@ -2,9 +2,12 @@
 import pandas as pd
 import sys
 import math
-import numpy as np
 import logging
 import timeit
+import datetime
+import pytz
+import schedule
+import time
 
 from binance.exceptions import BinanceAPIException
 from backtesting.lib import crossover
@@ -19,9 +22,6 @@ import utils.telegram as telegram
 # by printing or sending to telegram only shows precision 6
 pd.set_option("display.precision", 8)
 
-# calculate program run time
-start = timeit.default_timer()
-
 # log file to store error messages
 log_filename = "main.log"
 logging.basicConfig(filename=log_filename, level=logging.INFO,
@@ -29,11 +29,6 @@ logging.basicConfig(filename=log_filename, level=logging.INFO,
 
 
 # Global Vars
-time_frame = ''
-run_mode = ''
-time_frame_num = ''
-time_frame_type_short = ''
-time_frame_type_long = ''
 telegram_token = telegram.telegram_token_main
 
 # sl = single line message; ml = multi line message
@@ -44,16 +39,10 @@ telegram_prefix_ml = ''
 strategy_name = ''
 
 def read_arguments():
-    # Check for the time_frame and run_mode arguments
-    
     # total arguments
     n = len(sys.argv)
     
-    global time_frame, run_mode
-    global time_frame_num, time_frame_type_short, time_frame_type_long
-    global telegram_token, telegram_prefix_ml, telegram_prefix_sl
-
-    if n < 2:
+    if n < 3:
         print("Argument is missing")
         time_frame = input('Enter time frame (1d, 4h or 1h):')
         run_mode = input('Enter run mode (test, prod):')
@@ -66,59 +55,29 @@ def read_arguments():
         # prod - execute orders on the exchange
         run_mode = sys.argv[2]
 
+    return time_frame, run_mode
+
+def apply_arguments(time_frame):
+
+    global telegram_token, telegram_prefix_ml, telegram_prefix_sl
+
     if time_frame == "1h":
-        if not config.bot_1h:
-            msg = f"Bot {time_frame} is inactive. Check Config file. Bye"
-            sys.exit(msg)
-            
-        time_frame_num = int("1")
-        time_frame_type_short = "h" # h, d
-        time_frame_type_long = "hour" # hour, day
-        
         telegram_prefix_sl = telegram.telegram_prefix_bot_1h_sl
         telegram_prefix_ml = telegram.telegram_prefix_bot_1h_ml
-
     elif time_frame == "4h":
-        if not config.bot_4h:
-            msg = f"Bot {time_frame} is inactive. Check Config file. Bye"
-            sys.exit(msg)
-        
-        time_frame_num = int("4")
-        time_frame_type_short = "h" # h, d
-        time_frame_type_long = "hour" # hour, day
-        
         telegram_prefix_sl = telegram.telegram_prefix_bot_4h_sl
         telegram_prefix_ml = telegram.telegram_prefix_bot_4h_ml
-
     elif time_frame == "1d":
-        if not config.bot_1d:
-            msg = f"Bot {time_frame} is inactive. Check Config file. Bye"
-            sys.exit(msg)
-            
-        time_frame_num = int("1")
-        time_frame_type_short = "d" # h, d
-        time_frame_type_long = "day" # hour, day
-        
         telegram_prefix_sl = telegram.telegram_prefix_bot_1d_sl
         telegram_prefix_ml = telegram.telegram_prefix_bot_1d_ml
     else:
         msg = "Incorrect time frame. Bye"
-        sys.exit(msg)
 
-def get_data(symbol, time_frame_num, time_frame_type_short):
+def get_data(symbol, time_frame):
 
     try:
-        # update EMAs from the best EMA return ratio
-        global strategy_name
-
-        time_frame = str(time_frame_num)+time_frame_type_short
-        if time_frame_type_short == "h":
-            time_frame_type_long = "hour"
-        elif time_frame_type_short == "d":
-            time_frame_type_long = "day"
-        
         # get best ema
-        df_best_ema = database.get_best_ema_by_symbol_timeframe(database.conn, symbol=symbol, time_frame=time_frame)
+        df_best_ema = database.get_best_ema_by_symbol_timeframe(connection=database.conn, symbol=symbol, time_frame=time_frame)
 
         if not df_best_ema.empty:
             fast_ema = int(df_best_ema.Ema_Fast.values[0])
@@ -127,6 +86,7 @@ def get_data(symbol, time_frame_num, time_frame_type_short):
             fast_ema = int("0")
             slow_ema = int("0")
 
+        global strategy_name
         strategy_name = str(fast_ema)+"/"+str(slow_ema)+" EMA cross"
 
         # if bestEMA does not exist return empty dataframe in order to no use that trading pair
@@ -136,7 +96,7 @@ def get_data(symbol, time_frame_num, time_frame_type_short):
         
         # if best Ema exist get price data 
         # lstartDate = str(1+gSlowMA*aTimeframeNum)+" "+lTimeframeTypeLong+" ago UTC"
-        sma200 = 200
+        # sma200 = 200
         # lstartDate = str(sma200*aTimeframeNum)+" "+lTimeframeTypeLong+" ago UTC" 
         # time_frame = str(time_frame_num)+time_frame_type_short
         frame = pd.DataFrame(exchange.client.get_historical_klines(symbol,
@@ -206,7 +166,7 @@ def get_open_positions(df):
         telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
         return -1
 
-def trade():
+def trade(time_frame, run_mode):
     # Make sure we are only trying to buy positions on symbols included on market phases table
     database.delete_positions_not_top_rank(database.conn)
 
@@ -221,7 +181,7 @@ def trade():
     
     # check open positions and SELL if conditions are fulfilled 
     for symbol in list_to_sell:
-        df, fast_ema, slow_ema = get_data(symbol, time_frame_num, time_frame_type_short)
+        df, fast_ema, slow_ema = get_data(symbol=symbol, time_frame=time_frame)
 
         if df.empty:
             msg = f'{symbol} - {strategy_name} - Best EMA values missing'
@@ -268,7 +228,7 @@ def trade():
 
     # check coins not in positions and BUY if conditions are fulfilled
     for symbol in list_to_buy:
-        df, fast_ema, slow_ema = get_data(symbol, time_frame_num, time_frame_type_short)
+        df, fast_ema, slow_ema = get_data(symbol=symbol, time_frame=time_frame)
 
         if df.empty:
             msg = f'{symbol} - {strategy_name} - Best EMA values missing'
@@ -295,9 +255,10 @@ def trade():
             print(msg)
             telegram.send_telegram_message(telegram_token, "", msg)
 
-def positions_summary():
+def positions_summary(time_frame):
     df_summary = database.get_positions_by_bot_position(database.conn,
-                                                        bot=time_frame, position=1)
+                                                        bot=time_frame, 
+                                                        position=1)
     
     # remove unwanted columns
     df_dropped = df_summary.drop(columns=['Id','Date','Bot','Position','Rank','Qty','Ema_Fast','Ema_Slow','Buy_Order_Id','Duration'])
@@ -326,19 +287,39 @@ def positions_summary():
         telegram.send_telegram_message(telegram_token, "", msg)
 
 
-def run():
-    read_arguments()
+def run(time_frame, run_mode):
 
+    if time_frame == "1h" and not config.bot_1h:
+        msg = f"Bot {time_frame} is inactive. Check Config file. Bye"
+        print(msg)
+        return
+    elif time_frame == "4h" and not config.bot_4h:
+        msg = f"Bot {time_frame} is inactive. Check Config file. Bye"
+        print(msg)
+        return
+    elif time_frame == "1d" and not config.bot_1d:
+        msg = f"Bot {time_frame} is inactive. Check Config file. Bye"
+        print(msg)
+        return           
+
+    # calculate program run time
+    start = timeit.default_timer()
+    
     # inform that bot has started
     msg = "Start"
     msg = telegram_prefix_sl + msg
     telegram.send_telegram_message(telegram_token, telegram.EMOJI_START, msg)
+
+    # Check if connection is already established
+    if database.is_connection_open(database.conn):
+        print("Database connection is already established.")
+    else:
+        # Create a new connection
+        database.conn = database.connect()
     
-    trade()
+    trade(time_frame, run_mode)
 
-    positions_summary()
-
-    exchange.create_balance_snapshot(telegram_prefix_sl)
+    positions_summary(time_frame)
 
     # Close the database connection
     database.conn.close()
@@ -359,8 +340,14 @@ def run():
     print(msg)
     telegram.send_telegram_message(telegram_token, telegram.EMOJI_STOP, msg)
 
+def scheduled_run(time_frame, run_mode):
+    apply_arguments(time_frame)
+    run(time_frame=time_frame, run_mode=run_mode)
+
 if __name__ == "__main__":
-    run()
+    time_frame, run_mode = read_arguments()
+    apply_arguments(time_frame)            
+    run(time_frame=time_frame, run_mode=run_mode)
 
 
 

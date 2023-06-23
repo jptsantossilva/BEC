@@ -21,6 +21,16 @@ def connect(path: str = ""):
 
     return conn
 
+def is_connection_open(conn):
+    if conn is None:
+        return False
+    try:
+        # Execute a simple query to test the connection
+        conn.execute("SELECT 1")
+        return True
+    except sqlite3.Error:
+        return False
+
 # change connection on Dashboard
 def connect_to_bot(folder_name: str):
     #Connects to an SQLite database file located in a child folder of the grandparent folder.
@@ -424,7 +434,10 @@ sql_set_position_buy = """
         Date = ?,
         Ema_Fast = ?,
         Ema_Slow = ?,
-        Buy_Order_Id = ?
+        Buy_Order_Id = ?,
+        PnL_Perc = 0,
+        PnL_Value = 0,
+        Duration = 0
     WHERE
         Bot = ? 
         AND Symbol = ? ;        
@@ -650,7 +663,22 @@ sql_create_symbols_by_market_phase_table = """
     );
 """
 
-sql_get_all_symbols_by_market_phase = "SELECT * FROM Symbols_By_Market_Phase;"
+sql_create_symbols_by_market_phase_Historical_table = """
+    CREATE TABLE IF NOT EXISTS Symbols_By_Market_Phase_Historical (
+            Id INTEGER PRIMARY KEY,
+            Symbol TEXT,
+            Price REAL,
+            DSMA50 REAL,
+            DSMA200 REAL,
+            Market_Phase TEXT,
+            Perc_Above_DSMA50 REAL,
+            Perc_Above_DSMA200 REAL,
+            Rank INTEGER,
+            Date_Inserted TEXT
+        );
+"""
+
+sql_get_all_symbols_by_market_phase = "SELECT Id,Rank, Symbol, Price, DSMA50, DSMA200, Market_Phase, Perc_Above_DSMA50, Perc_Above_DSMA200 FROM Symbols_By_Market_Phase;"
 def get_all_symbols_by_market_phase(connection):
     return pd.read_sql(sql_get_all_symbols_by_market_phase, connection, index_col="Id")
     
@@ -687,7 +715,18 @@ sql_insert_symbols_by_market_phase = """
 def insert_symbols_by_market_phase(connection, symbol: str, price: float, dsma50: float, dsma200: float, market_phase: str, perc_above_dsma50: float, perc_above_dsma200: float, rank: int):
     with connection:
         connection.execute(sql_insert_symbols_by_market_phase,(symbol, price, dsma50, dsma200, market_phase, perc_above_dsma50, perc_above_dsma200, rank))
-    
+
+sql_insert_symbols_by_market_phase_historical = """
+    INSERT INTO Symbols_By_Market_Phase_Historical 
+        (Symbol, Price, DSMA50, DSMA200, Market_Phase, Perc_Above_DSMA50, Perc_Above_DSMA200, Rank, Date_Inserted)
+    SELECT Symbol, Price, DSMA50, DSMA200, Market_Phase, Perc_Above_DSMA50, Perc_Above_DSMA200, Rank, ?
+    FROM Symbols_By_Market_Phase;
+"""
+def insert_symbols_by_market_phase_historical(connection, date_inserted: str):
+    with connection:
+        connection.execute(sql_insert_symbols_by_market_phase_historical,(date_inserted,))
+
+
 sql_delete_all_symbols_by_market_phase = "DELETE FROM Symbols_By_Market_Phase;"
 def delete_all_symbols_by_market_phase(connection):
     with connection:
@@ -877,6 +916,7 @@ def create_tables(connection):
         connection.execute(sql_create_best_ema_table)
         connection.execute(sql_create_symbols_to_calc_table)
         connection.execute(sql_create_symbols_by_market_phase_table)
+        connection.execute(sql_create_symbols_by_market_phase_Historical_table)
         # users
         connection.execute(sql_create_users_table)
         default_admin_password = "admin"

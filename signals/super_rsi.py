@@ -254,6 +254,9 @@ def run():
     # print(msg)
     # telegram.send_telegram_message(telegram.telegram_token_main, telegram.eStart, msg)
 
+    # local_time = datetime.datetime.now()
+    # print(f"Run Super-RSI: {local_time}")
+
     df_symbols = database.get_distinct_symbol_from_positions_where_position1(database.conn)
     # check if the symbols list is empty
     if df_symbols.empty:

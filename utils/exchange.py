@@ -340,6 +340,13 @@ def create_balance_snapshot(telegram_prefix: str):
     print(msg)
     telegram.send_telegram_message(telegram.telegram_token_main, "", msg)
 
+    # Check if connection is already established
+    if database.is_connection_open(database.conn):
+        print("Database connection is already established.")
+    else:
+        # Create a new connection
+        database.conn = database.connect()
+
     last_date = database.get_last_date_from_balances(database.conn)
     if last_date == '0':
          today = datetime.now()
