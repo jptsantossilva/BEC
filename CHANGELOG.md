@@ -8,17 +8,13 @@ All notable changes to this project will be documented in this file.
 ### Added
 - Scheduler - Scheduler will be responsable to run bot on each time frame, market phases and signals at the correct time using UTC timezone.
 - Dashboard - Top performers are now saved for historical purpose. Useful for finding out which symbols spend the most number of days in the bullish or accumulating phase. 
-
 ### Changed
 - General - avoid error message in telegram if error is related to non-existing trading pair 
 - Dashboard - Auto adjust height on chart asset balances
 - Dashboard - Current Total Balance - display value
 - General - Code adaptation to use scheduler
-
-
 ### Fixed
 - Dashboard - Top Performers - display the number with all decimal places 
-
 
 ## [2023-05-19]
  
