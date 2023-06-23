@@ -105,6 +105,9 @@ def get_chart_total_balance():
             source = database.get_total_balance_usd_ytd(connection)
         elif period_selected_balances == 'All Time':
             source = database.get_total_balance_usd_all_time(connection)
+
+        current_total_balance = source.Total_Balance_USD.iloc[-1]
+        st.caption(f'Current Total Balance: {current_total_balance}')
         
         hover = alt.selection_single(
             fields=["Date"],
@@ -379,9 +382,9 @@ def top_performers():
     with tab_top_perf:
         st.subheader(f"Top {config.trade_top_performance} Performers")
         df_mp = database.get_all_symbols_by_market_phase(connection)
-        df_mp['Price'] = df_mp['Price'].apply(lambda x:f'{{:.{num_decimals}f}}'.format(x))
-        df_mp['DSMA50'] = df_mp['DSMA50'].apply(lambda x:f'{{:.{num_decimals}f}}'.format(x))
-        df_mp['DSMA200'] = df_mp['DSMA200'].apply(lambda x:f'{{:.{num_decimals}f}}'.format(x))
+        # df_mp['Price'] = df_mp['Price'].apply(lambda x:f'{{:.{num_decimals}f}}'.format(x))
+        # df_mp['DSMA50'] = df_mp['DSMA50'].apply(lambda x:f'{{:.{num_decimals}f}}'.format(x))
+        # df_mp['DSMA200'] = df_mp['DSMA200'].apply(lambda x:f'{{:.{num_decimals}f}}'.format(x))
         df_mp['Perc_Above_DSMA50'] = df_mp['Perc_Above_DSMA50'].apply(lambda x:'{:.2f}'.format(x))
         df_mp['Perc_Above_DSMA200'] = df_mp['Perc_Above_DSMA200'].apply(lambda x:'{:.2f}'.format(x))
         st.dataframe(df_mp)
