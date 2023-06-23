@@ -122,7 +122,8 @@ def get_chart_total_balance():
             .mark_line()
             .encode(
                 x="Date",
-                y="Total_Balance_USD",
+                # y="Total_Balance_USD",
+                y=alt.Y("Total_Balance_USD", scale=alt.Scale(domain=[source.Total_Balance_USD.min(),source.Total_Balance_USD.max()])),
                 # color="Total_Balance_USD",
             )
         )
@@ -188,7 +189,7 @@ def get_chart_asset_balances():
             .mark_line()
             .encode(
                 x="Date",
-                y=alt.Y("Total_Balance_USD", scale=alt.Scale(domain=[source.Total_Balance_USD.min(),source.Total_Balance_USD.max()])),
+                y=alt.Y("Balance_USD", scale=alt.Scale(domain=[source.Balance_USD.min(),source.Balance_USD.max()])),
                 color="Asset",
             )
         )
@@ -397,6 +398,11 @@ def top_performers():
                 file_name=filename,
                 mime='text/csv',
             ) 
+
+        st.subheader(f"Historical Top Performers")
+        st.caption("Symbols that spend the most number of days in the bullish or accumulating phases")
+        df_symbols_days_at_top = database.symbols_by_market_phase_Historical_get_symbols_days_at_top(connection)
+        st.dataframe(df_symbols_days_at_top)
 
 def signals():
     with tab_signals:
