@@ -678,6 +678,19 @@ sql_create_symbols_by_market_phase_Historical_table = """
         );
 """
 
+sql_symbols_by_market_phase_Historical_get_symbols_days_at_top = """
+    SELECT symbol, 
+        COUNT(DISTINCT Date_Inserted) AS Days_at_TOP,
+        MIN(Date_Inserted) AS First_Date, 
+        MAX(Date_Inserted) AS Last_Date  
+    FROM Symbols_By_Market_Phase_Historical
+    GROUP BY symbol
+    ORDER BY Days_at_TOP DESC
+"""
+def symbols_by_market_phase_Historical_get_symbols_days_at_top(connection):
+    return pd.read_sql(sql_symbols_by_market_phase_Historical_get_symbols_days_at_top, connection)
+
+
 sql_get_all_symbols_by_market_phase = "SELECT Id,Rank, Symbol, Price, DSMA50, DSMA200, Market_Phase, Perc_Above_DSMA50, Perc_Above_DSMA200 FROM Symbols_By_Market_Phase;"
 def get_all_symbols_by_market_phase(connection):
     return pd.read_sql(sql_get_all_symbols_by_market_phase, connection, index_col="Id")
