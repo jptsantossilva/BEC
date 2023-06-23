@@ -3,7 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 
-## [2023-06-15]
+## [2023-06-23]
  
 ### Added
 - Scheduler - Scheduler will be responsable to run bot on each time frame, market phases and signals at the correct time using UTC timezone.
