@@ -129,7 +129,7 @@ def apply_technicals(df, fast_ema, slow_ema):
     df['SMA200']  = df['Close'].rolling(200).mean()
 
 # calc current pnl  
-def get_current_pnl(symbol, current_price):
+def get_current_pnl(symbol, current_price, time_frame):
 
     try:
         # get buy price
@@ -199,7 +199,7 @@ def trade(time_frame, run_mode):
             # check current price
             current_price = lastrow.Close
             # check current pnl
-            current_pnl = get_current_pnl(symbol, current_price)
+            current_pnl = get_current_pnl(symbol, current_price, time_frame)
             sell_stop_loss = current_pnl <= -config.stop_loss
 
         condition_crossover = (lastrow.SlowEMA > lastrow.FastEMA) 
