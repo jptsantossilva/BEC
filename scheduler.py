@@ -10,7 +10,6 @@ from symbol_by_market_phase import scheduled_run as run_mp
 from signals.super_rsi import run as run_srsi
 
 def run_this(msg):
-    # Your function code here
     # Get the current UTC+0 time
     utc_time = datetime.datetime.now(pytz.timezone('UTC'))
     # Get the current time on the computer
