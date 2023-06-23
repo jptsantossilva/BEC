@@ -257,6 +257,13 @@ def run():
     # local_time = datetime.datetime.now()
     # print(f"Run Super-RSI: {local_time}")
 
+    # Check if connection is already established
+    if database.is_connection_open(database.conn):
+        print("Database connection is already established.")
+    else:
+        # Create a new connection
+        database.conn = database.connect()
+
     df_symbols = database.get_distinct_symbol_from_positions_where_position1(database.conn)
     # check if the symbols list is empty
     if df_symbols.empty:
