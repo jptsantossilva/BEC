@@ -399,7 +399,7 @@ sql_update_position_pnl = """
         AND Symbol = ? 
         AND Position = 1;        
 """
-def update_position_pnl (connection, bot: str, symbol: str, curr_price: float):
+def update_position_pnl(connection, bot: str, symbol: str, curr_price: float):
     df = get_positions_by_bot_symbol_position(connection, bot, symbol, position=1)
     buy_price = float(df.loc[0,'Buy_Price'])
     qty = float(df.loc[0,'Qty'])
