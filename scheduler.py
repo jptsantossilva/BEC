@@ -19,17 +19,17 @@ def run_this(msg):
 
 def run_bot_1h():
     time_frame = "1h"
-    run_mode = "test"
+    run_mode = "prod"
     run_bot(time_frame, run_mode)
 
 def run_bot_4h():
     time_frame = "4h"
-    run_mode = "test"
+    run_mode = "prod"
     run_bot(time_frame, run_mode)
 
 def run_bot_1d():
     time_frame = "1d"
-    run_mode = "test"
+    run_mode = "prod"
     run_bot(time_frame, run_mode)
 
 def run_mp():
