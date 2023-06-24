@@ -420,4 +420,9 @@ def create_balance_snapshot(telegram_prefix: str):
     # add data to table Balance
     database.add_balances(database.conn, df_balance)
 
+    msg = "Balance snapshot finished"
+    msg = telegram_prefix + msg
+    print(msg)
+    telegram.send_telegram_message(telegram.telegram_token_main, "", msg)
+
 
