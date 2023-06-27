@@ -15,6 +15,8 @@ All notable changes to this project will be documented in this file.
 - General - Code adaptation to use scheduler
 ### Fixed
 - Dashboard - Top Performers - display the number with all decimal places 
+- Dashboard - Balances - avoid error if balances table is empty; refresh button to create balance snapshot
+- Dashboard - User reset password fix
 
 ## [2023-05-19]
  

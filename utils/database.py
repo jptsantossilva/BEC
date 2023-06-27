@@ -800,9 +800,9 @@ sql_update_user_password = """
     WHERE 
         username = ?
 """
-def update_user_password(connection, username: str, password: int):
+def update_user_password(connection, username: str, password: str):
     with connection:
-        connection.execute(sql_set_rank_from_positions, (password, username,))
+        connection.execute(sql_update_user_password, (password, username,))
 
 # Balances
 sql_create_balances_table = """

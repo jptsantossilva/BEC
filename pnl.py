@@ -27,6 +27,7 @@ st.set_page_config(
     }
 )
 
+# for testing purposes
 # st.session_state
 
 # im using to find which bots are running
@@ -106,8 +107,26 @@ def get_chart_total_balance():
         elif period_selected_balances == 'All Time':
             source = database.get_total_balance_usd_all_time(connection)
 
-        current_total_balance = source.Total_Balance_USD.iloc[-1]
-        st.caption(f'Current Total Balance: {current_total_balance}')
+        if source.empty:
+            st.warning('No data on Balances yet! Click Refresh.')
+            current_total_balance = 0
+        else:
+            current_total_balance = source.Total_Balance_USD.iloc[-1]
+        col1, col2 = st.columns([10, 1])
+        with col1:
+            st.caption(f'Current Total Balance: {current_total_balance}')
+        with col2:
+            refresh_balance = st.button("Refresh")
+
+        if refresh_balance:
+            with st.spinner('Creating balance snapshot...'):
+                exchange.create_balance_snapshot(telegram_prefix="")
+                # dasboard refresh
+                st.experimental_rerun()
+
+        # exit if there is no data to display on chart
+        if source.empty:
+            return
         
         hover = alt.selection_single(
             fields=["Date"],
@@ -174,6 +193,11 @@ def get_chart_asset_balances():
             source = database.get_asset_balances_ytd(connection)
         elif period_selected_asset == 'All Time':
             source = database.get_asset_balances_all_time(connection)
+
+        if source.empty:
+            st.warning('No data on Balances yet!')
+            # exit - there is no data to display on chart
+            return
 
         hover = alt.selection_single(
             fields=["Date"],
@@ -254,20 +278,20 @@ def realized_pnl():
             month_number = 13
 
         result_closed_positions, trades_month_1d, trades_month_4h, trades_month_1h = calculate_realized_pnl(str(year), str(month_number))
-        print("\nPnL - Total")
+        # print("\nPnL - Total")
         # apply the lambda function to make the last row bold
         # result_closed_positions = result_closed_positions.apply(lambda x: ['font-weight: bold' if i == len(x)-1 else '' for i in range(len(x))], axis=1)
 
-        print(result_closed_positions)
+        # print(result_closed_positions)
 
         st.header("Realized PnL - Total")
         # tab_rpnl.dataframe(result_closed_positions.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['Pnl_Perc','Pnl_Value']))
         st.dataframe(result_closed_positions.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
 
-        print("Realized PnL - Detail")
-        print(trades_month_1d)
-        print(trades_month_4h)
-        print(trades_month_1h)
+        # print("Realized PnL - Detail")
+        # print(trades_month_1d)
+        # print(trades_month_4h)
+        # print(trades_month_1h)
 
         st.header(f"Realized PnL - Detail")
         st.subheader("Bot 1d")
@@ -282,9 +306,9 @@ def realized_pnl():
 def unrealized_pnl():
     with tab_upnl:
         result_open_positions, positions_df_1d, positions_df_4h, positions_df_1h = calculate_unrealized_pnl()
-        print("\nUnrealized PnL - Total")
-        print('-------------------------------')
-        print(result_open_positions)
+        # print("\nUnrealized PnL - Total")
+        # print('-------------------------------')
+        # print(result_open_positions)
 
         if positions_df_1d.empty and positions_df_4h.empty and positions_df_1h.empty:
             st.warning('There are no open positions yet! 🤞') 
@@ -325,10 +349,10 @@ def unrealized_pnl():
 
         st.dataframe(data=result_open_positions.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
 
-        print("Unrealized PnL - Detail")
-        print(positions_df_1d)
-        print(positions_df_4h)
-        print(positions_df_1h)
+        # print("Unrealized PnL - Detail")
+        # print(positions_df_1d)
+        # print(positions_df_4h)
+        # print(positions_df_1h)
 
         st.header(f"Unrealized PnL - Detail")
         st.subheader("Bot 1d")
@@ -628,16 +652,38 @@ def check_open_positions(bot: str):
         msg = f"There are {num} open position on Bot_{bot}. If you turn the bot OFF this positions will remain open. Make sure you close them."
         st.warning(msg) 
 
-def reset_password():
-    # if authentication_status:
-    if st.session_state.authentication_status:
+def show_form_reset_password():
+    if st.session_state.authentication_status and st.session_state.reset_form_open:
         try:
-            if authenticator.reset_password(st.session_state.username, 'Reset password'):
-                st.success('Password modified successfully')
-                new_passw = authenticator.credentials['usernames'][st.session_state.username]['password']
-                database.update_user_password(connection, username=st.session_state.username, password=new_passw)
-            else:
-                new_passw = authenticator.credentials['usernames'][st.session_state.username]['password']
+            with st.form(key="reset_password"):
+                st.subheader("Reset password")
+                # password = st.text_input('Current password', type='password')
+                new_password = st.text_input('New password', type='password')
+                new_password_repeat = st.text_input('Repeat password', type='password')
+
+                # st.form_submit_button(label='Reset Password', on_click=reset_password_submitted(True))
+                submitted = st.form_submit_button(label='Reset Password')
+                if submitted:
+                    reset_password_submitted(True)
+
+            if 'reset_password_submitted' in  st.session_state:
+                if st.session_state.reset_password_submitted == True:
+                    if len(new_password) > 0:
+                        if new_password == new_password_repeat:
+                            if 1 == 1: #password != new_password: 
+                                new_password_hashed = stauth.Hasher([new_password]).generate()[0]
+                                database.update_user_password(connection, username=st.session_state.username, password=new_password_hashed)
+                                st.success('Password updated!')
+                                time.sleep(3)
+                                reset_password_submitted(False)
+                                reset_form_open(False)
+                                st.experimental_rerun()
+                            else:
+                                st.error('New and current passwords are the same')
+                        else:
+                            st.error('Passwords do not match')
+                    else:
+                        st.error('No new password provided')
 
         except Exception as e:
             st.error(e)
@@ -684,24 +730,24 @@ def get_year_month(date):
 
 def calculate_realized_pnl(year: str, month: str):
 
-    print(f'Year = {year}')
-    if month == '13':
-        print(f'Month = ALL')
-    else:
-        print(f'Month = {month}')
+    # print(f'Year = {year}')
+    # if month == '13':
+    #     print(f'Month = ALL')
+    # else:
+    #     print(f'Month = {month}')
 
-    print('\n Realized PnL')
-    print('---------------------')
+    # print('\n Realized PnL')
+    # print('---------------------')
     
     
     df_month_1d = database.get_orders_by_bot_side_year_month(connection, bot="1d", side="SELL", year=year, month=month)
     df_month_4h = database.get_orders_by_bot_side_year_month(connection, bot="4h", side="SELL", year=year, month=month)
     df_month_1h = database.get_orders_by_bot_side_year_month(connection, bot="1h", side="SELL", year=year, month=month)
     
-    print('')              
-    print(df_month_1d)
-    print(df_month_4h)
-    print(df_month_1h)
+    # print('')              
+    # print(df_month_1d)
+    # print(df_month_4h)
+    # print(df_month_1h)
     
     results_df = pd.DataFrame()
     # results_df = pd.DataFrame(columns=['bot','Year','Month','pnl_%','pnl_value','trades'])
@@ -753,8 +799,8 @@ def calculate_realized_pnl(year: str, month: str):
 
 def calculate_unrealized_pnl():
     
-    print('\nUnrealized PnL')
-    print('---------------------')
+    # print('\nUnrealized PnL')
+    # print('---------------------')
 
     # results_df = pd.DataFrame(columns=['bot','pnl_%','pnl_value','positions'])
 
@@ -762,11 +808,11 @@ def calculate_unrealized_pnl():
     df_positions_4h = database.get_unrealized_pnl_by_bot(connection, bot="4h")
     df_positions_1h = database.get_unrealized_pnl_by_bot(connection, bot="1h")
 
-    print('')              
+    # print('')              
     
-    print(df_positions_1d)
-    print(df_positions_4h)
-    print(df_positions_1h)
+    # print(df_positions_1d)
+    # print(df_positions_4h)
+    # print(df_positions_1h)
 
     # dataframe with totals
     results_df = pd.DataFrame()
@@ -822,7 +868,29 @@ def last_row_bold(row):
         return f'background-color: black'
     return ['']*len(row)
 
-def show_login_page():
+def reset_form_open(state):
+    if 'reset_form_open' in  st.session_state:
+        st.session_state.reset_form_open = state
+
+def reset_password_submitted(state):
+    if 'reset_password_submitted' in  st.session_state:
+        st.session_state.reset_password_submitted = state
+
+def main():
+
+    # Initialization
+    if 'name' not in  st.session_state:
+        st.session_state.name = ''
+    if 'username' not in  st.session_state:
+        st.session_state.username = ''
+    if 'user_password' not in  st.session_state:
+        st.session_state.user_password = 'None'
+    if 'reset_form_open' not in st.session_state:
+        st.session_state.reset_form_open = False
+    if 'reset_password_submitted' not in  st.session_state:
+        st.session_state.reset_password_submitted = False
+    # if 'authentication_status' not in  st.session_state:
+    #     st.session_state.authentication_status = None
 
     # connect to database
     global connection
@@ -850,10 +918,17 @@ def show_login_page():
     name, authentication_status, username = authenticator.login('Login', 'main')
     st.session_state.name = name
     st.session_state.username = username
+    # st.session_state.user_password = authenticator.credentials['usernames'][username]['password']
 
     if authentication_status:
         authenticator.logout('Logout', 'sidebar')
-        st.sidebar.button("Reset", on_click=reset_password)
+        
+        # reset_clicked = st.sidebar.button("Reset", on_click=reset_form_open(True))
+        reset_clicked = st.sidebar.button("Reset")
+        if reset_clicked:
+            reset_form_open(True)
+        show_form_reset_password()
+
         st.sidebar.title(f'Welcome *{st.session_state.name}*')
         show_main_page()
     elif authentication_status == False:
@@ -861,16 +936,8 @@ def show_login_page():
     elif authentication_status == None:
         st.warning('Please enter your username and password')
 
-    # if st.session_state["authentication_status"]:
-    #     authenticator.logout('Logout', 'main')
-    #     st.write(f'Welcome *{st.session_state["name"]}*')
-    #     st.title('Some content')
-    # elif st.session_state["authentication_status"] is False:
-    #     st.error('Username/password is incorrect')
-    # elif st.session_state["authentication_status"] is None:
-    #     st.warning('Please enter your username and password')
-
-show_login_page()
+if __name__ == "__main__":
+    main()
 
 
 
