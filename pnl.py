@@ -407,21 +407,22 @@ def top_performers():
     with tab_top_perf:
         st.subheader(f"Top {config.trade_top_performance} Performers")
         df_mp = database.get_all_symbols_by_market_phase(connection)
-        # df_mp['Price'] = df_mp['Price'].apply(lambda x:f'{{:.{num_decimals}f}}'.format(x))
-        # df_mp['DSMA50'] = df_mp['DSMA50'].apply(lambda x:f'{{:.{num_decimals}f}}'.format(x))
-        # df_mp['DSMA200'] = df_mp['DSMA200'].apply(lambda x:f'{{:.{num_decimals}f}}'.format(x))
+        df_mp['Price'] = df_mp['Price'].apply(lambda x:f'{{:.{8}f}}'.format(x))
+        df_mp['DSMA50'] = df_mp['DSMA50'].apply(lambda x:f'{{:.{8}f}}'.format(x))
+        df_mp['DSMA200'] = df_mp['DSMA200'].apply(lambda x:f'{{:.{8}f}}'.format(x))
         df_mp['Perc_Above_DSMA50'] = df_mp['Perc_Above_DSMA50'].apply(lambda x:'{:.2f}'.format(x))
         df_mp['Perc_Above_DSMA200'] = df_mp['Perc_Above_DSMA200'].apply(lambda x:'{:.2f}'.format(x))
         st.dataframe(df_mp)
 
         filename = "Top_performers_"+config.trade_against+".txt"
-        with open(filename, "rb") as file:
-            st.download_button(
-                label="Download as TradingView List",
-                data=file,
-                file_name=filename,
-                mime='text/csv',
-            ) 
+        if os.path.exists(filename):
+            with open(filename, "rb") as file:
+                st.download_button(
+                    label="Download as TradingView List",
+                    data=file,
+                    file_name=filename,
+                    mime='text/csv',
+                ) 
 
         st.subheader(f"Historical Top Performers")
         st.caption("Symbols that spend the most number of days in the bullish or accumulating phases")
@@ -621,7 +622,8 @@ def show_main_page():
     trade_against = get_trade_against()
 
     global num_decimals
-    num_decimals = 8 if trade_against == "BTC" else 2  
+    # num_decimals = 8 if trade_against == "BTC" else 2
+    num_decimals = 2  
 
     # Get the current directory
     current_dir = os.getcwd()
@@ -688,9 +690,9 @@ def show_form_reset_password():
         except Exception as e:
             st.error(e)
 
-def create_new_user():
+def create_user():
     try:
-        if authenticator.register_user('Register user'):
+        if authenticator.register_user(form_name='Register user', preauthorization=True):
             st.success('User registered successfully')
 
         # authenticator.credentials
@@ -928,6 +930,10 @@ def main():
         if reset_clicked:
             reset_form_open(True)
         show_form_reset_password()
+
+        # create_user_clicked = st.sidebar.button("Create User")
+        # if create_user_clicked:
+        #     create_user()
 
         st.sidebar.title(f'Welcome *{st.session_state.name}*')
         show_main_page()
