@@ -1,5 +1,9 @@
 # BEC - Bot-EMA-Cross
-EMA-Cross fully automatic trading bot for Binance Spot with Telegram integration and web dashboard
+EMA-Cross fully automatic trading bot for Binance Spot with Telegram integration and web dashboard.
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=jptsantossilva/BEC&type=Date)](https://star-history.com/#jptsantossilva/BEC&Date)
 
 ## Installation
 [Installation instructions](https://docs.google.com/document/d/1ERtxjcdrznMWXragmBh5ZimIn6_PGn2sde0j_x4CktA/edit?usp=sharing)
