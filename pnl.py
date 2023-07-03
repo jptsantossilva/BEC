@@ -82,8 +82,8 @@ def get_trade_against():
         print(msg)
         # sys.exit(msg)
 
-def get_chart_total_balance():
-    expander_total_balance = st.expander(label=f"Total Balance", expanded=True)
+def get_chart_daily_balance():
+    expander_total_balance = st.expander(label=f"Daily Balance Snapshot", expanded=True)
     with expander_total_balance:
         period_selected_balances = st.radio(
             label='Choose Period',
@@ -114,7 +114,7 @@ def get_chart_total_balance():
             current_total_balance = source.Total_Balance_USD.iloc[-1]
         col1, col2 = st.columns([10, 1])
         with col1:
-            st.caption(f'Current Total Balance: {current_total_balance}')
+            st.caption(f'Last Daily Balance: {current_total_balance}')
         with col2:
             refresh_balance = st.button("Refresh")
 
@@ -141,8 +141,7 @@ def get_chart_total_balance():
             .mark_line()
             .encode(
                 x="Date",
-                # y="Total_Balance_USD",
-                y=alt.Y("Total_Balance_USD", scale=alt.Scale(domain=[source.Total_Balance_USD.min(),source.Total_Balance_USD.max()])),
+                y=alt.Y("Total_Balance_USD", title="Balance_BUSD",scale=alt.Scale(domain=[source.Total_Balance_USD.min(),source.Total_Balance_USD.max()])),
                 # color="Total_Balance_USD",
             )
         )
@@ -160,7 +159,7 @@ def get_chart_total_balance():
                 opacity=alt.condition(hover, alt.value(0.3), alt.value(0)),
                 tooltip=[
                     alt.Tooltip("Date", title="Date"),
-                    alt.Tooltip("Total_Balance_USD", title="Total_Balance_USD"),
+                    alt.Tooltip("Total_Balance_USD", title="Balance_USD"),
                 ],
             )
             .add_selection(hover)
@@ -169,8 +168,8 @@ def get_chart_total_balance():
         st.altair_chart(chart, use_container_width=True)
 
 
-def get_chart_asset_balances():
-    expander_asset_balances = st.expander(label="Asset Balances", expanded=True)
+def get_chart_daily_asset_balances():
+    expander_asset_balances = st.expander(label="Daily Asset Balances", expanded=True)
     with expander_asset_balances:
         period_selected_asset = st.radio(
             label='Choose Period',
@@ -406,6 +405,7 @@ def unrealized_pnl():
 def top_performers():
     with tab_top_perf:
         st.subheader(f"Top {config.trade_top_performance} Performers")
+        st.caption("The ranking order is determined by considering the price above the 200-day moving average (DSMA) in percentage terms.")
         df_mp = database.get_all_symbols_by_market_phase(connection)
         df_mp['Price'] = df_mp['Price'].apply(lambda x:f'{{:.{8}f}}'.format(x))
         df_mp['DSMA50'] = df_mp['DSMA50'].apply(lambda x:f'{{:.{8}f}}'.format(x))
@@ -634,8 +634,8 @@ def show_main_page():
     bot_selected = parent_dir
     st.caption(f'**{bot_selected}** - {trade_against}')
 
-    get_chart_total_balance()
-    get_chart_asset_balances()
+    get_chart_daily_balance()
+    get_chart_daily_asset_balances()
 
     global tab_upnl, tab_rpnl, tab_top_perf, tab_signals, tab_blacklist, tab_best_ema, tab_settings
     tab_upnl, tab_rpnl, tab_signals, tab_top_perf, tab_blacklist, tab_best_ema, tab_settings = st.tabs(["Unrealized PnL", "Realized PnL", "Signals", "Top Performers", "Blacklist", "Best EMA", "Settings"])

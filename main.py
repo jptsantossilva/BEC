@@ -321,6 +321,8 @@ def run(time_frame, run_mode):
 
     positions_summary(time_frame)
 
+    exchange.create_balance_snapshot(telegram_prefix="")
+
     # Close the database connection
     database.conn.close()
 
