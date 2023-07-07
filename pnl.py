@@ -622,8 +622,8 @@ def show_main_page():
     trade_against = get_trade_against()
 
     global num_decimals
-    # num_decimals = 8 if trade_against == "BTC" else 2
-    num_decimals = 2  
+    num_decimals = 8 if trade_against == "BTC" else 2
+    # num_decimals = 2  
 
     # Get the current directory
     current_dir = os.getcwd()
