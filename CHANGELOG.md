@@ -2,6 +2,14 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2023-07-07]
+ 
+### Added
+-
+### Changed
+- General - The Scheduler is still under development, so balances are still calculated at the end of each bot run.
+### Fixed
+- Dashboard - Realized and Unrealized profits - PnL_Values with 8 decimals places if trading against BTC 
 
 ## [2023-06-27]
  
@@ -14,7 +22,7 @@ All notable changes to this project will be documented in this file.
 - Dashboard - Current Total Balance - display value
 - General - Code adaptation to use scheduler
 ### Fixed
-- Dashboard - Top Performers - display the number with all decimal places 
+- Dashboard - Top Performers - display the prices with 8 decimal places 
 - Dashboard - Balances - avoid error if balances table is empty; refresh button to create balance snapshot
 - Dashboard - User reset password fix
 
