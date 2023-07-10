@@ -29,6 +29,7 @@ Check [here](https://github.com/jptsantossilva/BEC/blob/main/coinpairBestEma%20F
 ![dashboard](https://raw.githubusercontent.com/jptsantossilva/BEC/main/docs/dashboard.png)
 ![upnl](https://raw.githubusercontent.com/jptsantossilva/BEC/main/docs/upnl.png)
 ![rpnl](https://raw.githubusercontent.com/jptsantossilva/BEC/main/docs/rpnl.png)
+![signals](https://raw.githubusercontent.com/jptsantossilva/BEC/main/docs/signals.png)
 ![top_perf](https://raw.githubusercontent.com/jptsantossilva/BEC/main/docs/top_perf.png)
 ![blacklist](https://raw.githubusercontent.com/jptsantossilva/BEC/main/docs/blacklist.png)
 ![bema](https://raw.githubusercontent.com/jptsantossilva/BEC/main/docs/bema.png)
