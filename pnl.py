@@ -432,6 +432,13 @@ def top_performers():
 def signals():
     with tab_signals:
         st.subheader(f"Signals Log")
+        st.caption("These signals are just informative. They do not automatically trigger buy and sell orders. You can use these to help you make decisions about when to force a manual exit from an unrealized position.")
+        expander_signals = st.expander(label="Signals", expanded=False)
+        with expander_signals:
+            st.write("""**SUPER-RSI** - Triggered when all time-frames are below or above the defined level.
+                    \n RSI(14) 1d / 4h / 1h / 30m / 15m <= 25
+                    \n RSI(14) 1d / 4h / 1h / 30m / 15m >= 80""")
+            # st.divider()  # 👈 Draws a horizontal rule
         df_s = database.get_all_signals_log(connection, num_rows=100)
         st.dataframe(df_s)
 
