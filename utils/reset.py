@@ -23,10 +23,10 @@ database.delete_all_symbols_by_market_phase(database.conn)
 # symbols_To_Calc
 database.delete_all_symbols_to_calc(database.conn)
 
-# coinpairBestEma - best ema values
+# Best_Ema - best ema values
 database.delete_all_best_ema(database.conn)
 
-# blacklist - coins not to trade
+# blacklist - symbols not to trade
 database.delete_all_blacklist(database.conn)
 
 # clean log files

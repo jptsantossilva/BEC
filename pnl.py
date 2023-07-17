@@ -435,10 +435,10 @@ def signals():
         st.caption("These signals are just informative. They do not automatically trigger buy and sell orders. You can use these to help you make decisions about when to force a manual exit from an unrealized position.")
         expander_signals = st.expander(label="Signals", expanded=False)
         with expander_signals:
-            st.write("""**SUPER-RSI** - Triggered when all time-frames are below or above the defined level.
+            st.write("""**SUPER-RSI** - Triggered when all time-frames are below or above a defined level.
                     \n RSI(14) 1d / 4h / 1h / 30m / 15m <= 25
                     \n RSI(14) 1d / 4h / 1h / 30m / 15m >= 80""")
-            # st.divider()  # 👈 Draws a horizontal rule
+            # st.divider()  # Draws a horizontal line
         df_s = database.get_all_signals_log(connection, num_rows=100)
         st.dataframe(df_s)
 
@@ -572,9 +572,9 @@ def manage_config():
                 st.warning('Invalid or missing configuration: min_position_size')
                 st.stop()
             try:
-                trade_top_performance = st.slider('Trade Top Performance Coins', 1, 50, config['trade_top_performance'],
+                trade_top_performance = st.slider('Trade Top Performance Symbols', 1, 50, config['trade_top_performance'],
                                                 help="""
-                                                    Trade top X performance coins                                              
+                                                    Trade top X performance symbols                                              
                                                 """)
             except KeyError:
                 st.warning('Invalid or missing configuration: trade_top_performance')
