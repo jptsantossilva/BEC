@@ -74,52 +74,61 @@ def apply_arguments(time_frame):
         msg = "Incorrect time frame. Bye"
 
 def get_data(symbol, time_frame):
+    # get best ema
+    df_best_ema = database.get_best_ema_by_symbol_timeframe(connection=database.conn, symbol=symbol, time_frame=time_frame)
 
-    try:
-        # get best ema
-        df_best_ema = database.get_best_ema_by_symbol_timeframe(connection=database.conn, symbol=symbol, time_frame=time_frame)
+    if not df_best_ema.empty:
+        fast_ema = int(df_best_ema.Ema_Fast.values[0])
+        slow_ema = int(df_best_ema.Ema_Slow.values[0])
+    else:
+        fast_ema = int("0")
+        slow_ema = int("0")
 
-        if not df_best_ema.empty:
-            fast_ema = int(df_best_ema.Ema_Fast.values[0])
-            slow_ema = int(df_best_ema.Ema_Slow.values[0])
-        else:
-            fast_ema = int("0")
-            slow_ema = int("0")
+    global strategy_name
+    strategy_name = str(fast_ema)+"/"+str(slow_ema)+" EMA cross"
 
-        global strategy_name
-        strategy_name = str(fast_ema)+"/"+str(slow_ema)+" EMA cross"
-
-        # if bestEMA does not exist return empty dataframe in order to no use that trading pair
-        if fast_ema == 0:
-            frame = pd.DataFrame()
-            return frame, fast_ema, slow_ema
-        
-        # if best Ema exist get price data 
-        # lstartDate = str(1+gSlowMA*aTimeframeNum)+" "+lTimeframeTypeLong+" ago UTC"
-        # sma200 = 200
-        # lstartDate = str(sma200*aTimeframeNum)+" "+lTimeframeTypeLong+" ago UTC" 
-        # time_frame = str(time_frame_num)+time_frame_type_short
-        frame = pd.DataFrame(exchange.client.get_historical_klines(symbol,
-                                                                   time_frame    
-                                                                   # better get all historical data. 
-                                                                   # Using a defined start date will affect ema values. 
-                                                                   # To get same ema and sma values of tradingview all historical data must be used. 
-                                                                   # ,lstartDate)
-                                                                   ))
-
-        frame = frame[[0,4]]
-        frame.columns = ['Time','Close']
-        frame.Close = frame.Close.astype(float)
-        frame.Time = pd.to_datetime(frame.Time, unit='ms')
+    # if bestEMA does not exist return empty dataframe in order to no use that trading pair
+    if fast_ema == 0:
+        frame = pd.DataFrame()
         return frame, fast_ema, slow_ema
     
-    except Exception as e:
-        msg = sys._getframe(  ).f_code.co_name+" - "+symbol+" - "+repr(e)
+    
+    # makes 3 attempts to get historical data
+    max_retry = 3
+    retry_count = 1
+    success = False
+
+    while retry_count < max_retry and not success:
+        try:
+            frame = pd.DataFrame(exchange.client.get_historical_klines(symbol,
+                                                                        time_frame    
+                                                                        # better get all historical data. 
+                                                                        # Using a defined start date will affect ema values. 
+                                                                        # To get same ema and sma values of tradingview all historical data must be used. 
+                                                                        # ,lstartDate)
+                                                                        ))
+            success = True
+        except Exception as e:
+            retry_count += 1
+            msg = sys._getframe(  ).f_code.co_name+" - "+symbol+" - "+repr(e)
+            print(msg)
+            
+    if not success:
+        msg = f"Failed after {max_retry} tries to get historical data. Unable to retrieve data. "
+        msg = msg + sys._getframe(  ).f_code.co_name+" - "+symbol+" - "+repr(e)
         msg = telegram_prefix_sl + msg
         print(msg)
         telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
         frame = pd.DataFrame()
-        return frame 
+        return frame()
+    else:
+        frame = frame[[0,4]]
+        frame.columns = ['Time','Close']
+        # using dictionary to convert specific columns
+        convert_dict = {'Close': float}
+        frame = frame.astype(convert_dict)
+        frame.Time = pd.to_datetime(frame.Time, unit='ms')
+        return frame, fast_ema, slow_ema
 
 # calculates moving averages 
 def apply_technicals(df, fast_ema, slow_ema): 
@@ -226,7 +235,7 @@ def trade(time_frame, run_mode):
                                          curr_price=current_price)
 
 
-    # check coins not in positions and BUY if conditions are fulfilled
+    # check symbols not in positions and BUY if conditions are fulfilled
     for symbol in list_to_buy:
         df, fast_ema, slow_ema = get_data(symbol=symbol, time_frame=time_frame)
 

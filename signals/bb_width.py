@@ -20,20 +20,41 @@ import docs.database.database as database
 import utils.exchange as exchange
 import ta
 
-def get_data(Symbol, time_frame, start_date):
-    df = pd.DataFrame(exchange.client.get_historical_klines(Symbol,
-                                                            time_frame,
-                                                            start_date
-                                                            ))
-    
-    df = df.iloc[:,:6] # use the first 5 columns
-    df.columns = ['Time','Open','High','Low','Close','Volume'] #rename columns
-    df[['Open','High','Low','Close','Volume']] = df[['Open','High','Low','Close','Volume']].astype(float) #cast to float
-    df['Date'] = df['Time'].astype(str) 
-    # set the 'date' column as the DataFrame index
-    df.set_index(pd.to_datetime(df['Date'], unit='ms'), inplace=True) # make human readable timestamp)
-    df = df.drop(['Date'], axis=1)
-    return df
+def get_data(symbol, time_frame, start_date):
+    # makes 3 attempts to get historical data
+    max_retry = 3
+    retry_count = 1
+    success = False
+
+    while retry_count < max_retry and not success:
+        try:
+            df = pd.DataFrame(exchange.client.get_historical_klines(Symbol,
+                                                                    time_frame,
+                                                                    start_date
+                                                                    ))
+            success = True
+        except Exception as e:
+            retry_count += 1
+            msg = sys._getframe(  ).f_code.co_name+" - "+symbol+" - "+repr(e)
+            print(msg)
+
+    if not success:
+        msg = f"Failed after {max_retry} tries to get historical data. Unable to retrieve data. "
+        msg = msg + sys._getframe(  ).f_code.co_name+" - "+symbol+" - "+repr(e)
+        msg = telegram.telegram_prefix_signals_sl + msg
+        print(msg)
+        telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_WARNING, msg)
+        frame = pd.DataFrame()
+        return frame
+    else:
+        df = df.iloc[:,:6] # use the first 5 columns
+        df.columns = ['Time','Open','High','Low','Close','Volume'] #rename columns
+        df[['Open','High','Low','Close','Volume']] = df[['Open','High','Low','Close','Volume']].astype(float) #cast to float
+        df['Date'] = df['Time'].astype(str) 
+        # set the 'date' column as the DataFrame index
+        df.set_index(pd.to_datetime(df['Date'], unit='ms'), inplace=True) # make human readable timestamp)
+        df = df.drop(['Date'], axis=1)
+        return df
 
 #-----------------------------------------------------------------------
 # calculate RSI 

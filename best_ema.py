@@ -17,7 +17,7 @@ from utils.exchange import client
 pd.set_option("display.precision", 8)
 
 # log file to store error messages
-log_filename = "coinpairByMarketPhase.log"
+log_filename = "symbol_by_market_phase.log"
 logging.basicConfig(filename=log_filename, level=logging.INFO,
                     format='%(asctime)s %(message)s', datefmt='%Y-%m-%d %I:%M:%S %p -')
 
@@ -89,16 +89,46 @@ class EmaCross(Strategy):
                 self.position.close()
             
 def get_data(pSymbol, pTimeframe):
-    try:
-        frame = pd.DataFrame(client.get_historical_klines(pSymbol
-                                                        ,pTimeframe
+    # makes 3 attempts to get historical data
+    max_retry = 3
+    retry_count = 1
+    success = False
 
-                                                        # better get all historical data. 
-                                                        # Using a defined start date will affect ema values. 
-                                                        # To get same ema and sma values of tradingview all historical data must be used. 
-                                                        ,startdate
-                                                        ))
-        
+    while retry_count < max_retry and not success:
+        try:
+            frame = pd.DataFrame(client.get_historical_klines(pSymbol
+                                                            ,pTimeframe
+
+                                                            # better get all historical data. 
+                                                            # Using a defined start date will affect ema values. 
+                                                            # To get same ema and sma values of tradingview all historical data must be used. 
+                                                            ,startdate
+                                                            ))
+            success = True
+        except Exception as e:
+            # avoid error message in telegram if error is related to non-existing trading pair
+            # example: CREAMUSDT - BinanceAPIException(Response [400], 400, code:-1121,msg:Invalid symbol.)
+            msg = repr(e)
+            print(msg)
+            invalid_symbol_error = '"code":-1121,"msg":"Invalid symbol.'
+            if invalid_symbol_error in msg:             
+                frame = pd.DataFrame()
+                return frame 
+
+            retry_count += 1
+            msg = sys._getframe(  ).f_code.co_name+" - "+pSymbol+" - "+repr(e)
+            print(msg)
+
+    if not success:
+        msg = f"Failed after {max_retry} tries to get historical data. Unable to retrieve data. "
+        msg = msg + sys._getframe(  ).f_code.co_name+" - "+pSymbol+" - "+repr(e)
+        msg = telegram.telegram_prefix_market_phases_sl + msg
+        print(msg)
+
+        telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_WARNING, msg)
+        frame = pd.DataFrame()
+        return frame
+    else:            
         frame = frame.iloc[:,:6] # use the first 5 columns
         frame.columns = ['Time','Open','High','Low','Close','Volume'] #rename columns
         frame[['Open','High','Low','Close','Volume']] = frame[['Open','High','Low','Close','Volume']].astype(float) #cast to float
@@ -106,21 +136,7 @@ def get_data(pSymbol, pTimeframe):
         # frame.index = [dt.datetime.fromtimestamp(x/1000.0) for x in frame.Time]
         frame = frame.set_index(pd.DatetimeIndex(frame['Time']))
         frame = frame.drop(['Time'], axis=1)
-
         return frame
-    except Exception as e:
-        msg = sys._getframe(  ).f_code.co_name+" - "+pSymbol+" - "+repr(e)
-        msg = telegram.telegram_prefix_market_phases_sl + msg
-        print(msg)
-
-        # avoid error message in telegram if error is related to non-existing trading pair
-        # example: CREAMUSDT - BinanceAPIException(Response [400], 400, code:-1121,msg:Invalid symbol.)
-        invalid_symbol_error = '"code":-1121,"msg":"Invalid symbol.'
-        if invalid_symbol_error not in msg:             
-            telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_WARNING, msg)
-
-        frame = pd.DataFrame()
-        return frame 
 
 def run_backtest(symbol, timeframe):
     
@@ -170,6 +186,9 @@ def run_backtest(symbol, timeframe):
             # BUSD has more history
             print("BUSD pair has more historical data")
             df = dfStableBUSD.copy()
+
+    if df.empty:
+        return # exit function
 
     bt = Backtest(df, EmaCross, cash=100000, commission=0.001)
     stats = bt.run()

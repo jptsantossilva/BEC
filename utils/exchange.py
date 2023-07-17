@@ -132,7 +132,7 @@ def create_buy_order(symbol: str, bot: str, fast_ema: int, slow_ema: int):
     telegram_token = telegram.get_telegram_token(bot)
 
     try:
-        # separate symbol from stable. example symbol=BTCUSDT coinOnly=BTC coinStable=USDT
+        # separate symbol from stable. example symbol=BTCUSDT symbol_only=BTC symbol_stable=USDT
         symbol_only, symbol_stable = separate_symbol_and_trade_against(symbol)
 
         position_size = calc_stake_amount(symbol=symbol_stable, bot=bot)
@@ -299,41 +299,55 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = ''):
         telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
 
 def get_price_close_by_symbol_and_date(symbol: str, date: date):
-    try:
-        # Convert date to timestamp
-        # start_date_str = date.strftime('%Y-%m-%d')
-        timestamp = int(datetime.timestamp(date))
-        start_date = str(timestamp)
+    # Convert date to timestamp
+    # start_date_str = date.strftime('%Y-%m-%d')
+    timestamp = int(datetime.timestamp(date))
+    start_date = str(timestamp)
 
-        end_date = date + timedelta(days=1)
-        # end_date_str = date.strftime('%Y-%m-%d')
-        timestamp = int(datetime.timestamp(end_date))
-        end_date = str(timestamp)
+    end_date = date + timedelta(days=1)
+    # end_date_str = date.strftime('%Y-%m-%d')
+    timestamp = int(datetime.timestamp(end_date))
+    end_date = str(timestamp)
 
-        # Get historical klines for symbol on date
-        df = pd.DataFrame(client.get_historical_klines(symbol=symbol,
-                                                       interval=Client.KLINE_INTERVAL_1DAY,
-                                                       start_str=start_date,
-                                                       end_str=end_date
-                                                       ))
+    # Get historical klines for symbol on date
+    # makes 3 attempts to get historical data
+    max_retry = 3
+    retry_count = 1
+    success = False
 
+    while retry_count < max_retry and not success:
+        try:
+            df = pd.DataFrame(client.get_historical_klines(symbol=symbol,
+                                                        interval=Client.KLINE_INTERVAL_1DAY,
+                                                        start_str=start_date,
+                                                        end_str=end_date
+                                                        ))
+            success = True
+        except Exception as e:
+            retry_count += 1
+            msg = sys._getframe(  ).f_code.co_name+" - "+symbol+" - "+repr(e)
+            print(msg)
+
+    if not success:
+        msg = f"Failed after {max_retry} tries to get historical data. Unable to retrieve data. "
+        msg = msg + sys._getframe(  ).f_code.co_name+" - "+symbol+" - "+repr(e)
+        msg = telegram.telegram_prefix_market_phases_sl + msg
+        print(msg)
+        telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_WARNING, msg)
+        return float(0)
+    else:
         if df.empty:
             return float(0)
 
         df = df[[0,4]]
         df.columns = ['Time','Close']
-        df.Close = df.Close.astype(float)
+        # using dictionary to convert specific columns
+        convert_dict = {'Close': float}
+        df = df.astype(convert_dict)
         df.Time = pd.to_datetime(df.Time, unit='ms')
-
         # Return closing price
         return float(df['Close'][0])
-    except BinanceAPIException as e:
-        print(f"Binance API exception occurred: {e} - {symbol} - {date}")
-        return float(0)
-    except Exception as e:
-        print(f"An unexpected error occurred: {e} - {symbol} - {date}")
-        return float(0)
-
+        
 def create_balance_snapshot(telegram_prefix: str):
     msg = "Creating balance snapshot..."
     msg = telegram_prefix + msg

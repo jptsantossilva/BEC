@@ -37,27 +37,47 @@ def apply_technicals(df):
 
 
 def get_data(symbol, time_frame):
-    try:
-        frame = pd.DataFrame(exchange.client.get_historical_klines(symbol, time_frame,                                                           
-                                                        # better get all historical data. 
-                                                        # Using a defined start date will affect ema values. 
-                                                        # To get same ema and sma values of tradingview default historical data must be used.
-        ))
+    # makes 3 attempts to get historical data
+    max_retry = 3
+    retry_count = 1
+    success = False
+
+    while retry_count < max_retry and not success:
+        try:
+            frame = pd.DataFrame(exchange.client.get_historical_klines(symbol, time_frame,                                                           
+                                                            # better get all historical data. 
+                                                            # Using a defined start date will affect ema values. 
+                                                            # To get same ema and sma values of tradingview default historical data must be used.
+                                                            ))
+            success = True
+        except Exception as e:
+            retry_count += 1
+            msg = sys._getframe(  ).f_code.co_name+" - "+symbol+" - "+repr(e)
+            print(msg)
+
+    if not success:
+        msg = f"Failed after {max_retry} tries to get historical data. Unable to retrieve data. "
+        msg = msg + sys._getframe(  ).f_code.co_name+" - "+symbol+" - "+repr(e)
+        msg = telegram.telegram_prefix_market_phases_sl + msg
+        print(msg)
+        telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_WARNING, msg)
+        frame = pd.DataFrame()
+        return frame()
+    else:
         frame = frame.iloc[:, [0, 4]]  # Column selection
         frame.columns = ['Time', 'Price']  # Rename columns
-        frame[['Price']] = frame[['Price']].astype(float)  # Cast to float
+        
+        # frame[['Price']] = frame[['Price']].astype(float)  # Cast to float
+        # using dictionary to convert specific columns
+        convert_dict = {'Price': float}
+        frame = frame.astype(convert_dict)
+
         frame['Symbol'] = symbol
         # frame.index = [datetime.fromtimestamp(x / 1000.0) for x in frame.Time]
         frame.Time = pd.to_datetime(frame.Time, unit='ms')
         frame.index = frame.Time
         frame = frame[['Symbol', 'Price']]
         return frame
-    except Exception as e:
-        msg = sys._getframe().f_code.co_name + " - " + symbol + " - " + repr(e)
-        msg = telegram.telegram_prefix_market_phases_sl + msg
-        print(msg)
-        telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_WARNING, msg)
-        return pd.DataFrame()
     
 def read_arguments():    
     # Arguments
@@ -98,7 +118,7 @@ def get_symbols(trade_against):
         ):
             symbols.add(s['symbol'])
 
-    # From the symbols to trade, exclude coins from blacklist
+    # From the symbols to trade, exclude symbols from blacklist
     symbols -= blacklist
 
     symbols = sorted(symbols)
@@ -207,7 +227,7 @@ def main(time_frame, trade_against):
     df_top_print = df_top_print.reset_index(drop=True)
     df_top_print.index += 1
 
-    msg = f"Top {str(config.trade_top_performance)} performance coins:"
+    msg = f"Top {str(config.trade_top_performance)} performance symbols:"
     msg = telegram.telegram_prefix_market_phases_sl + msg
     print(msg)
     telegram.send_telegram_message(telegram.telegram_token_main, "", msg)
@@ -230,10 +250,10 @@ def main(time_frame, trade_against):
     telegram.send_telegram_file(telegram.telegram_token_main, filename)
 
     if not df_top.empty:
-        # Remove coins from position files that are not top performers in accumulation or bullish phase
+        # Remove symbols from position files that are not top performers in accumulation or bullish phase
         database.delete_positions_not_top_rank(database.conn)
 
-        # Add top rank coins with positive returns to positions files
+        # Add top rank symbols with positive returns to positions files
         database.add_top_rank_to_position(database.conn)
 
         # Delete rows with calc completed and keep only symbols with calc not completed
