@@ -17,14 +17,14 @@ Check [here](https://github.com/jptsantossilva/BEC/blob/main/coinpairBestEma%20F
 ## Features
 - Runs 1D, 4H and 1H time frames.
 - Trade against stables pairs (BUSD or USDT) or against BTC.
-- Automatically chooses, on a daily basis, coins that are in accumulation phase (price close>DSMA200>DSMA50) or bullish phase (price close>DSMA50>DSMA200).
-- For those coins in accumulation and bullish phases, calculates EMA cross combination (with [backtesting python library](https://kernc.github.io/backtesting.py)) with highest returns for 1D, 4H and 1H time frames. 4-years of historicals prices are used in backtesting. 
-- Each coin will be traded with its best EMA cross on each timeframe. 
-- If best EMA result is negative the coin will be ignored and will not be traded. 
+- Automatically chooses, on a daily basis, symbols that are in accumulation phase (price close>DSMA200>DSMA50) or bullish phase (price close>DSMA50>DSMA200).
+- For those symbols in accumulation and bullish phases, calculates EMA cross combination (with [backtesting python library](https://kernc.github.io/backtesting.py)) with highest returns for 1D, 4H and 1H time frames. 4-years of historicals prices are used in backtesting. 
+- Each symbol will be traded with its best EMA cross on each timeframe. 
+- If best EMA result is negative the symbols will be ignored and will not be traded. 
 - To calculate Best EMA against stable pairs uses the stable pair (BUSD or USDT) with more historical data.
 - Web dashboard with realized and unrealized PnL, blacklist, Top Performers, Best EMAs,.
-- Telegram message notifications - every time bot is executed; open position; close position; position status summary; coins in accumulation and bullish market phases
-- Blacklist - coins to be ignored. Bot will not trade them.
+- Telegram message notifications - every time bot is executed; open position; close position; position status summary; symbols in accumulation and bullish market phases
+- Blacklist - symbols to be ignored. Bot will not trade them.
 
 ![dashboard](https://raw.githubusercontent.com/jptsantossilva/BEC/main/docs/dashboard.png)
 ![upnl](https://raw.githubusercontent.com/jptsantossilva/BEC/main/docs/upnl.png)
