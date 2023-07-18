@@ -2,6 +2,15 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2023-07-17]
+ 
+### Added
+-
+### Changed
+- 
+### Fixed
+- General - Makes 3 attempts to get binance historical chart data.
+
 ## [2023-07-07]
  
 ### Added
