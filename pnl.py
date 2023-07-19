@@ -405,7 +405,7 @@ def unrealized_pnl():
 def top_performers():
     with tab_top_perf:
         st.subheader(f"Top {config.trade_top_performance} Performers")
-        st.caption("The ranking order is determined by considering the price above the 200-day moving average (DSMA) in percentage terms.")
+        st.caption("The top performers are those in accumulation phase (Price > 50DSMA and Price > 200DSMA and 50DSMA < 200DSMA) and bullish phase (Price > 50DSMA and Price > 200DSMA and 50DSMA > 200DSMA) and then sorted by the price above the 200-day moving average (DSMA) in percentage terms. [Click here for more details](https://twitter.com/jptsantossilva/status/1539976855469428738?s=20).")
         df_mp = database.get_all_symbols_by_market_phase(connection)
         df_mp['Price'] = df_mp['Price'].apply(lambda x:f'{{:.{8}f}}'.format(x))
         df_mp['DSMA50'] = df_mp['DSMA50'].apply(lambda x:f'{{:.{8}f}}'.format(x))
