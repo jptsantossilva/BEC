@@ -31,7 +31,7 @@ def get_data(symbol, time_frame, start_date):
 
     while retry_count < max_retry and not success:
         try:
-            df = pd.DataFrame(exchange.client.get_historical_klines(Symbol,
+            df = pd.DataFrame(exchange.client.get_historical_klines(symbol,
                                                                     time_frame,
                                                                     start_date
                                                                     ))
@@ -43,7 +43,7 @@ def get_data(symbol, time_frame, start_date):
 
     if not success:
         msg = f"Failed after {max_retry} tries to get historical data. Unable to retrieve data. "
-        msg = msg + sys._getframe(  ).f_code.co_name+" - "+symbol+" - "+repr(e)
+        msg = msg + sys._getframe(  ).f_code.co_name+" - "+symbol
         msg = telegram.telegram_prefix_signals_sl + msg
         print(msg)
         telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_WARNING, msg)
