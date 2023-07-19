@@ -194,14 +194,17 @@ def create_buy_order(symbol: str, bot: str, fast_ema: int, slow_ema: int):
         
     except BinanceAPIException as e:
         msg = "BUY create_order - "+repr(e)
+        msg = msg + " - " + symbol
         print(msg)
         telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
     except BinanceOrderException as e:
         msg = "BUY create_order - "+repr(e)
+        msg = msg + " - " + symbol
         print(msg)
         telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
     except Exception as e:
         msg = "BUY create_order - "+repr(e)
+        msg = msg + " - " + symbol
         print(msg)
         telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
         
@@ -330,7 +333,7 @@ def get_price_close_by_symbol_and_date(symbol: str, date: date):
 
     if not success:
         msg = f"Failed after {max_retry} tries to get historical data. Unable to retrieve data. "
-        msg = msg + sys._getframe(  ).f_code.co_name+" - "+symbol+" - "+repr(e)
+        msg = msg + sys._getframe(  ).f_code.co_name+" - "+symbol
         msg = telegram.telegram_prefix_market_phases_sl + msg
         print(msg)
         telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_WARNING, msg)

@@ -57,7 +57,7 @@ def get_data(symbol, time_frame):
 
     if not success:
         msg = f"Failed after {max_retry} tries to get historical data. Unable to retrieve data. "
-        msg = msg + sys._getframe(  ).f_code.co_name+" - "+symbol+" - "+repr(e)
+        msg = msg + sys._getframe(  ).f_code.co_name+" - "+symbol
         msg = telegram.telegram_prefix_market_phases_sl + msg
         print(msg)
         telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_WARNING, msg)
