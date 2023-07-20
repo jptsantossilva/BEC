@@ -55,12 +55,13 @@ psutil==5.9.4
 ptyprocess==0.7.0
 pure-eval==0.2.2
 pyarrow==11.0.0
+pycryptodome==3.18.0
 pydeck==0.8.0
 Pygments==2.14.0
 PyJWT==2.6.0
 Pympler==1.0.1
 pyrsistent==0.19.3
-python-binance==1.0.16
+python-binance==1.0.17
 python-dateutil==2.8.2
 pytz==2023.3
 pytz-deprecation-shim==0.1.0.post0
