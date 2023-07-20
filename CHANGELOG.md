@@ -2,12 +2,13 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
-## [2023-07-19]
+## [2023-07-20]
  
 ### Added
 -
 ### Changed
 - Dashboard - Top performers description update
+- General - Avoid quote order qty order if not supported
 ### Fixed
 - Signals - Fix symbol uppercase
 - General - Fix error message on getting binance historical chart data

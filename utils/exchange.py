@@ -43,6 +43,18 @@ def get_exchange_info():
 
     return exchange_info
 
+def get_symbol_info(symbol):
+    try:
+        exchange_info = client.get_symbol_info(symbol)
+    except Exception as e:
+            msg = "Error connecting to Binance. "+ repr(e)
+            print(msg)
+            logging.exception(msg)
+            telegram.send_telegram_message(telegram.telegram_token_errors, telegram.EMOJI_WARNING, msg)
+            sys.exit(msg)  
+
+    return exchange_info
+
 def adjust_size(symbol, amount):
     for filt in client.get_symbol_info(symbol)['filters']:
         if filt['filterType'] == 'LOT_SIZE':
@@ -138,12 +150,36 @@ def create_buy_order(symbol: str, bot: str, fast_ema: int, slow_ema: int):
         position_size = calc_stake_amount(symbol=symbol_stable, bot=bot)
             
         if position_size > 0:
-            order = client.create_order(symbol=symbol,
-                                        side=client.SIDE_BUY,
-                                        type=client.ORDER_TYPE_MARKET,
-                                        quoteOrderQty = position_size,
-                                        newOrderRespType = 'FULL') 
+
+            # check if Quote Order Qty MARKET orders are enabled
+            info = get_symbol_info(symbol)
+            # check if quote order feature is enabled
+            quote_order = info['quoteOrderQtyMarketAllowed']
+            # get symbol precision
+            symbol_precision = info['baseAssetPrecision']
             
+            if quote_order:
+                order = client.create_order(symbol=symbol,
+                                            side=client.SIDE_BUY,
+                                            type=client.ORDER_TYPE_MARKET,
+                                            quoteOrderQty = position_size,
+                                            newOrderRespType = 'FULL')
+            else:
+                # get symbol price
+                symbol_price = client.get_symbol_ticker(symbol=symbol)
+                # get symbol precision
+                symbol_precision = info['baseAssetPrecision']
+                # calc buy qty
+                buy_quantity = round(position_size/float(symbol_price['price']), symbol_precision)
+                # adjust buy qty considering binance LOT_SIZE rules
+                buy_quantity = adjust_size(symbol, buy_quantity)
+                # place order
+                order = client.create_order(symbol=symbol,
+                                            side=client.SIDE_BUY,
+                                            type=client.ORDER_TYPE_MARKET,
+                                            quantity = buy_quantity,
+                                            newOrderRespType = 'FULL')
+                 
             fills = order['fills']
             avg_price = sum([float(f['price']) * (float(f['qty']) / float(order['executedQty'])) for f in fills])
             avg_price = round(avg_price,8)
