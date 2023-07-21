@@ -84,7 +84,8 @@ def download_files_from_github():
             zip_ref.extractall(current_folder)
 
         # Find the extracted folder name (e.g., "BEC-main") and copy its contents to the current folder
-        extracted_folder = os.path.join(current_folder, os.listdir(current_folder)[1])
+        # extracted_folder = os.path.join(current_folder, os.listdir(current_folder)[1])
+        extracted_folder = os.path.join(current_folder, "BEC-main")
         for item in os.listdir(extracted_folder):
             item_path = os.path.join(extracted_folder, item)
             destination_path = os.path.join(current_folder, item)
