@@ -654,7 +654,7 @@ def check_app_version():
 
     github_last_date = extract_date_from_github_changelog()
     if github_last_date != last_date:
-        st.warning("Updated Available! A new version of the BEC is available. Click UPDATE to get the latest features and improvements. Check the [Change Log](https://github.com/jptsantossilva/BEC/blob/main/CHANGELOG.md) for more details.")
+        st.warning("Update Available! A new version of the BEC is available. Click UPDATE to get the latest features and improvements. Check the [Change Log](https://github.com/jptsantossilva/BEC/blob/main/CHANGELOG.md) for more details.")
         update_version = st.button('UPDATE')
         if update_version:
             with st.spinner('🎉 Hold on tight! 🎉 Our elves are sprinkling magic dust on the app to make it even better.'):
