@@ -52,7 +52,7 @@ def delete_files():
         elif os.path.isdir(item_path) and item not in files_to_keep:
             shutil.rmtree(item_path)
 
-    msg = "Deleted unnecessary files"
+    msg = "Deleted unnecessary files."
     print(msg)
     return msg
 
@@ -63,7 +63,7 @@ def rename_config_file():
 
     if os.path.exists(config_file_path):
         os.rename(config_file_path, renamed_config_file_path)
-        msg = "Configurations backup created successfully"
+        msg = "Configurations backup created successfully."
     else:
         msg = "No 'config.yaml' file found. Skipping rename process."
     

@@ -643,34 +643,8 @@ def extract_date_from_github_changelog():
     else:
         print("Failed to fetch the GitHub CHANGELOG.md content.")
         return None
-
-
-def show_main_page():
     
-    # paths = find_file_paths('data.db')
-    # bot_names = get_bot_names(paths)
-
-    #sidebar with available bots
-    # with st.sidebar:
-    #     bot_selected = st.radio("Choose Bot:",(bot_names))
-
-    # global connection
-    # connection = database.connect_to_bot(bot_selected)
-    
-    # trade_against = get_trade_against(bot_selected)
-    trade_against = get_trade_against()
-
-    global num_decimals
-    num_decimals = 8 if trade_against == "BTC" else 2
-    # num_decimals = 2  
-
-    # Get the current directory
-    current_dir = os.getcwd()
-    # Get the parent directory
-    parent_dir = os.path.basename(current_dir)
-
-    global bot_selected
-    bot_selected = parent_dir
+def check_app_version():
     last_date = extract_date_from_changelog()
     if last_date:
         app_version = last_date
@@ -683,9 +657,38 @@ def show_main_page():
         st.warning("Updated Available! A new version of the BEC is available. Click UPDATE to get the latest features and improvements. Check the [Change Log](https://github.com/jptsantossilva/BEC/blob/main/CHANGELOG.md) for more details.")
         update_version = st.button('UPDATE')
         if update_version:
-            with st.spinner('🎉 Hold on tight! 🎉 Our elves are sprinkling magic dust on the app to make it even better. balance snapshot...'):
+            with st.spinner('🎉 Hold on tight! 🎉 Our elves are sprinkling magic dust on the app to make it even better.'):
                 result = update.main() 
-                st.code(result)        
+                st.code(result)
+
+                rest_num = 5
+                progress_text = f"App will restart in {rest_num}"
+                my_bar = st.progress(0, text=progress_text)
+                for percent_complete in range(100):
+                    time.sleep(1)
+                    rest_num -= 1
+                    progress_text = f"App will restart in {rest_num}"
+                    my_bar.progress(percent_complete + 20, text=progress_text)
+                st.experimental_rerun()
+
+def show_main_page():
+    
+    global trade_against
+    trade_against = get_trade_against()
+
+    global num_decimals
+    num_decimals = 8 if trade_against == "BTC" else 2
+    # num_decimals = 2  
+
+    # Get the current directory
+    current_dir = os.getcwd()
+    # Get the parent directory
+    parent_dir = os.path.basename(current_dir)
+
+    global bot_selected
+    bot_selected = parent_dir  
+
+    check_app_version()      
 
     get_chart_daily_balance()
     get_chart_daily_asset_balances()
