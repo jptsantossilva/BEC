@@ -5,6 +5,8 @@ import os
 import yaml
 import sys
 import calendar
+import re
+import requests
 
 import streamlit as st
 from millify import millify
@@ -15,15 +17,19 @@ import utils.database as database
 import utils.config as config
 import utils.exchange as exchange
 
+import update 
+
 st.set_page_config(
     page_title="Bot Dashboard App",
     page_icon="random",
     layout="wide",
     initial_sidebar_state="collapsed",
     menu_items={
-        'Get Help': 'https://github.com/jptsantossilva/Binance-Trading-bot-EMA-Cross#readme',
-        'Report a bug': "https://github.com/jptsantossilva/Binance-Trading-bot-EMA-Cross/issues/new",
-        'About': "# I am a Trading Bot \nI do not have a name yet but I'm trying to be an *extremely* cool app!"
+        'Get Help': 'https://github.com/jptsantossilva/BEC#readme',
+        'Report a bug': "https://github.com/jptsantossilva/BEC/issues/new",
+        'About': """# My name is BEC \n I am a Trading Bot and I'm trying to be an *extremely* cool app! 
+        \n This is my dad's 🐦 Twitter: [@jptsantossilva](https://twitter.com/jptsantossilva).
+        """
     }
 )
 
@@ -613,6 +619,32 @@ def manage_config():
         st.warning('Permission denied: could not write to config file!')
         st.stop()
 
+def extract_date_from_changelog():
+    file_path = "CHANGELOG.md"
+    with open(file_path, 'r') as file:
+        content = file.read()
+        match = re.search(r'##\s*\[(.*?)\]', content)
+        if match:
+            return match.group(1)
+        else:
+            return None
+        
+def extract_date_from_github_changelog():
+    github_url = "https://github.com/jptsantossilva/BEC/raw/main/CHANGELOG.md"
+
+    response = requests.get(github_url)
+    if response.status_code == 200:
+        content = response.text
+        match = re.search(r'##\s*\[(.*?)\]', content)
+        if match:
+            return match.group(1)
+        else:
+            return None
+    else:
+        print("Failed to fetch the GitHub CHANGELOG.md content.")
+        return None
+
+
 def show_main_page():
     
     # paths = find_file_paths('data.db')
@@ -639,7 +671,21 @@ def show_main_page():
 
     global bot_selected
     bot_selected = parent_dir
-    st.caption(f'**{bot_selected}** - {trade_against}')
+    last_date = extract_date_from_changelog()
+    if last_date:
+        app_version = last_date
+    else:
+        app_version = "App version not found"
+    st.caption(f'**{bot_selected}** - {trade_against} - App Version {app_version}')
+
+    github_last_date = extract_date_from_github_changelog()
+    if github_last_date != last_date:
+        st.warning("Updated Available! A new version of the BEC is available. Click UPDATE to get the latest features and improvements. Check the [Change Log](https://github.com/jptsantossilva/BEC/blob/main/CHANGELOG.md) for more details.")
+        update_version = st.button('UPDATE')
+        if update_version:
+            with st.spinner('🎉 Hold on tight! 🎉 Our elves are sprinkling magic dust on the app to make it even better. balance snapshot...'):
+                result = update.main() 
+                st.code(result)        
 
     get_chart_daily_balance()
     get_chart_daily_asset_balances()

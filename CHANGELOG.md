@@ -2,6 +2,14 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2023-07-21]
+ 
+### Added
+- Dashboard - Added update feature. Easy way to update BEC to most recent version. 
+### Changed
+- Dashboard - About information updated
+### Fixed
+
 ## [2023-07-20]
  
 ### Added
