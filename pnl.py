@@ -662,13 +662,9 @@ def check_app_version():
                 st.code(result)
 
                 rest_num = 5
-                progress_text = f"App will restart in {rest_num}"
-                my_bar = st.progress(0, text=progress_text)
-                for percent_complete in range(100):
-                    time.sleep(1)
-                    rest_num -= 1
-                    progress_text = f"App will restart in {rest_num}"
-                    my_bar.progress(percent_complete + 20, text=progress_text)
+                progress_text = f"App will restart in {rest_num} seconds."
+                st.write(progress_text)
+                time.sleep(rest_num)
                 st.experimental_rerun()
 
 def show_main_page():
