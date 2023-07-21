@@ -661,23 +661,23 @@ def check_app_version():
                 result = update.main() 
                 st.code(result)
 
-                # rest_num = 5
-                # progress_text = f"App will restart in {rest_num} seconds."
-                # st.write(progress_text)
-                # time.sleep(rest_num)
-                # st.experimental_rerun()
+                rest_num = 5
+                progress_text = f"App will restart in {rest_num} seconds."
+                st.write(progress_text)
+                time.sleep(rest_num)
+                st.experimental_rerun()
 
-                restart_time = 5
-                progress_text = f"App will restart in {restart_time} seconds."
-                my_bar = st.progress(0, text=progress_text)
+                # restart_time = 5
+                # progress_text = f"App will restart in {restart_time} seconds."
+                # my_bar = st.progress(0, text=progress_text)
 
-                for step in range(6):
-                    progress_percent = step * 20
-                    if progress_percent != 0:
-                        restart_time -= 1
-                        progress_text = f"App will restart in {restart_time} seconds."
-                    my_bar.progress(progress_percent, text=progress_text)
-                    time.sleep(1)  
+                # for step in range(6):
+                #     progress_percent = step * 20
+                #     if progress_percent != 0:
+                #         restart_time -= 1
+                #         progress_text = f"App will restart in {restart_time} seconds."
+                #     my_bar.progress(progress_percent, text=progress_text)
+                #     time.sleep(1)  
 
 def show_main_page():
     
