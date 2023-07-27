@@ -2,6 +2,15 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2023-07-27]
+ 
+### Added
+- Dashboard - Realized PnL - Show EMA fast and EMA slow values. 
+### Changed
+- 
+### Fixed
+- General - fix bug when calculating position duration due to position open date using milliseconds or just seconds 
+
 ## [2023-07-21]
  
 ### Added
@@ -9,6 +18,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - Dashboard - About information updated
 ### Fixed
+-
 
 ## [2023-07-20]
  
