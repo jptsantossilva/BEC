@@ -212,6 +212,8 @@ sql_get_orders_by_bot_side_year_month = """
         Qty,
         PnL_Perc,
         PnL_Value,
+        Ema_Fast,
+        Ema_Slow,
         Exit_Reason
     FROM Orders
     WHERE
@@ -224,7 +226,7 @@ def get_orders_by_bot_side_year_month(connection, bot: str, side: str, year: str
     month = month.zfill(2)
 
     if year == None:
-        df = pd.DataFrame(columns=['Bot', 'Symbol', 'Date', 'Qty', 'PnL_Perc', 'PnL_Value', 'Exit_Reason'])
+        df = pd.DataFrame(columns=['Bot', 'Symbol', 'Date', 'Qty', 'PnL_Perc', 'PnL_Value', 'Ema_Fast','Ema_Slow','Exit_Reason'])
         return df
     
     if month == '13':
@@ -417,7 +419,13 @@ def update_position_pnl(connection, bot: str, symbol: str, curr_price: float):
         
         duration = None
         if date != 'None':
-            datetime_open_position = datetime.strptime(date, '%Y-%m-%d %H:%M:%S.%f')
+            try:
+                # Try parsing with milliseconds format
+                datetime_open_position = datetime.strptime(date, '%Y-%m-%d %H:%M:%S.%f')
+            except ValueError:
+                # If parsing with milliseconds format fails, try parsing without milliseconds format
+                datetime_open_position = datetime.strptime(date, '%Y-%m-%d %H:%M:%S')
+
             diff_seconds = int((datetime_now - datetime_open_position).total_seconds())
             duration = str(calc_duration(diff_seconds))
 
