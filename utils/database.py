@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit_authenticator as stauth
 
 from utils import config
+from utils.general import separate_symbol_and_trade_against
 
 def connect(path: str = ""):
     conn = None
@@ -78,6 +79,16 @@ sql_get_orders_by_bot = "SELECT * FROM Orders WHERE Bot = ?;"
 def get_orders_by_bot(connection, bot):
     return pd.read_sql(sql_get_orders_by_bot, connection, params=(bot,))
 
+sql_get_orders_by_exchange_order_id = """
+    SELECT * 
+    FROM Orders 
+    WHERE 
+        Exchange_Order_Id = ?
+    LIMIT 1;
+    """
+def get_orders_by_exchange_order_id(connection, order_id):
+    return pd.read_sql(sql_get_orders_by_exchange_order_id, connection, params=(order_id,))
+    
 sql_delete_all_orders = "DELETE FROM Orders;"
 def delete_all_orders(connection):
     with connection:
@@ -153,20 +164,28 @@ sql_add_order_sell = """
         Exit_Reason)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?);        
 """
-def add_order_sell(connection, exchange_order_id: str, date: str, bot: str, symbol: str, price: float, qty: float, ema_fast: int, ema_slow: int, exit_reason: str):
-    df_last_buy_order = get_last_buy_order_by_bot_symbol(connection, bot, symbol)
+def add_order_sell(connection, sell_order_id: str, buy_order_id: str, date: str, bot: str, symbol: str, price: float, qty: float, ema_fast: int, ema_slow: int, exit_reason: str):
+    # sell_order_id and buy_order_id are the exchange ids from the exchange order
 
-    if df_last_buy_order.empty:
-        print("DataFrame is empty")
-        buy_order_id = ''
+    if buy_order_id == 0:
+        msg = "No Buy_Order_ID!"
+        print(msg)        
+
+        order_id = str(0)
         buy_price = 0
         buy_qty = 0
         pnl_perc = 0
         pnl_value = 0
+        
     else:
-        buy_order_id = str(df_last_buy_order.loc[0, 'Id'])
-        buy_price = float(df_last_buy_order.loc[0, 'Price'])
-        buy_qty = float(df_last_buy_order.loc[0, 'Qty'])
+        df_buy_order = get_orders_by_exchange_order_id(connection=connection, 
+                                                       order_id=buy_order_id)
+        # buy_order_id = buy_order_id #str(df_last_buy_order.loc[0, 'Id'])
+        buy_price = float(df_buy_order.loc[0, 'Price'])
+        buy_qty = float(df_buy_order.loc[0, 'Qty'])
+        
+        # order_id is the primary key of Orders table
+        order_id = str(df_buy_order.loc[0, 'Id'])
 
         sell_price = price
         sell_qty = qty
@@ -179,7 +198,7 @@ def add_order_sell(connection, exchange_order_id: str, date: str, bot: str, symb
     side = "SELL"
 
     with connection:
-        connection.execute(sql_add_order_sell, (exchange_order_id, 
+        connection.execute(sql_add_order_sell, (sell_order_id, 
                                                 date, 
                                                 bot, 
                                                 symbol, 
@@ -190,7 +209,7 @@ def add_order_sell(connection, exchange_order_id: str, date: str, bot: str, symb
                                                 ema_slow, 
                                                 pnl_perc, 
                                                 pnl_value, 
-                                                buy_order_id, 
+                                                order_id, 
                                                 exit_reason))
         return float(pnl_value), float(pnl_perc)
 
@@ -199,27 +218,56 @@ sql_get_last_buy_order_by_bot_symbol = """
     WHERE 
         Side = 'BUY' 
         AND Bot = ?
-        AND Symbol = ?
+        AND Symbol LIKE ?
     ORDER BY Id DESC LIMIT 1;
 """
 def get_last_buy_order_by_bot_symbol(connection, bot: str, symbol: str):
+    symbol_only, symbol_stable = separate_symbol_and_trade_against(symbol)
+
+    # For those cases where the trade against changed, for example from BUSD to USDT, the BUY order can be BTCBUSD and the sell BTCUSDT.
+    # So, I want to search for the buy order in any stablecoin trading pair. BTCBUSD, BTCUSDT, BTCUSDC
+    four_chars = "____"
+    symbol = f'{symbol_only+four_chars}'  # Used underscores to represent any single character. 
     return pd.read_sql(sql_get_last_buy_order_by_bot_symbol, connection, params=(bot, symbol,))
 
+# sql_get_orders_by_bot_side_year_month = """
+#     SELECT Bot,
+#         Symbol,
+#         Date,
+#         Qty,
+#         PnL_Perc,
+#         PnL_Value,
+#         Ema_Fast,
+#         Ema_Slow,
+#         Exit_Reason
+#     FROM Orders
+#     WHERE
+#         Bot = ?
+#         AND Side = ?
+#         AND Date LIKE ?;
+# """
 sql_get_orders_by_bot_side_year_month = """
-    SELECT Bot,
-        Symbol,
-        Date,
-        Qty,
-        PnL_Perc,
-        PnL_Value,
-        Ema_Fast,
-        Ema_Slow,
-        Exit_Reason
-    FROM Orders
+    SELECT   
+        os.Id,
+        os.Bot,
+        os.Symbol,
+        os.PnL_Perc,
+        os.PnL_Value,
+        ob.Date as Buy_Date,
+        ob.Price as Buy_Price,
+        ob.Qty as Buy_Qty,
+        os.Date as Sell_Date,
+        os.Price as Sell_Price,
+        os.Qty as Sell_Qty,
+        os.Ema_Fast,
+        os.Ema_Slow,
+        os.Exit_Reason    
+    FROM Orders as os
+    LEFT JOIN orders ob ON os.Buy_Order_Id = ob.Id    
     WHERE
-        Bot = ?
-        AND Side = ?
-        AND Date LIKE ?;
+        os.Bot = ?
+        AND os.Side = ?
+        AND os.Date LIKE ?;
 """
 def get_orders_by_bot_side_year_month(connection, bot: str, side: str, year: str, month: str):
     # add a leading zero if necessary
@@ -466,16 +514,17 @@ def set_position_buy(connection, bot: str, symbol: str, qty: float, buy_price: f
 sql_set_position_sell = """
     UPDATE Positions
     SET 
+        Date = NULL,
         Position = 0,
-        Qty = 0,
         Buy_Price = 0,
         Curr_Price = 0,
+        Qty = 0,
+        Ema_Fast = NULL,
+        Ema_Slow = NULL,
         PnL_Perc = 0,
         PnL_Value = 0,
-        Duration = 0,
-        Date = NULL,
-        Ema_Fast = NULL,
-        Ema_Slow = NULL
+        Duration = 0,        
+        Buy_Order_Id = NULL
     WHERE
         Bot = ? 
         AND Symbol = ? ;        

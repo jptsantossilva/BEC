@@ -2,6 +2,17 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2023-09-08]
+ 
+### Added
+- Dashboard - Realized PnL - Added Buy_Price, Buy_Date, Buy_Qty to easily check buy and sell order details.
+- Settings - When changing Trading Against (only stables for now), for example from BUSD to USDT, it is now able to deal with a buy position in BUSD and sell it in USDT.   
+### Changed
+ - 
+### Fixed
+- Dashboard - Top Performers - Download top perf to TradingView is now using correct trade against symbol. The issue occurred when changing trade against. 
+- Database - When position sold was not cleaning the Buy_Order_Id   
+
 ## [2023-07-27]
  
 ### Added

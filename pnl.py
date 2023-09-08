@@ -147,7 +147,7 @@ def get_chart_daily_balance():
             .mark_line()
             .encode(
                 x="Date",
-                y=alt.Y("Total_Balance_USD", title="Balance_BUSD",scale=alt.Scale(domain=[source.Total_Balance_USD.min(),source.Total_Balance_USD.max()])),
+                y=alt.Y("Total_Balance_USD", title="Balance_USD",scale=alt.Scale(domain=[source.Total_Balance_USD.min(),source.Total_Balance_USD.max()])),
                 # color="Total_Balance_USD",
             )
         )
@@ -420,7 +420,7 @@ def top_performers():
         df_mp['Perc_Above_DSMA200'] = df_mp['Perc_Above_DSMA200'].apply(lambda x:'{:.2f}'.format(x))
         st.dataframe(df_mp)
 
-        filename = "Top_performers_"+config.trade_against+".txt"
+        filename = "Top_performers_"+trade_against+".txt"
         if os.path.exists(filename):
             with open(filename, "rb") as file:
                 st.download_button(
@@ -806,6 +806,13 @@ def calculate_realized_pnl(year: str, month: str):
     df_month_4h = database.get_orders_by_bot_side_year_month(connection, bot="4h", side="SELL", year=year, month=month)
     df_month_1h = database.get_orders_by_bot_side_year_month(connection, bot="1h", side="SELL", year=year, month=month)
     
+    # set decimal precision 
+    df_month_1d['Buy_Price'] = df_month_1d['Buy_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x))
+    df_month_1d['Sell_Price'] = df_month_1d['Sell_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x))
+    df_month_4h['Buy_Price'] = df_month_4h['Buy_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x))
+    df_month_4h['Sell_Price'] = df_month_4h['Sell_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x))
+    df_month_1h['Buy_Price'] = df_month_1h['Buy_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x))
+    df_month_1h['Sell_Price'] = df_month_1h['Sell_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x))
     # print('')              
     # print(df_month_1d)
     # print(df_month_4h)

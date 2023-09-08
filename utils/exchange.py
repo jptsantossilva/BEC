@@ -14,6 +14,9 @@ import utils.database as database
 
 client: Client = None
 
+# test_mode is used for testing purposes
+test_mode = False
+
 def connect():
     api_key = config.get_env_var('binance_api')
     api_secret = config.get_env_var('binance_secret')
@@ -266,15 +269,40 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = ''):
         sell_qty = adjust_size(symbol, sell_qty)
 
         if sell_qty > 0:
-            order = client.create_order(symbol=symbol,
-                                        side=client.SIDE_SELL,
-                                        type=client.ORDER_TYPE_MARKET,
-                                        quantity = sell_qty
-                                        )
-        
-            fills = order['fills']
-            avg_price = sum([float(f['price']) * (float(f['qty']) / float(order['executedQty'])) for f in fills])
-            avg_price = round(avg_price,8)
+            if not test_mode:
+                order = client.create_order(symbol=symbol,
+                                            side=client.SIDE_SELL,
+                                            type=client.ORDER_TYPE_MARKET,
+                                            quantity = sell_qty
+                                            )
+            
+                sell_order_id = str(order['orderId'])
+
+                fills = order['fills']
+                order_avg_price = sum([float(f['price']) * (float(f['qty']) / float(order['executedQty'])) for f in fills])
+                order_avg_price = round(order_avg_price,8)
+
+                order_sell_date = str(pd.to_datetime(order['transactTime'], unit='ms'))
+                order_symbol = order['symbol']
+                order_qty = float(order['executedQty'])
+                order_side = order['side']
+            elif test_mode:
+                sell_order_id = str(111)
+                order_avg_price = 1
+                order_sell_date = str(datetime.now())
+                order_symbol = symbol
+                order_qty = float(1)
+                order_side = "SELL"
+
+            # get Buy_Order_Id from positions table
+            df_pos = database.get_positions_by_bot_symbol_position(connection=database.conn, 
+                                                                   bot=bot, 
+                                                                   symbol=symbol, 
+                                                                   position=1)
+            if not df_pos.empty:
+                buy_order_id = str(df_pos['Buy_Order_Id'].iloc[0])
+            else:
+                buy_order_id = str(0)
 
             # update position with the sell order
             database.set_position_sell(database.conn,
@@ -283,12 +311,13 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = ''):
     
             # add to orders database table
             pnl_value, pnl_perc = database.add_order_sell(database.conn,
-                                                          exchange_order_id = str(order['orderId']),
-                                                          date = str(pd.to_datetime(order['transactTime'], unit='ms')),
+                                                          sell_order_id = sell_order_id,
+                                                          buy_order_id = buy_order_id,
+                                                          date = order_sell_date,
                                                           bot = bot,
                                                           symbol = symbol,
-                                                          price = avg_price,
-                                                          qty = float(order['executedQty']),
+                                                          price = order_avg_price,
+                                                          qty = order_qty,
                                                           ema_fast = fast_ema,
                                                           ema_slow = slow_ema,
                                                           exit_reason = reason)            
@@ -304,23 +333,23 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = ''):
             telegram_prefix = telegram.get_telegram_prefix(bot)
 
             # call send_telegram_alert with the appropriate alert type
-            telegram.send_telegram_alert(telegram_token,
-                                         telegram_prefix,
-                                         alert_type,
-                                         pd.to_datetime(order['transactTime'], unit='ms'), 
-                                         order['symbol'], 
-                                         bot,
-                                         strategy_name,
-                                         order['side'],
-                                         avg_price,
-                                         order['executedQty'],
-                                         avg_price*float(order['executedQty']),
-                                         pnl_perc,
-                                         pnl_value)
+            telegram.send_telegram_alert(telegram_token=telegram_token,
+                                         telegram_prefix=telegram_prefix,
+                                         emoji=alert_type,
+                                         date=order_sell_date, 
+                                         symbol=order_symbol, 
+                                         timeframe=bot,
+                                         strategy=strategy_name,
+                                         ordertype=order_side,
+                                         unitValue=order_avg_price,
+                                         amount=order_qty,
+                                         trade_against_value=order_avg_price*order_qty,
+                                         pnlPerc=pnl_perc,
+                                         pnl_trade_against=pnl_value)
         else:
             # if there is no qty on balance to sell we set the qty on positions table to zero
             # this can happen if we sell on the exchange (for example, due to a pump) before the bot sells it. 
-            database.set_position_sell(database.conn,
+            database.set_position_sell(connection=database.conn,
                                        bot=bot, 
                                        symbol=symbol)
         
@@ -420,7 +449,7 @@ def create_balance_snapshot(telegram_prefix: str):
     # This is usefull to avoid getting price from symbol that do not trade against stable
     exchange_info = get_exchange_info()
     symbols = set()
-    trade_against = "BUSD"
+    trade_against = "USDT" # TODO: config.trade_against
     for s in exchange_info['symbols']:
         if (s['symbol'].endswith(trade_against)
             and s['status'] == 'TRADING'):
