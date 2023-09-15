@@ -2,6 +2,20 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2023-09-15]
+ 
+### Added
+- Dashboard - Unrealized PnL - added Date to show when position was opened
+- Dashboard - Daily Account Balance now also in BTC. Was only in USD. Useful if you are more interested in accumulating satoshi rather than US dollars.
+### Changed
+- Dashboard - Settings - Trade against - removed BUSD option since it is going to be delisted. Check official announcement https://www.binance.com/en/support/announcement/binance-encourages-users-to-convert-busd-to-other-stablecoins-prior-to-february-2024-d392843e81fd4bc3a5f7e219aa01f34d 
+- Dashboard - Unrealized PnL - Buy_Price with increased decimal precision to make sure complete number number is shown.    
+- Market Phases - removed trade against input argument. It is getting from config file. This is useful to apply the correct trade against when changing trade against on settings. Previously there was a need to change the call for the symbols_by_market_phase.py in the cron jobs.
+- Backtest - EMAs with steps of 10 instead of 5. The idea is to avoid overfitting and decrease duration of the daily backtests.
+General - create balance snapshot - went from occurring every time the bot runs to when it calculates market phases. So now it only happens once a day.
+### Fixed
+- Dashboard - Realized PnL - Error fix when Buy_Price is None    
+
 ## [2023-09-08]
  
 ### Added

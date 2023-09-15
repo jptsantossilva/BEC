@@ -190,17 +190,17 @@ def run_backtest(symbol, timeframe):
     if df.empty:
         return # exit function
 
-    bt = Backtest(df, EmaCross, cash=100000, commission=0.001)
+    bt = Backtest(df, EmaCross, cash=100000, commission=0.005, trade_on_close=True)
     stats = bt.run()
     # print(stats)
     # bt.plot()
 
     stats, heatmap = bt.optimize(
-    n1=range(5, 100, 5),
-    n2=range(10, 200, 5),
-    constraint=lambda param: param.n1 < param.n2,
-    maximize='Equity Final [$]',
-    return_heatmap=True
+        n1=range(10, 100, 10),
+        n2=range(20, 200, 10),
+        constraint=lambda param: param.n1 < param.n2,
+        maximize='Equity Final [$]',
+        return_heatmap=True
     )
 
     dfbema = pd.DataFrame(heatmap.sort_values().iloc[-1:])

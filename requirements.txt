@@ -77,7 +77,7 @@ semver==3.0.0
 six==1.16.0
 smmap==5.0.0
 stack-data==0.6.2
-streamlit==1.22.0
+streamlit==1.26.0
 streamlit-authenticator==0.2.1
 ta==0.10.2
 tenacity==8.2.2

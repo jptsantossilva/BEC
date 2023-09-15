@@ -82,18 +82,17 @@ def get_data(symbol, time_frame):
 def read_arguments():    
     # Arguments
     n = len(sys.argv)
-    if n < 3:
+
+    if n < 2:
         print("Argument is missing")
         time_frame = input('Enter timeframe (1d, 8h, 4h):')
-        trade_against = input('Trade against USDT, BUSD or BTC:')
+        # trade_against = input('Trade against USDT or BTC:')
     else:
         # argv[0] in Python is always the name of the script.
         time_frame = sys.argv[1]
-        trade_against = sys.argv[2]
+        # trade_against = sys.argv[2]
 
-    # if timeframe == "1d": startdate = "200 day ago UTC"
-    # elif timeframe == "8h": startdate = str(8*200)+" hour ago UTC"
-    # elif timeframe == "4h": startdate = str(4*200)+" hour ago UTC"
+    trade_against = config.trade_against
 
     return time_frame, trade_against
 
@@ -182,6 +181,9 @@ def main(time_frame, trade_against):
     else:
         # Create a new connection
         database.conn = database.connect()
+
+    # create daily balance snapshot
+    exchange.create_balance_snapshot(telegram_prefix="")
     
     symbols = get_symbols(trade_against=trade_against)
     msg = str(len(symbols)) + " symbols found. Calculating market phases..."

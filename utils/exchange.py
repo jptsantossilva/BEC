@@ -417,7 +417,7 @@ def get_price_close_by_symbol_and_date(symbol: str, date: date):
         return float(df['Close'][0])
         
 def create_balance_snapshot(telegram_prefix: str):
-    msg = "Creating balance snapshot..."
+    msg = "Creating balance snapshot. It can take a few minutes..."
     msg = telegram_prefix + msg
     print(msg)
     telegram.send_telegram_message(telegram.telegram_token_main, "", msg)
@@ -483,15 +483,22 @@ def create_balance_snapshot(telegram_prefix: str):
                 else:
                     # convert snapshot_date from date to datetime
                     date = datetime.combine(snapshot_date, datetime.min.time())
-                    unit_price = get_price_close_by_symbol_and_date(symbol_with_trade_against, date)
-                    balance_usd = unit_price * daily_balance
+                    # get unit USDT price
+                    unit_price_usd = get_price_close_by_symbol_and_date(symbol_with_trade_against, date)
+                    balance_usd = unit_price_usd * daily_balance
+                    btc_value = get_price_close_by_symbol_and_date("BTCUSDT", date)
+                    unit_price_btc = unit_price_usd/btc_value
+                    balance_btc = unit_price_btc * daily_balance
 
                 df_new = pd.DataFrame({
                     'Date': [snapshot_date],
                     'Asset': [asset],
                     'Balance': [daily_balance],
+                    'USD_Price': [unit_price_usd],
+                    'BTC_Price': [btc_value],
                     'Balance_USD': [balance_usd],
-                    'Total_Balance_Of_BTC': [totalAssetOfBtc]
+                    'Balance_BTC': [balance_btc],
+                    'Total_Balance_BTC': [totalAssetOfBtc]
                     })
                 # add to total
                 df_balance = pd.concat([df_balance, df_new], ignore_index=True)
