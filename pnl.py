@@ -16,6 +16,7 @@ import altair as alt
 import utils.database as database
 import utils.config as config
 import utils.exchange as exchange
+import utils.general as general
 
 import update 
 
@@ -88,8 +89,11 @@ def get_trade_against():
         print(msg)
         # sys.exit(msg)
 
-def get_chart_daily_balance():
-    expander_total_balance = st.expander(label=f"Daily Balance Snapshot", expanded=True)
+def get_chart_daily_balance(asset):
+    if asset not in ["USD", "BTC"]:
+        return
+
+    expander_total_balance = st.expander(label=f"Daily Balance Snapshot - {asset}", expanded=False)
     with expander_total_balance:
         period_selected_balances = st.radio(
             label='Choose Period',
@@ -97,32 +101,36 @@ def get_chart_daily_balance():
             index=1,
             horizontal=True,
             label_visibility='collapsed',
-            key='period_selected_balances')
+            key=f'period_selected_balances_{asset}')
 
         if period_selected_balances == 'Last 7 days':
             n_days = 7
-            source = database.get_total_balance_usd_last_n_days(connection, n_days)
+            source = database.get_total_balance_last_n_days(connection, n_days, asset=asset)
         elif period_selected_balances == 'Last 30 days':
             n_days = 30
-            source = database.get_total_balance_usd_last_n_days(connection, n_days)
+            source = database.get_total_balance_last_n_days(connection, n_days, asset=asset)
         elif period_selected_balances == 'Last 90 days':
             n_days = 90
-            source = database.get_total_balance_usd_last_n_days(connection, n_days)
+            source = database.get_total_balance_last_n_days(connection, n_days, asset=asset)
         elif period_selected_balances == 'YTD':
-            source = database.get_total_balance_usd_ytd(connection)
+            source = database.get_total_balance_ytd(connection)
         elif period_selected_balances == 'All Time':
-            source = database.get_total_balance_usd_all_time(connection)
+            source = database.get_total_balance_all_time(connection)
 
         if source.empty:
             st.warning('No data on Balances yet! Click Refresh.')
             current_total_balance = 0
         else:
-            current_total_balance = source.Total_Balance_USD.iloc[-1]
+            if asset == "USD":
+                current_total_balance = source.Total_Balance_USD.iloc[-1]
+            elif asset == "BTC":
+                current_total_balance = source.Total_Balance_BTC.iloc[-1]
+
         col1, col2 = st.columns([10, 1])
         with col1:
             st.caption(f'Last Daily Balance: {current_total_balance}')
         with col2:
-            refresh_balance = st.button("Refresh")
+            refresh_balance = st.button("Refresh", key=f"refresh_balance_{asset}")
 
         if refresh_balance:
             with st.spinner('Creating balance snapshot...'):
@@ -140,17 +148,30 @@ def get_chart_daily_balance():
             on="mouseover",
             empty="none",
         )
-        lines = (
-            alt.Chart(source, 
-                    #   title="Total Balance USD Last 30 Days"
-                      )
-            .mark_line()
-            .encode(
-                x="Date",
-                y=alt.Y("Total_Balance_USD", title="Balance_USD",scale=alt.Scale(domain=[source.Total_Balance_USD.min(),source.Total_Balance_USD.max()])),
-                # color="Total_Balance_USD",
+        if asset == "USD":
+            lines = (
+                alt.Chart(source, 
+                        #   title="Total Balance USD Last 30 Days"
+                        )
+                .mark_line()
+                .encode(
+                    x="Date",
+                    y=alt.Y(f"Total_Balance_{asset}", title=f"Balance_{asset}",scale=alt.Scale(domain=[source.Total_Balance_USD.min(),source.Total_Balance_USD.max()])),
+                    # color="Total_Balance_USD",
+                )
             )
-        )
+        elif asset == "BTC":
+            lines = (
+                alt.Chart(source, 
+                        #   title="Total Balance USD Last 30 Days"
+                        )
+                .mark_line()
+                .encode(
+                    x="Date",
+                    y=alt.Y(f"Total_Balance_{asset}", title=f"Balance_{asset}",scale=alt.Scale(domain=[source.Total_Balance_BTC.min(),source.Total_Balance_BTC.max()])),
+                    # color="Total_Balance_USD",
+                )
+            )
 
         # Draw points on the line, and highlight based on selection
         points = lines.transform_filter(hover).mark_circle(size=70)
@@ -161,11 +182,11 @@ def get_chart_daily_balance():
             .mark_rule()
             .encode(
                 x="Date",
-                y="Total_Balance_USD",
+                y=f"Total_Balance_{asset}",
                 opacity=alt.condition(hover, alt.value(0.3), alt.value(0)),
                 tooltip=[
                     alt.Tooltip("Date", title="Date"),
-                    alt.Tooltip("Total_Balance_USD", title="Balance_USD"),
+                    alt.Tooltip(f"Total_Balance_{asset}", title=f"Balance_{asset}"),
                 ],
             )
             .add_selection(hover)
@@ -175,7 +196,7 @@ def get_chart_daily_balance():
 
 
 def get_chart_daily_asset_balances():
-    expander_asset_balances = st.expander(label="Daily Asset Balances", expanded=True)
+    expander_asset_balances = st.expander(label="Daily Asset Balances", expanded=False)
     with expander_asset_balances:
         period_selected_asset = st.radio(
             label='Choose Period',
@@ -452,7 +473,7 @@ def blacklist():
     with tab_blacklist:
         st.subheader("Blacklist")
         df_blacklist = database.get_symbol_blacklist(connection)
-        edited_blacklist = st.experimental_data_editor(df_blacklist, num_rows="dynamic")
+        edited_blacklist = st.data_editor(df_blacklist, num_rows="dynamic")
         blacklist_apply_changes = st.button("Save")
 
         if blacklist_apply_changes:
@@ -542,14 +563,14 @@ def manage_config():
                 st.warning('Invalid or missing configuration: tradable_balance_ratio')
                 st.stop()
             try:
-                trade_against = st.selectbox('Trade Against', ['BUSD', 'USDT', 'BTC'], index=['BUSD', 'USDT', 'BTC'].index(config['trade_against']),
-                                            help="""Trade against BUSD, USDT or BTC
+                trade_against = st.selectbox('Trade Against', ['USDT', 'BTC'], index=['USDT', 'BTC'].index(config['trade_against']),
+                                            help="""Trade against USDT or BTC
                                             """)
             except KeyError:
                 st.warning('Invalid or missing configuration: trade_against')
                 st.stop()
             try:
-                if trade_against in ["BUSD","USDT"]:
+                if trade_against in ["USDT"]:
                     trade_min_val = 0
                     trade_step = 1
                     trade_format = None
@@ -571,7 +592,7 @@ def manage_config():
                                                     value=trade_min_pos_size, 
                                                     step=trade_step,
                                                     format=trade_format,
-                                                    help="""If trade_against = BUSD or USDT => min_position_size = 20
+                                                    help="""If trade_against = USDT => min_position_size = 20
                                                         \nIf trade_against = BTC => min_position_size = 0.001
                                                     """)
             except KeyError:
@@ -618,41 +639,16 @@ def manage_config():
     except PermissionError:
         st.warning('Permission denied: could not write to config file!')
         st.stop()
-
-def extract_date_from_changelog():
-    file_path = "CHANGELOG.md"
-    with open(file_path, 'r') as file:
-        content = file.read()
-        match = re.search(r'##\s*\[(.*?)\]', content)
-        if match:
-            return match.group(1)
-        else:
-            return None
-        
-def extract_date_from_github_changelog():
-    github_url = "https://github.com/jptsantossilva/BEC/raw/main/CHANGELOG.md"
-
-    response = requests.get(github_url)
-    if response.status_code == 200:
-        content = response.text
-        match = re.search(r'##\s*\[(.*?)\]', content)
-        if match:
-            return match.group(1)
-        else:
-            return None
-    else:
-        print("Failed to fetch the GitHub CHANGELOG.md content.")
-        return None
     
 def check_app_version():
-    last_date = extract_date_from_changelog()
+    last_date = general.extract_date_from_local_changelog()
     if last_date:
         app_version = last_date
     else:
         app_version = "App version not found"
     st.caption(f'**{bot_selected}** - {trade_against} - App Version {app_version}')
 
-    github_last_date = extract_date_from_github_changelog()
+    github_last_date = general.extract_date_from_github_changelog()
     if github_last_date != last_date:
         st.warning("Update Available! A new version of the BEC is available. Click UPDATE to get the latest features and improvements. Check the [Change Log](https://github.com/jptsantossilva/BEC/blob/main/CHANGELOG.md) for more details.")
         update_version = st.button('UPDATE')
@@ -694,7 +690,8 @@ def show_main_page():
 
     check_app_version()      
 
-    get_chart_daily_balance()
+    get_chart_daily_balance(asset="USD")
+    get_chart_daily_balance(asset="BTC")
     get_chart_daily_asset_balances()
 
     global tab_upnl, tab_rpnl, tab_top_perf, tab_signals, tab_blacklist, tab_best_ema, tab_settings
@@ -801,18 +798,19 @@ def calculate_realized_pnl(year: str, month: str):
     # print('\n Realized PnL')
     # print('---------------------')
     
-    
     df_month_1d = database.get_orders_by_bot_side_year_month(connection, bot="1d", side="SELL", year=year, month=month)
     df_month_4h = database.get_orders_by_bot_side_year_month(connection, bot="4h", side="SELL", year=year, month=month)
     df_month_1h = database.get_orders_by_bot_side_year_month(connection, bot="1h", side="SELL", year=year, month=month)
     
     # set decimal precision 
-    df_month_1d['Buy_Price'] = df_month_1d['Buy_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x))
-    df_month_1d['Sell_Price'] = df_month_1d['Sell_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x))
-    df_month_4h['Buy_Price'] = df_month_4h['Buy_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x))
-    df_month_4h['Sell_Price'] = df_month_4h['Sell_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x))
-    df_month_1h['Buy_Price'] = df_month_1h['Buy_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x))
-    df_month_1h['Sell_Price'] = df_month_1h['Sell_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x))
+    df_month_1d['Buy_Price'] = df_month_1d['Buy_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x) if x is not None else 'None')
+    df_month_1d['Sell_Price'] = df_month_1d['Sell_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x) if x is not None else 'None')
+    
+    df_month_4h['Buy_Price'] = df_month_4h['Buy_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x) if x is not None else 'None')
+    df_month_4h['Sell_Price'] = df_month_4h['Sell_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x) if x is not None else 'None')
+    
+    df_month_1h['Buy_Price'] = df_month_1h['Buy_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x) if x is not None else 'None')
+    df_month_1h['Sell_Price'] = df_month_1h['Sell_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x) if x is not None else 'None')
     # print('')              
     # print(df_month_1d)
     # print(df_month_4h)
@@ -877,7 +875,10 @@ def calculate_unrealized_pnl():
     df_positions_4h = database.get_unrealized_pnl_by_bot(connection, bot="4h")
     df_positions_1h = database.get_unrealized_pnl_by_bot(connection, bot="1h")
 
-    # print('')              
+    # set decimal precision 
+    df_positions_1d['Buy_Price'] = df_positions_1d['Buy_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x))
+    df_positions_4h['Buy_Price'] = df_positions_4h['Buy_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x))
+    df_positions_1h['Buy_Price'] = df_positions_1h['Buy_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x))
     
     # print(df_positions_1d)
     # print(df_positions_4h)

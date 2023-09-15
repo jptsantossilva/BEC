@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit_authenticator as stauth
 
 from utils import config
-from utils.general import separate_symbol_and_trade_against
+from utils import general
 
 def connect(path: str = ""):
     conn = None
@@ -15,6 +15,9 @@ def connect(path: str = ""):
     try:
         file_path = os.path.join(path, "data.db")
         conn = sqlite3.connect(file_path, check_same_thread=False)
+
+        # apply database scripts updates
+
         # create tables if not exist
         create_tables(conn)
     except sqlite3.Error as e:
@@ -222,7 +225,7 @@ sql_get_last_buy_order_by_bot_symbol = """
     ORDER BY Id DESC LIMIT 1;
 """
 def get_last_buy_order_by_bot_symbol(connection, bot: str, symbol: str):
-    symbol_only, symbol_stable = separate_symbol_and_trade_against(symbol)
+    symbol_only, symbol_stable = general.separate_symbol_and_trade_against(symbol)
 
     # For those cases where the trade against changed, for example from BUSD to USDT, the BUY order can be BTCBUSD and the sell BTCUSDT.
     # So, I want to search for the buy order in any stablecoin trading pair. BTCBUSD, BTCUSDT, BTCUSDC
@@ -283,8 +286,6 @@ def get_orders_by_bot_side_year_month(connection, bot: str, side: str, year: str
         year_month = str(year)+"-"+str(month)+"-%"
     
     return pd.read_sql(sql_get_orders_by_bot_side_year_month, connection, params=(bot, side, year_month))
-    
-        
 
 # POSITIONS
 sql_create_positions_table = """
@@ -336,7 +337,7 @@ def get_positions_by_bot_position(connection, bot: str, position: int):
     return pd.read_sql(sql_get_positions_by_bot_position, connection, params=(bot, position))
 
 sql_get_unrealized_pnl_by_bot = """
-    SELECT Bot, Symbol, Qty, Buy_Price, PnL_Perc, PnL_Value, Duration, Ema_Fast, Ema_Slow
+    SELECT Bot, Symbol, Qty, Buy_Price, PnL_Perc, PnL_Value, Date, Duration, Ema_Fast, Ema_Slow
     FROM Positions 
     WHERE 
         Bot = ?
@@ -864,17 +865,20 @@ def update_user_password(connection, username: str, password: str):
 # Balances
 sql_create_balances_table = """
     CREATE TABLE IF NOT EXISTS Balances (
+    Id INTEGER PRIMARY KEY,
     Date TEXT,
     Asset TEXT,
     Balance REAL,
+	USD_Price REAL,
+	BTC_Price REAL,
     Balance_USD REAL,
-    Total_Balance_Of_BTC REAL,
-    PRIMARY KEY (Date, Asset)
+    Balance_BTC REAL,
+    Total_Balance_Of_BTC REAL
 );
 """
 
 sql_add_balances = """
-    INSERT OR IGNORE INTO Balances (Date, Asset, Balance, Balance_USD, Total_Balance_Of_BTC) VALUES (?, ?, ?, ?, ?);
+    INSERT OR IGNORE INTO Balances (Date, Asset, Balance, USD_Price, BTC_Price, Balance_USD, Balance_BTC, Total_Balance_Of_BTC) VALUES (?, ?, ?, ?, ?,?, ?, ?);
 """
 def add_balances(connection, balances: pd.DataFrame):
     if balances.empty:
@@ -912,32 +916,65 @@ def get_asset_balances_all_time(connection):
     """
     return pd.read_sql(sql_get_balances_all_time, connection)
 
-def get_total_balance_usd_last_n_days(connection, n_days):
-    sql_get_total_balance_usd_last_n_days = """
-        SELECT Date, ROUND(SUM(Balance_USD), 2) as Total_Balance_USD
-        FROM Balances
-        WHERE Date >= date('now', ? || ' days')
-        GROUP BY Date
-    """
-    params = (str(-n_days),)  # Convert n_days to a negative string for date subtraction
-    return pd.read_sql(sql_get_total_balance_usd_last_n_days, connection, params=params)
+def get_total_balance_last_n_days(connection, n_days, asset):
+    if asset not in ["USD", "BTC"]:
+        # Return an empty pandas DataFrame
+        return pd.DataFrame()
+    
+    if asset == "USD":
+        num_decimals = 2
+    
+        sql_get_total_balance_last_n_days = f"""
+            SELECT Date, ROUND(SUM(Balance_{asset}), {num_decimals}) as Total_Balance_{asset}
+            FROM Balances
+            WHERE Date >= date('now', ? || ' days')
+            GROUP BY Date
+        """
+    elif asset == "BTC":
+        sql_get_total_balance_last_n_days = f"""
+            SELECT Date, Total_Balance_Of_BTC as Total_Balance_{asset}
+            FROM Balances
+            WHERE Date >= date('now', ? || ' days')
+            GROUP BY Date
+        """
 
-def get_total_balance_usd_ytd(connection):
-    sql_get_total_balance_usd_last_n_days = """
-        SELECT Date, ROUND(SUM(Balance_USD), 2) as Total_Balance_USD
+    params = (str(-n_days),)  # Convert n_days to a negative string for date subtraction
+    return pd.read_sql(sql_get_total_balance_last_n_days, connection, params=params)
+
+def get_total_balance_ytd(connection, asset):
+    if asset not in ["USD", "BTC"]:
+        # Return an empty pandas DataFrame
+        return pd.DataFrame()
+    
+    if asset == "USD":
+        num_decimals = 2
+    elif asset == "BTC":
+        num_decimals = 5
+    
+    sql_get_total_balance_last_n_days = f"""
+        SELECT Date, ROUND(SUM(Balance_{asset}), {num_decimals}) as Total_Balance_{asset}
         FROM Balances
         WHERE strftime('%Y', Date) = strftime('%Y', 'now')
         GROUP BY Date
     """
-    return pd.read_sql(sql_get_total_balance_usd_last_n_days, connection)
+    return pd.read_sql(sql_get_total_balance_last_n_days, connection)
 
-def get_total_balance_usd_all_time(connection):
-    sql_get_total_balance_usd_all_time = """
-        SELECT Date, ROUND(SUM(Balance_USD), 2) as Total_Balance_USD
+def get_total_balance_all_time(connection, asset):
+    if asset not in ["USD", "BTC"]:
+        # Return an empty pandas DataFrame
+        return pd.DataFrame()
+    
+    if asset == "USD":
+        num_decimals = 2
+    elif asset == "BTC":
+        num_decimals = 5
+    
+    sql_get_total_balance_all_time = """
+        SELECT Date, ROUND(SUM(Balance_{asset}), {num_decimals}) as Total_Balance_{asset}
         FROM Balances
         GROUP BY Date
     """
-    return pd.read_sql(sql_get_total_balance_usd_all_time, connection)
+    return pd.read_sql(sql_get_total_balance_all_time, connection)
 
 sql_get_last_date_from_balances="""
     SELECT Date FROM Balances ORDER BY Date DESC LIMIT 1;
@@ -980,6 +1017,9 @@ def add_signal_log(connection, date: datetime, signal: str, signal_message: str,
 # create tables
 def create_tables(connection):
     with connection:
+        # check for database changes
+        apply_database_scripts_updates(connection=connection)
+
         connection.execute(create_orders_table)
         connection.execute(sql_create_positions_table)
         connection.execute(sql_create_blacklist_table)
@@ -996,6 +1036,44 @@ def create_tables(connection):
         connection.execute(sql_create_balances_table)
         # signals log
         connection.execute(sql_create_signals_log_table)
+
+def apply_database_scripts_updates(connection):
+    
+    # Define the path to the folder containing the file
+    folder_path = 'utils/db_scripts'
+    version = general.extract_date_from_local_changelog()
+    filename = f'db_scripts_{version}'
+    filename_full = filename+".sql"
+
+    # Check if the file exists within the specified folder
+    file_path = os.path.join(folder_path, filename_full)
+    
+    # Check if the file exists
+    if os.path.exists(file_path):
+        # Connect to database
+        conn = connection
+        cursor = conn.cursor()
+
+        # Read and execute SQL scripts from the file
+        with open(file_path, 'r') as script_file:
+            sql_script = script_file.read()
+            cursor.executescript(sql_script)
+
+        # Commit the changes to the database
+        conn.commit()
+
+        # Close the database connection
+        # conn.close()
+
+        # Rename the file with a datetime timestamp
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        new_filename = f'{filename}_{timestamp}.sql'
+        new_file_path = os.path.join(folder_path, new_filename)
+        os.rename(file_path, new_file_path)
+    else:
+        show_message = False
+        if show_message:
+            print(f"File '{file_path}' does not exist.")
     
 # convert 123456 seconds to 1d 2h 3m 4s format    
 def calc_duration(seconds):
