@@ -133,7 +133,7 @@ def get_chart_daily_balance(asset):
             refresh_balance = st.button("Refresh", key=f"refresh_balance_{asset}")
 
         if refresh_balance:
-            with st.spinner('Creating balance snapshot...'):
+            with st.spinner("Creating balance snapshot. It can take a few minutes..."):
                 exchange.create_balance_snapshot(telegram_prefix="")
                 # dasboard refresh
                 st.experimental_rerun()
