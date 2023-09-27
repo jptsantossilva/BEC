@@ -20,6 +20,7 @@ import ta
 import utils.telegram as telegram
 import utils.database as database 
 import utils.exchange as exchange
+import utils.config as config
 
 
 def get_data(symbol, time_frame, start_date):
@@ -286,6 +287,16 @@ def run():
         database.conn = database.connect()
 
     df_symbols = database.get_distinct_symbol_from_positions_where_position1(database.conn)
+
+    # Symbols to add - BTC + ETH
+    # the line below does not work if trade against = BTC
+    # symbols_to_add = ['BTC'+config.trade_against, 'ETH'+config.trade_against] 
+    symbols_to_add = ['BTCUSDT', 'ETHUSDT'] 
+    # Check if each symbol in symbols_to_add is already in the DataFrame
+    for symbol in symbols_to_add:
+        if symbol not in df_symbols['Symbol'].values:
+            df_symbols = df_symbols.append({'Symbol': symbol}, ignore_index=True)
+
     # check if the symbols list is empty
     if df_symbols.empty:
         print("There are no symbols to calculate.")

@@ -2,6 +2,15 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2023-09-27]
+ 
+### Added
+- Signals - Super-RSI - Added BTC and ETH to calculate in each iteration. Even if they are not in an open position.
+### Changed
+-
+### Fixed
+-    
+
 ## [2023-09-15]
  
 ### Added
