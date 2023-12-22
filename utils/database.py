@@ -605,7 +605,7 @@ sql_set_position_take_profit_2 = """
 """
 def set_position_take_profit_2(connection, bot: str, symbol: str, take_profit_2: int):
     with connection:
-        connection.execute(sql_set_position_take_profit_1, (take_profit_2, bot, symbol))
+        connection.execute(sql_set_position_take_profit_2, (take_profit_2, bot, symbol))
 
 sql_delete_all_positions = "DELETE FROM Positions;"
 def delete_all_positions(connection):
