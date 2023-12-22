@@ -834,7 +834,7 @@ def manage_config():
 
                 try:
                     prev_take_profit_1 = config.get_setting("take_profit_1")
-                    take_profit_1 = st.number_input(label="Take Profit Level 1 %", 
+                    take_profit_1 = st.number_input(label="Take-Profit Level 1 %", 
                                                     min_value=0, 
                                                     value=int(prev_take_profit_1), 
                                                     step=1,
@@ -870,7 +870,7 @@ def manage_config():
             with col1_tp2:    
                 try:
                     prev_take_profit_2 = config.get_setting("take_profit_2")
-                    take_profit_2 = st.number_input(label="Take Profit Level 2 %", 
+                    take_profit_2 = st.number_input(label="Take-Profit Level 2 %", 
                                                     min_value=0, 
                                                     value=int(prev_take_profit_2), 
                                                     step=1,

@@ -79,13 +79,13 @@ def get_backtesting_results(strategy_id, symbol, time_frame):
     if not df.empty:
         fast_ema = int(df.Ema_Fast.values[0])
         slow_ema = int(df.Ema_Slow.values[0])
-        strategy_name = df.Name.values[0]
+        # strategy_name = df.Name.values[0]
     else:
         fast_ema = int("0")
         slow_ema = int("0")
 
     # global strategy_name
-    strategy_name = str(fast_ema)+"/"+str(slow_ema)+" "+strategy_name
+    # strategy_name = str(fast_ema)+"/"+str(slow_ema)+" "+strategy_name
 
     # if bestEMA does not exist return empty dataframe in order to no use that trading pair
     return fast_ema, slow_ema
@@ -264,7 +264,7 @@ def trade(time_frame, run_mode):
             if sell_tp_1:
                 exchange.create_sell_order(symbol=symbol,
                                             bot=time_frame,
-                                            reason=f"Take-Profit 1 - {config.take_profit_1_pnl_perc}%",
+                                            reason=f"Take-Profit Level 1 - {config.take_profit_1_pnl_perc}%",
                                             percentage=config.take_profit_1_amount_perc,
                                             take_profit_num=1
                                             )  
@@ -272,7 +272,7 @@ def trade(time_frame, run_mode):
             if sell_tp_2:
                 exchange.create_sell_order(symbol=symbol,
                                             bot=time_frame,
-                                            reason=f"Take-Profit 2 - {config.take_profit_2_pnl_perc}%",
+                                            reason=f"Take-Profit Level 2 - {config.take_profit_2_pnl_perc}%",
                                             percentage=config.take_profit_2_amount_perc,
                                             take_profit_num=2
                                             )                       

@@ -597,7 +597,7 @@ def set_position_take_profit_1(connection, bot: str, symbol: str, take_profit_1:
 sql_set_position_take_profit_2 = """
     UPDATE Positions
     SET 
-        Take_Profit_1 = ?
+        Take_Profit_2 = ?
     WHERE
         Bot = ? 
         AND Symbol = ? 
