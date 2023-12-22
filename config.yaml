@@ -1,11 +1,11 @@
 bot_1d: false
 bot_1h: true
 bot_4h: true
-btc_strategy: ema_cross
+btc_strategy: market_phases
 main_strategy: ema_cross_with_market_phases
 max_number_of_open_positions: 10
 min_position_size: 20
-run_mode: test
+run_mode: prod
 stake_amount_type: unlimited
 stop_loss: 10
 take_profit_1: 0

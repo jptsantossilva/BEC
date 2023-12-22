@@ -26,7 +26,7 @@ def run():
     
 
     if not list_not_completed.empty: # not empty 
-        msg = f"{telegram.telegram_prefix_market_phases_sl}Calculating the best results for the strategy {config.strategy_name} for the following symbols:"
+        msg = f"{telegram.telegram_prefix_market_phases_sl}Calculating the best results for the strategy '{config.strategy_name}' for the following symbols:"
         
         telegram.send_telegram_message(telegram.telegram_token_main, "", msg)
         msg = telegram.telegram_prefix_market_phases_sl +"\n"+ list_not_completed.to_string(index=True, header = False)

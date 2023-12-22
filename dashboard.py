@@ -40,20 +40,25 @@ st.set_page_config(
 # st.session_state
 
 # Initialization
-if 'name' not in  st.session_state:
+if 'name' not in st.session_state:
     st.session_state.name = ''
-if 'username' not in  st.session_state:
+if 'username' not in st.session_state:
     st.session_state.username = ''
-if 'user_password' not in  st.session_state:
+if 'user_password' not in st.session_state:
     st.session_state.user_password = 'None'
 if 'reset_form_open' not in st.session_state:
     st.session_state.reset_form_open = False
-if 'reset_password_submitted' not in  st.session_state:
+if 'reset_password_submitted' not in st.session_state:
     st.session_state.reset_password_submitted = False
-if 'authentication_status' not in  st.session_state:
+if 'authentication_status' not in st.session_state:
     st.session_state.authentication_status = False
-if 'trade_against_switch' not in  st.session_state:
-    st.session_state.trade_against_switch = False
+if 'trade_against_switch' not in st.session_state:
+    st.session_state.trade_against_switch = config.get_setting("trade_against_switch")
+# if 'main_strategy' not in st.session_state:
+#     st.session_state.main_strategy = config.get_setting("main_strategy")
+# if 'btc_strategy' not in st.session_state:
+#     st.session_state.btc_strategy = config.get_setting("btc_strategy")
+
 
 # im using to find which bots are running
 def find_file_paths(filename: str):
@@ -85,7 +90,7 @@ def find_file_paths(filename: str):
 
 def get_trade_against():
 
-    # get settings from config file
+    # get settings from btc_strategy file
     try:
         file_path = 'config.yaml'
         with open(file_path, "r") as file:
@@ -590,28 +595,33 @@ def backtesting_results():
 
 def manage_config():
 
-    try:
-        # Read the YAML file
-        with open('config.yaml', 'r') as f:
-            config = yaml.safe_load(f)
-    except FileNotFoundError:
-        st.warning('Config file not found!')
-        st.stop()
+    # try:
+    #     # Read the YAML file
+    #     with open('config.yaml', 'r') as f:
+    #         config_file = yaml.safe_load(f)
+    # except FileNotFoundError:
+    #     st.warning('Config file not found!')
+    #     st.stop()
 
     # Create Streamlit widgets for each configuration option
     col1_cfg, col2_cfg = tab_settings.columns(2)
     if tab_settings:
         
         with col2_cfg:
-            st.write("**USDT Strategy**")
+            st.write("**Main Strategy**")
 
             try:
-                main_strategy = st.selectbox('USDT Strategy', 
+                # ms = st.session_state.main_strategy
+                prev_main_strategy = config.get_setting('main_strategy')
+                main_strategy = st.selectbox('Main Strategy', 
                                             key="main_strategy",
                                             options=list(dict_strategies_main.keys()),
+                                            index=list(dict_strategies_main).index(prev_main_strategy),
                                             format_func=format_func_strategies_main, 
                                             label_visibility="collapsed"
                                             )
+                if main_strategy != prev_main_strategy: 
+                    config.set_setting("main_strategy", main_strategy)
                 # st.write(f"You selected option {main_strategy} called {format_func_strategies(main_strategy)}")       
             except KeyError:
                 st.warning('Invalid or missing configuration: main_strategy')
@@ -621,21 +631,30 @@ def manage_config():
             st.write("**BTC Strategy**")
 
             try:
+                # bs = config['btc_strategy']
+                # bs = st.session_state.btc_strategy
+                prev_btc_strategy = config.get_setting('btc_strategy')
                 btc_strategy = st.selectbox('BTC Strategy', 
                                             key="btc_strategy",
                                             options=list(dict_strategies_btc.keys()),
+                                            index=list(dict_strategies_btc).index(prev_btc_strategy),
                                             format_func=format_func_strategies_btc,
                                             label_visibility="collapsed",
                                             # disabled=not st.session_state.trade_against_switch,
                                             help=""""""
                                             )
+                if btc_strategy != prev_btc_strategy: 
+                    config.set_setting("btc_strategy", btc_strategy)
             except KeyError:
                 st.warning('Invalid or missing configuration: btc_strategy')
                 st.stop()
 
+            prev_trade_against_switch = config.get_setting("trade_against_switch")
             trade_against_switch = st.checkbox("Automatically switch between trade against USDT or BTC",
                                                 key="trade_against_switch",
                                                 help="""Considering the chosen Bitcoin strategy will decide whether it is a Bull or Bear market. If Bull then will convert USDT to BTC and trade against BTC. If Bear will convert BTC into USDT and trade against USDT.""")
+            if trade_against_switch != prev_trade_against_switch: 
+                config.set_setting("trade_against_switch", trade_against_switch)
             
 
             # col1_stra, col2_stra = st.columns(2)
@@ -650,91 +669,120 @@ def manage_config():
             st.write("**Settings**")
 
             try:
-                prev_bot_1d = config['bot_1d']
+                # prev_bot_1d = config_file['bot_1d']
+                prev_bot_1d = config.get_setting("bot_1d")
                 bot_1d = st.checkbox(label='Bot 1D', value=prev_bot_1d,
                                      help="""Turn the Bot ON or OFF""")
                 # Check if the value of bot has changed
                 if prev_bot_1d and not bot_1d:
                     check_open_positions("1d")
+                if bot_1d != prev_bot_1d: 
+                    config.set_setting("bot_1d", bot_1d)
             except KeyError:
                 st.warning('Invalid or missing configuration: Bot 1D')
                 st.stop()
+            
             try:
-                prev_bot_4h = config['bot_4h']
+                # prev_bot_4h = config_file['bot_4h']
+                prev_bot_4h = config.get_setting("bot_4h")
                 bot_4h = st.checkbox(label='Bot 4H', value=prev_bot_4h,
                                      help="""Turn the Bot ON or OFF""")
                 # Check if the value of bot has changed
                 if prev_bot_4h and not bot_4h:
                     check_open_positions("4h")
+                if bot_4h != prev_bot_4h:
+                    config.set_setting("bot_4h", bot_4h)
             except KeyError:
                 st.warning('Invalid or missing configuration: Bot 4h')
                 st.stop()
+            
             try:
-                prev_bot_1h = config['bot_1h']
-                bot_1h = st.checkbox(label='Bot 1h', value=config['bot_1h'],
+                # prev_bot_1h = config_file['bot_1h']
+                prev_bot_1h = config.get_setting("bot_1h")
+                bot_1h = st.checkbox(label='Bot 1h', value=prev_bot_1h,
                                     help="""Turn the Bot ON or OFF""")
                 # Check if the value of bot has changed
                 if prev_bot_1h and not bot_1h:
                     check_open_positions("1h")
+                if bot_1h != prev_bot_1h:
+                    config.set_setting("bot_1h", bot_1h)
             except KeyError:
                 st.warning('Invalid or missing configuration: Bot 1h')
                 st.stop()
+            
             try:
+                prev_stake_amount_type = config.get_setting("stake_amount_type")
                 stake_amount_type = st.selectbox('Stake Amount Type', ['unlimited'], 
                                                 help="""Stake_amount is the amount of stake the bot will use for each trade. 
                                                     \nIf stake_amount = "unlimited" the increasing/decreasing of stakes will depend on the performance of the bot. Lower stakes if the bot is losing, higher stakes if the bot has a winning record since higher balances are available and will result in profit compounding.
                                                     \nIf stake amount = static number, that is the amount per trade
                                                 """)
+                if stake_amount_type != prev_stake_amount_type:
+                    config.set_setting("stake_amount_type", stake_amount_type)
             except KeyError:
                 st.warning('Invalid or missing configuration: stake_amount_type')
                 st.stop()
+            
             try:
+                prev_max_number_of_open_positions = config.get_setting("max_number_of_open_positions")
                 max_number_of_open_positions = st.number_input(label="Max Number of Open Positions", 
                                                             min_value=1,
-                                                            value=int(config['max_number_of_open_positions']),
+                                                            value=int(prev_max_number_of_open_positions),
                                                             max_value=50,
                                                             step=1,
                                                             help="""
                                                             If tradable balance = 1000 and max_number_of_open_positions = 10, the stake_amount = 1000/10 = 100
                                                             """)
+                if max_number_of_open_positions != prev_max_number_of_open_positions:
+                    config.set_setting("max_number_of_open_positions", max_number_of_open_positions)
             except KeyError:
                 st.warning('Invalid or missing configuration: max_number_of_open_positions')
                 st.stop()
+            
             try:
+                prev_tradable_balance_ratio = config.get_setting("tradable_balance_ratio")
                 tradable_balance_ratio = st.slider(label='Tradable Balance Ratio', 
                                                 min_value=0.0, 
                                                 max_value=1.0, 
-                                                value=float(config['tradable_balance_ratio']), 
+                                                value=float(prev_tradable_balance_ratio), 
                                                 step=0.01,
                                                 help="""Tradable percentage of the balance
                                                 """)
+                if tradable_balance_ratio != prev_tradable_balance_ratio:
+                    config.set_setting("tradable_balance_ratio", tradable_balance_ratio)
             except KeyError:
                 st.warning('Invalid or missing configuration: tradable_balance_ratio')
                 st.stop()
+            
             try:
-                trade_against = st.selectbox('Trade Against', ['USDT', 'BTC'], index=['USDT', 'BTC'].index(config['trade_against']),
+                prev_trade_against = config.get_setting("trade_against")
+                trade_against = st.selectbox('Trade Against', ['USDT', 'BTC'], index=['USDT', 'BTC'].index(prev_trade_against),
                                             help="""Trade against USDT or BTC
                                             """)
+                if trade_against != prev_trade_against:
+                    config.set_setting("trade_against", trade_against)
             except KeyError:
                 st.warning('Invalid or missing configuration: trade_against')
                 st.stop()
+
             try:
+                prev_min_position_size = config.get_setting("min_position_size")
                 if trade_against in ["USDT"]:
                     trade_min_val = 0
                     trade_step = 1
                     trade_format = None
-                    if int(config['min_position_size']) < 20:
+                    if int(prev_min_position_size) < 20:
                         trade_min_pos_size = 20
                     else:
-                        trade_min_pos_size = int(config['min_position_size'])
+                        trade_min_pos_size = int(prev_min_position_size)
                 elif trade_against == "BTC":
                     trade_min_val = 0.0
                     trade_step = 0.0001
                     trade_format = "%.4f"
-                    if float(config['min_position_size']) > 0.0001:
+                    if float(prev_min_position_size) > 0.0001:
                         trade_min_pos_size = 0.0001
                     else:
-                        trade_min_pos_size = float(config['min_position_size'])
+                        trade_min_pos_size = float(prev_min_position_size)
 
                 min_position_size = st.number_input(label='Minimum Position Size', 
                                                     min_value=trade_min_val, 
@@ -744,22 +792,29 @@ def manage_config():
                                                     help="""If trade_against = USDT => min_position_size = 20
                                                         \nIf trade_against = BTC => min_position_size = 0.001
                                                     """)
+                if min_position_size != prev_min_position_size:
+                    config.set_setting("min_position_size", min_position_size)
             except KeyError:
                 st.warning('Invalid or missing configuration: min_position_size')
                 st.stop()
+
             try:
-                trade_top_performance = st.slider('Trade Top Performance Symbols', 1, 50, config['trade_top_performance'],
+                prev_trade_top_performance = config.get_setting("trade_top_performance")
+                trade_top_performance = st.slider('Trade Top Performance Symbols', 1, 50, prev_trade_top_performance,
                                                 help="""
                                                     Trade top X performance symbols                                              
                                                 """)
+                if trade_top_performance != prev_trade_top_performance:
+                    config.set_setting("trade_top_performance", trade_top_performance)
             except KeyError:
                 st.warning('Invalid or missing configuration: trade_top_performance')
                 st.stop()
 
             try:
+                prev_stop_loss = config.get_setting("stop_loss")
                 stop_loss = st.number_input(label='Stop Loss %', 
                                             min_value=0, 
-                                            value=int(config['stop_loss']), 
+                                            value=int(prev_stop_loss), 
                                             step=1,
                                             # key="stop_loss",
                                             help="""Set stop loss to automatically sell if its price falls below a certain percentage.
@@ -767,6 +822,8 @@ def manage_config():
                                                 \n stop_loss = 0 => will not use stop loss. The stop loss used will be triggered when slow_ema > fast_ema
                                                 \n stop_loss = 10 => 10%   
                                             """)
+                if stop_loss != prev_stop_loss:
+                    config.set_setting("stop_loss", stop_loss)
             except KeyError:
                 st.warning('Invalid or missing configuration: stop_loss')
                 st.stop()
@@ -776,28 +833,34 @@ def manage_config():
             with col1_tp1:
 
                 try:
+                    prev_take_profit_1 = config.get_setting("take_profit_1")
                     take_profit_1 = st.number_input(label="Take Profit Level 1 %", 
                                                     min_value=0, 
-                                                    value=int(config['take_profit_1']), 
+                                                    value=int(prev_take_profit_1), 
                                                     step=1,
                                                     key="take_profit_1",
                                                     help="The percentage increase in price at which the system will automatically trigger a sell order to secure profits."
                                                     )
+                    if take_profit_1 != prev_take_profit_1:
+                        config.set_setting("take_profit_1", take_profit_1)
                 except KeyError:
                     st.warning('Invalid or missing configuration: take_profit_1')
                     st.stop()
 
             with col2_tp1:
                 try:
+                    prev_take_profit_1_amount = config.get_setting("take_profit_1_amount")
                     take_profit_1_amount = st.number_input(
                                                             label="Amount %", 
                                                             min_value=5, 
                                                             max_value=100,
-                                                            value=int(config['take_profit_1_amount']), 
+                                                            value=int(prev_take_profit_1_amount), 
                                                             step=5,
                                                             key="take_profit_1_amount",
                                                             help="The percentage to be sold when the take profits level 1 is achieved."
                                                             )
+                    if take_profit_1_amount != prev_take_profit_1_amount:
+                        config.set_setting("take_profit_1_amount", take_profit_1_amount)
                 except KeyError:
                     st.warning('Invalid or missing configuration: take_profit_1_amount')
                     st.stop()
@@ -806,58 +869,64 @@ def manage_config():
 
             with col1_tp2:    
                 try:
+                    prev_take_profit_2 = config.get_setting("take_profit_2")
                     take_profit_2 = st.number_input(label="Take Profit Level 2 %", 
                                                     min_value=0, 
-                                                    value=int(config['take_profit_2']), 
+                                                    value=int(prev_take_profit_2), 
                                                     step=1,
                                                     key="take_profit_2",
                                                     help="The percentage increase in price at which the system will automatically trigger a sell order to secure profits."
                                                     )
+                    if take_profit_2 != prev_take_profit_2:
+                        config.set_setting("take_profit_2", take_profit_2)
                 except KeyError:
                     st.warning('Invalid or missing configuration: take_profit_2')
                     st.stop()
 
             with col2_tp2:
                 try:
+                    prev_take_profit_2_amount = config.get_setting("take_profit_2_amount")
                     take_profit_2_amount = st.number_input(
                                                             label="Amount %", 
                                                             min_value=5, 
                                                             max_value=100,
-                                                            value=int(config['take_profit_2_amount']), 
+                                                            value=int(prev_take_profit_2_amount), 
                                                             step=5,
                                                             key="take_profit_2_amount",
                                                             help="The percentage to be sold when the take profits level 2 is achieved."
                                                             )
+                    if take_profit_2_amount != prev_take_profit_2_amount:
+                        config.set_setting("take_profit_2_amount", take_profit_2_amount)
                 except KeyError:
                     st.warning('Invalid or missing configuration: take_profit_2_amount')
                     st.stop()
 
     # Update the configuration dictionary with the modified values
-    config['stake_amount_type'] = stake_amount_type
-    config['max_number_of_open_positions'] = max_number_of_open_positions
-    config['tradable_balance_ratio'] = tradable_balance_ratio
-    config['min_position_size'] = min_position_size
-    config['trade_top_performance'] = trade_top_performance
-    config['trade_against'] = trade_against
-    config['stop_loss'] = stop_loss
-    config['bot_1d'] = bot_1d
-    config['bot_4h'] = bot_4h
-    config['bot_1h'] = bot_1h
-    config['main_strategy'] = main_strategy
-    config['btc_strategy'] = btc_strategy
-    config['trade_against_switch'] = trade_against_switch    
-    config['take_profit_1'] = take_profit_1 
-    config['take_profit_1_amount'] = take_profit_1_amount   
-    config['take_profit_2'] = take_profit_2    
-    config['take_profit_2_amount'] = take_profit_2_amount
+    # config_file['stake_amount_type'] = stake_amount_type
+    # config_file['max_number_of_open_positions'] = max_number_of_open_positions
+    # config_file['tradable_balance_ratio'] = tradable_balance_ratio
+    # config_file['min_position_size'] = min_position_size
+    # config_file['trade_top_performance'] = trade_top_performance
+    # config_file['trade_against'] = trade_against
+    # config_file['stop_loss'] = stop_loss
+    # config_file['bot_1d'] = bot_1d
+    # config_file['bot_4h'] = bot_4h
+    # config_file['bot_1h'] = bot_1h
+    # config_file['main_strategy'] = main_strategy
+    # config_file['btc_strategy'] = btc_strategy
+    # config_file['trade_against_switch'] = trade_against_switch    
+    # config_file['take_profit_1'] = take_profit_1 
+    # config_file['take_profit_1_amount'] = take_profit_1_amount   
+    # config_file['take_profit_2'] = take_profit_2    
+    # config_file['take_profit_2_amount'] = take_profit_2_amount
 
-    # Write the modified configuration dictionary back to the YAML file
-    try:
-        with open('config.yaml', 'w') as f:
-            yaml.dump(config, f)
-    except PermissionError:
-        st.warning('Permission denied: could not write to config file!')
-        st.stop()
+    # # Write the modified configuration dictionary back to the YAML file
+    # try:
+    #     with open('config.yaml', 'w') as f:
+    #         yaml.dump(config_file, f)
+    # except PermissionError:
+    #     st.warning('Permission denied: could not write to config file!')
+    #     st.stop()
     
 def check_app_version():
     last_date = general.extract_date_from_local_changelog()

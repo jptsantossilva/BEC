@@ -126,6 +126,25 @@ def set_trade_against(value):
     except yaml.YAMLError as e:
         handle_error(e, "There was an issue with the YAML file.")
 
+# Function to set the trade_against variable in the config file
+def set_setting(name, value):
+    try:
+        with open("config.yaml", "r") as file:
+            config = yaml.safe_load(file)
+
+        # Set the trade_against variable
+        config[name] = value
+
+        # Write config file
+        with open("config.yaml", "w") as f:
+            yaml.dump(config, f)
+
+    except FileNotFoundError as e:
+        handle_error(e, "The file config.yaml could not be found.")
+
+    except yaml.YAMLError as e:
+        handle_error(e, "There was an issue with the YAML file.")
+
 # Function to handle errors (common code for error handling)
 def handle_error(error, message):
     msg = f"Error: {message}. {sys._getframe().f_code.co_name} - {repr(error)}"
@@ -200,14 +219,17 @@ def get_all_settings():
         btc_strategy_name = str(df_btc_strategy.Name.values[0])
         btc_strategy_backtest_optimize = bool(df_btc_strategy.Backtest_Optimize.values[0])
 
-    if trade_against == "USDT":
+    # if trade_against == "USDT":
+    #     strategy_id = main_strategy
+    #     strategy_name = main_strategy_name
+    #     strategy_backtest_optimize = main_strategy_backtest_optimize
+    # elif trade_against == "BTC":
+    #     strategy_id = btc_strategy
+    #     strategy_name = btc_strategy_name
+    #     strategy_backtest_optimize = btc_strategy_backtest_optimize
         strategy_id = main_strategy
         strategy_name = main_strategy_name
         strategy_backtest_optimize = main_strategy_backtest_optimize
-    elif trade_against == "BTC":
-        strategy_id = btc_strategy
-        strategy_name = btc_strategy_name
-        strategy_backtest_optimize = btc_strategy_backtest_optimize
 
     # Dynamically import the entire strategies module
     strategy_module = importlib.import_module('my_backtesting')

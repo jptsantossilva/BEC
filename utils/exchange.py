@@ -14,9 +14,6 @@ import utils.database as database
 
 client: Client = None
 
-# test_mode is used for testing purposes
-test_mode = False
-
 def connect():
     api_key = config.get_env_var('binance_api')
     api_secret = config.get_env_var('binance_secret')
@@ -309,30 +306,22 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percenta
         sell_qty = adjust_size(symbol, sell_qty)
 
         if sell_qty > 0:
-            if not test_mode:
-                order = client.create_order(symbol=symbol,
-                                            side=client.SIDE_SELL,
-                                            type=client.ORDER_TYPE_MARKET,
-                                            quantity = sell_qty
-                                            )
-            
-                sell_order_id = str(order['orderId'])
+            order = client.create_order(symbol=symbol,
+                                        side=client.SIDE_SELL,
+                                        type=client.ORDER_TYPE_MARKET,
+                                        quantity = sell_qty
+                                        )
+        
+            sell_order_id = str(order['orderId'])
 
-                fills = order['fills']
-                order_avg_price = sum([float(f['price']) * (float(f['qty']) / float(order['executedQty'])) for f in fills])
-                order_avg_price = round(order_avg_price,8)
+            fills = order['fills']
+            order_avg_price = sum([float(f['price']) * (float(f['qty']) / float(order['executedQty'])) for f in fills])
+            order_avg_price = round(order_avg_price,8)
 
-                order_sell_date = str(pd.to_datetime(order['transactTime'], unit='ms'))
-                order_symbol = order['symbol']
-                order_qty = float(order['executedQty'])
-                order_side = order['side']
-            elif test_mode:
-                sell_order_id = str(111)
-                order_avg_price = 1
-                order_sell_date = str(datetime.now())
-                order_symbol = symbol
-                order_qty = float(1)
-                order_side = "SELL"
+            order_sell_date = str(pd.to_datetime(order['transactTime'], unit='ms'))
+            order_symbol = order['symbol']
+            order_qty = float(order['executedQty'])
+            order_side = order['side']
 
             if convert_all_balance:
                 buy_order_id = str(0)
@@ -344,21 +333,21 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percenta
                                                                     position=1)
 
                 # update position as closed position
-                if not test_mode:
-                    if percentage == 100:
-                        database.set_position_sell(database.conn, bot=bot, symbol=symbol)
-                    else:      
-                        if not df_pos.empty:
-                            # if we are selling a position percentage we must update the qty
-                            previous_qty = float(df_pos['Qty'].iloc[0])
-                            new_qty = previous_qty - order_qty
-                            database.set_position_qty(database.conn, bot=bot, symbol=symbol, qty=new_qty)
+                
+                if percentage == 100:
+                    database.set_position_sell(database.conn, bot=bot, symbol=symbol)
+                else:      
+                    if not df_pos.empty:
+                        # if we are selling a position percentage we must update the qty
+                        previous_qty = float(df_pos['Qty'].iloc[0])
+                        new_qty = previous_qty - order_qty
+                        database.set_position_qty(database.conn, bot=bot, symbol=symbol, qty=new_qty)
 
-                            # update take profit to inform that we already took profit1 or 2
-                            if take_profit_num == 1:
-                                database.set_position_take_profit_1(database.conn, bot=bot, symbol=symbol, take_profit_1=1)
-                            elif take_profit_num == 2:
-                                database.set_position_take_profit_2(database.conn, bot=bot, symbol=symbol, take_profit_2=1)
+                        # update take profit to inform that we already took profit1 or 2
+                        if take_profit_num == 1:
+                            database.set_position_take_profit_1(database.conn, bot=bot, symbol=symbol, take_profit_1=1)
+                        elif take_profit_num == 2:
+                            database.set_position_take_profit_2(database.conn, bot=bot, symbol=symbol, take_profit_2=1)
                         
                 
                 if not df_pos.empty:
