@@ -143,15 +143,33 @@ def calc_stake_amount(symbol, bot):
     else:
         return 0
 
-def create_buy_order(symbol: str, bot: str, fast_ema: int, slow_ema: int):
+def create_buy_order(symbol: str, bot: str, fast_ema: int = 0, slow_ema: int = 0, convert_all_balance: bool = False):
+    
+    run_mode = config.get_setting("run_mode")
+    if run_mode == "test":
+        print("Exiting the function because run_mode is 'test'.")
+        return
+    
     telegram_token = telegram.get_telegram_token(bot)
 
     try:
         # separate symbol from stable. example symbol=BTCUSDT symbol_only=BTC symbol_stable=USDT
-        symbol_only, symbol_stable = separate_symbol_and_trade_against(symbol)
+        symbol_only, symbol_trade_against = separate_symbol_and_trade_against(symbol)
 
-        position_size = calc_stake_amount(symbol=symbol_stable, bot=bot)
-            
+        if not convert_all_balance:
+            position_size = calc_stake_amount(symbol=symbol_trade_against, bot=bot)
+        else:
+            # convert full symbol_trade_against balance to symbol_trade_against
+            try:
+                balance = float(client.get_asset_balance(asset = symbol_trade_against)['free'])
+                tradable_balance = balance*config.tradable_balance_ratio      
+                position_size = tradable_balance
+            except Exception as e:
+                msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
+                print(msg)
+                logging.exception(msg)
+                telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)   
+        
         if position_size > 0:
 
             # check if Quote Order Qty MARKET orders are enabled
@@ -188,15 +206,16 @@ def create_buy_order(symbol: str, bot: str, fast_ema: int, slow_ema: int):
             avg_price = round(avg_price,8)
                 
             # update position with the buy order
-            database.set_position_buy(database.conn,
-                                      bot=bot, 
-                                      symbol=symbol,
-                                      qty=float(order['executedQty']),
-                                      buy_price=avg_price,
-                                      date=str(pd.to_datetime(order['transactTime'], unit='ms')),
-                                      ema_fast = fast_ema,
-                                      ema_slow = slow_ema,
-                                      buy_order_id=str(order['orderId']))
+            if not convert_all_balance:
+                database.set_position_buy(database.conn,
+                                        bot=bot, 
+                                        symbol=symbol,
+                                        qty=float(order['executedQty']),
+                                        buy_price=avg_price,
+                                        date=str(pd.to_datetime(order['transactTime'], unit='ms')),
+                                        ema_fast = fast_ema,
+                                        ema_slow = slow_ema,
+                                        buy_order_id=str(order['orderId']))
                 
             database.add_order_buy(database.conn,
                                    exchange_order_id=str(order['orderId']),
@@ -207,8 +226,15 @@ def create_buy_order(symbol: str, bot: str, fast_ema: int, slow_ema: int):
                                    qty=float(order['executedQty']),
                                    ema_fast=fast_ema,
                                    ema_slow=slow_ema)
-                                    
-            strategy_name = str(fast_ema)+"/"+str(slow_ema)+" EMA cross"
+        
+            if config.strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
+                strategy_name = str(fast_ema)+"/"+str(slow_ema)+" "+config.strategy_name
+            elif config.strategy_id in ["market_phases"]:
+                strategy_name = config.strategy_name
+
+            if convert_all_balance:
+                convert_message = "Trade against auto switch"
+                strategy_name = f"{convert_message} - {strategy_name}"
 
             telegram_prefix = telegram.get_telegram_prefix(bot)
 
@@ -228,7 +254,7 @@ def create_buy_order(symbol: str, bot: str, fast_ema: int, slow_ema: int):
             num_open_positions = database.get_num_open_positions(database.conn)
             telegram.send_telegram_message(telegram_token, telegram.EMOJI_INFORMATION, client.SIDE_BUY+" "+symbol+" - Max open positions ("+str(num_open_positions)+"/"+str(config.max_number_of_open_positions)+") already occupied!")
         else:
-            telegram.send_telegram_message(telegram_token, telegram.EMOJI_INFORMATION, client.SIDE_BUY+" "+symbol+" - Not enough "+symbol_stable+" funds!")
+            telegram.send_telegram_message(telegram_token, telegram.EMOJI_INFORMATION, client.SIDE_BUY+" "+symbol+" - Not enough "+symbol_trade_against+" funds!")
 
         
     except BinanceAPIException as e:
@@ -247,25 +273,39 @@ def create_buy_order(symbol: str, bot: str, fast_ema: int, slow_ema: int):
         print(msg)
         telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
         
-    
+def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percentage = 100, take_profit_num = 0, convert_all_balance: bool = False):
 
-def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = ''):
+    run_mode = config.get_setting("run_mode")
+    if run_mode == "test":
+        print("Exiting the function because run_mode is 'test'.")
+        return
+    
     telegram_token = telegram.get_telegram_token(bot)
 
     try:
-        symbol_only, symbol_stable = separate_symbol_and_trade_against(symbol)
+        symbol_only, symbol_trade_against = separate_symbol_and_trade_against(symbol)
         # get balance
         balance_qty = get_symbol_balance(symbol=symbol_only, bot=bot)  
-        # verify sell quantity
-        df_pos = database.get_positions_by_bot_symbol_position(database.conn, bot=bot, symbol=symbol, position=1)
-        if not df_pos.empty:
-            buy_order_qty = df_pos['Qty'].iloc[0]
-        else:
-            buy_order_qty = 0
         
-        sell_qty = buy_order_qty
-        if balance_qty < buy_order_qty:
+        # verify sell quantity
+        if convert_all_balance:
             sell_qty = balance_qty
+        else:
+            df_pos = database.get_positions_by_bot_symbol_position(database.conn, bot=bot, symbol=symbol, position=1)
+            if not df_pos.empty:
+                pos_qty = df_pos['Qty'].iloc[0]
+            else:
+                pos_qty = 0
+            
+            sell_qty = pos_qty
+
+            if balance_qty < pos_qty:
+                sell_qty = balance_qty
+
+        # sell by percentage
+        if percentage < 100:
+            sell_qty = sell_qty*(percentage/100)
+
         sell_qty = adjust_size(symbol, sell_qty)
 
         if sell_qty > 0:
@@ -294,20 +334,37 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = ''):
                 order_qty = float(1)
                 order_side = "SELL"
 
-            # get Buy_Order_Id from positions table
-            df_pos = database.get_positions_by_bot_symbol_position(connection=database.conn, 
-                                                                   bot=bot, 
-                                                                   symbol=symbol, 
-                                                                   position=1)
-            if not df_pos.empty:
-                buy_order_id = str(df_pos['Buy_Order_Id'].iloc[0])
-            else:
+            if convert_all_balance:
                 buy_order_id = str(0)
+            else:
+                # get Buy_Order_Id from positions table
+                df_pos = database.get_positions_by_bot_symbol_position(connection=database.conn, 
+                                                                    bot=bot, 
+                                                                    symbol=symbol, 
+                                                                    position=1)
 
-            # update position with the sell order
-            database.set_position_sell(database.conn,
-                                       bot=bot, 
-                                       symbol=symbol)
+                # update position as closed position
+                if not test_mode:
+                    if percentage == 100:
+                        database.set_position_sell(database.conn, bot=bot, symbol=symbol)
+                    else:      
+                        if not df_pos.empty:
+                            # if we are selling a position percentage we must update the qty
+                            previous_qty = float(df_pos['Qty'].iloc[0])
+                            new_qty = previous_qty - order_qty
+                            database.set_position_qty(database.conn, bot=bot, symbol=symbol, qty=new_qty)
+
+                            # update take profit to inform that we already took profit1 or 2
+                            if take_profit_num == 1:
+                                database.set_position_take_profit_1(database.conn, bot=bot, symbol=symbol, take_profit_1=1)
+                            elif take_profit_num == 2:
+                                database.set_position_take_profit_2(database.conn, bot=bot, symbol=symbol, take_profit_2=1)
+                        
+                
+                if not df_pos.empty:
+                    buy_order_id = str(df_pos['Buy_Order_Id'].iloc[0])
+                else:
+                    buy_order_id = str(0)
     
             # add to orders database table
             pnl_value, pnl_perc = database.add_order_sell(database.conn,
@@ -320,7 +377,8 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = ''):
                                                           qty = order_qty,
                                                           ema_fast = fast_ema,
                                                           ema_slow = slow_ema,
-                                                          exit_reason = reason)            
+                                                          exit_reason = reason,
+                                                          sell_percentage = percentage)            
                 
             # determine the alert type based on the value of pnl_value
             if pnl_value > 0:
@@ -328,7 +386,14 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = ''):
             else:
                 alert_type = telegram.EMOJI_TRADE_WITH_LOSS
 
-            strategy_name = str(fast_ema)+"/"+str(slow_ema)+" EMA cross"
+            if config.strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
+                strategy_name = str(fast_ema)+"/"+str(slow_ema)+" "+config.strategy_name
+            elif config.strategy_id in ["market_phases"]:
+                strategy_name = config.strategy_name 
+            
+            if convert_all_balance:
+                convert_message = "Trade against auto switch"
+                strategy_name = f"{convert_message} - {strategy_name}"
 
             telegram_prefix = telegram.get_telegram_prefix(bot)
 
@@ -345,10 +410,11 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = ''):
                                          amount=order_qty,
                                          trade_against_value=order_avg_price*order_qty,
                                          pnlPerc=pnl_perc,
-                                         pnl_trade_against=pnl_value)
+                                         pnl_trade_against=pnl_value,
+                                         exit_reason=reason)
         else:
             # if there is no qty on balance to sell we set the qty on positions table to zero
-            # this can happen if we sell on the exchange (for example, due to a pump) before the bot sells it. 
+            # this can happen if we sell on the exchange before the bot sells it. 
             database.set_position_sell(connection=database.conn,
                                        bot=bot, 
                                        symbol=symbol)
@@ -429,79 +495,224 @@ def create_balance_snapshot(telegram_prefix: str):
         # Create a new connection
         database.conn = database.connect()
 
-    last_date = database.get_last_date_from_balances(database.conn)
-    if last_date == '0':
-         today = datetime.now()
-         start_date = today - timedelta(days=30)
-    else:
-         start_date = datetime.strptime(last_date, '%Y-%m-%d')        
+    # Retrieve the balances of all coins in the user’s Binance account
+    account_balances = client.get_account()['balances']
 
-    snapshots = client.get_account_snapshot(type="SPOT",
-                                            startTime=int(start_date.timestamp()*1000), 
-                                            # endTime=int(end_date.timestamp()*1000)
-                                            limit=30 #max                                        
-                                            )
+    # Get the current price of all tickers from the Binance API
+    ticker_info = client.get_all_tickers()
 
-    code = snapshots['code']
-    msg = snapshots['msg']
+    # Create a dictionary of tickers and their corresponding prices
+    ticker_prices = {ticker['symbol']: float(ticker['price']) for ticker in ticker_info}
+    btc_price = ticker_prices.get('BTCUSDT')
+
+    # Calculate yesterday's date
+    date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+
+    # Calculate the USDT value of each coin in the user’s account
+    symbol_values = []
+    for symbol_balance in account_balances:
+        # Get the coin symbol and the free and locked balance of each coin
+        symbol = symbol_balance['asset']
+        unlocked_balance = float(symbol_balance['free'])
+        # locked_balance = float(coin_balance['locked'])
+    
+        # If the coin is USDT and the total balance is greater than 1, add it to the list of coins with their USDT values
+        if symbol == 'USDT' and unlocked_balance > 1:
+            
+            symbol_balance = unlocked_balance
+            symbol_usd_price = 1
+            symbol_balance_usd = symbol_balance*symbol_usd_price
+            symbol_balance_btc = symbol_balance*(symbol_usd_price/btc_price)
+
+            new_row = [date, symbol, symbol_balance, symbol_usd_price, btc_price, symbol_balance_usd, symbol_balance_btc]
+            symbol_values.append(new_row)
+
+        # Otherwise, check if the coin has a USDT trading pair or a BTC trading pair
+        elif unlocked_balance > 0.0:
+            # Check if the coin has a USDT trading pair
+            if (any(symbol + 'USDT' in i for i in ticker_prices)):
+                # If it does, calculate its USDT value and add it to the list of coins with their USDT values
+                ticker_symbol = symbol + 'USDT'
+                # ticker_price = ticker_prices.get(ticker_symbol)
+                # coin_usdt_value = (unlocked_balance) * ticker_price
+
+                symbol_balance = unlocked_balance
+                symbol_usd_price = ticker_prices.get(ticker_symbol)
+                symbol_balance_usd = symbol_balance*symbol_usd_price
+                symbol_balance_btc = symbol_balance*(symbol_usd_price/btc_price)
+
+                if symbol_balance_usd > 1:   
+                    new_row = [date, symbol, symbol_balance, symbol_usd_price, btc_price, symbol_balance_usd, symbol_balance_btc]
+                    symbol_values.append(new_row)
+            
+            # If the coin does not have a USDT trading pair, check if it has a BTC trading pair
+            elif (any(symbol + 'BTC' in i for i in ticker_prices)):
+                # If it does, calculate its USDT value and add it to the list of coins with their USDT values
+                ticker_symbol = symbol + 'BTC'
+                symbol_btc_price = ticker_prices.get(ticker_symbol)
+                
+                symbol_balance = unlocked_balance
+                symbol_usd_value = symbol_btc_price*btc_price
+                symbol_balance_usd = symbol_balance*symbol_usd_price
+                symbol_balance_btc = symbol_balance*symbol_btc_price
+                
+                if symbol_balance_usd > 1:
+                    new_row = [date, symbol, symbol_balance, symbol_usd_price, btc_price, symbol_balance_usd, symbol_balance_btc]
+                    symbol_values.append(new_row)
+        
+    # Define column names
+    columns = ['Date', 'Asset', 'Balance', 'USD_Price', 'BTC_Price', 'Balance_USD', 'Balance_BTC']
+
+    # Convert the list to a DataFrame
+    df_balance = pd.DataFrame(symbol_values, columns=columns)
+
+    # Calculate the sum of the 'Balance_BTC' column
+    total_balance_btc = df_balance['Balance_BTC'].sum()
+
+    # Insert the sum into a new column 'Total_Balance_BTC'
+    df_balance['Total_Balance_BTC'] = total_balance_btc
+
+    # Sort the DataFrame by 'Balance_USD' in descending order
+    df_balance.sort_values(by='Balance_USD', ascending=False, inplace=True)
+
+    # df_new = pd.DataFrame({
+    #     'Date': [snapshot_date],
+    #     'Asset': [asset],
+    #     'Balance': [daily_balance],
+    #     'USD_Price': [unit_price_usd],
+    #     'BTC_Price': [btc_value],
+    #     'Balance_USD': [balance_usd],
+    #     'Balance_BTC': [balance_btc],
+    #     'Total_Balance_BTC': [totalAssetOfBtc]
+    #     })
+
+
+    # last_date = database.get_last_date_from_balances(database.conn)
+    # if last_date == '0':
+    #      today = datetime.now()
+    #      start_date = today - timedelta(days=30)
+    # else:
+    #      start_date = datetime.strptime(last_date, '%Y-%m-%d')    
+
+    # start_date = datetime.now()    
+
+    # snapshots = client.get_account_snapshot(type="SPOT",
+    #                                         startTime=int(start_date.timestamp()*1000), 
+    #                                         # endTime=int(end_date.timestamp()*1000)
+    #                                         limit=30 #max                                        
+    #                                         )
+
+    # code = snapshots['code']
+    # msg = snapshots['msg']
 
     # get list of available symbols. 
     # This is usefull to avoid getting price from symbol that do not trade against stable
-    exchange_info = get_exchange_info()
-    symbols = set()
-    trade_against = "USDT" # TODO: config.trade_against
-    for s in exchange_info['symbols']:
-        if (s['symbol'].endswith(trade_against)
-            and s['status'] == 'TRADING'):
-                symbols.add(s['symbol']) 
+    # exchange_info = get_exchange_info()
+    # symbols = set()
+    # trade_against = "USDT"
+    # for s in exchange_info['symbols']:
+    #     if (s['symbol'].endswith(trade_against)
+    #         and s['status'] == 'TRADING'):
+    #             symbols.add(s['symbol']) 
 
     # Create a Pandas DataFrame to store the daily balances for each asset
-    df_balance = pd.DataFrame()
+    # df_balance = pd.DataFrame()
 
-    # Iterate through the snapshots and get the daily balance for each asset
-    for snapshot in snapshots['snapshotVos']:
-        if snapshot['type'] == 'spot' and snapshot['data'] is not None:
-            snapshot_date = datetime.fromtimestamp(snapshot['updateTime']/1000).date()
-            totalAssetOfBtc = snapshot['data']['totalAssetOfBtc']
-            for balance in snapshot['data']['balances']:
-                asset = balance['asset']
-                daily_balance = float(balance['free'])
 
-                print(f"{snapshot_date}-{asset}")
+    # ignore if balance = 0
+    # if daily_balance == 0.0:
+    #     continue
+
+    # symbol_with_trade_against = asset+trade_against
+
+    # # convert snapshot_date from date to datetime
+    # date = datetime.combine(snapshot_date, datetime.min.time())
+    # btc_value = get_price_close_by_symbol_and_date("BTCUSDT", date)
+
+    # if asset in [trade_against]:
+    #     balance_usd = daily_balance
+    #     unit_price_usd = 1
+    #     unit_price_btc = unit_price_usd/btc_value
+    #     balance_btc = unit_price_btc * daily_balance
+    # elif symbol_with_trade_against not in symbols:
+    #         print(f"{asset} not in available symbols")
+    #         balance_usd = 0
+    #         balance_btc = 0
+    #         unit_price_usd = 0
+    # else:
+    #     # convert snapshot_date from date to datetime
+    #     date = datetime.combine(snapshot_date, datetime.min.time())
+    #     # get unit USDT price
+    #     unit_price_usd = get_price_close_by_symbol_and_date(symbol_with_trade_against, date)
+    #     balance_usd = unit_price_usd * daily_balance
+    #     unit_price_btc = unit_price_usd/btc_value
+    #     balance_btc = unit_price_btc * daily_balance
+
+    # df_new = pd.DataFrame({
+    #     'Date': [snapshot_date],
+    #     'Asset': [asset],
+    #     'Balance': [daily_balance],
+    #     'USD_Price': [unit_price_usd],
+    #     'BTC_Price': [btc_value],
+    #     'Balance_USD': [balance_usd],
+    #     'Balance_BTC': [balance_btc],
+    #     'Total_Balance_BTC': [totalAssetOfBtc]
+    #     })
+    # # add to total
+    # df_balance = pd.concat([df_balance, df_new], ignore_index=True)
+
+    # # Iterate through the snapshots and get the daily balance for each asset
+    # for snapshot in snapshots['snapshotVos']:
+    #     if snapshot['type'] == 'spot' and snapshot['data'] is not None:
+    #         snapshot_date = datetime.fromtimestamp(snapshot['updateTime']/1000).date()
+    #         totalAssetOfBtc = snapshot['data']['totalAssetOfBtc']
+    #         for balance in snapshot['data']['balances']:
+    #             asset = balance['asset']
+    #             daily_balance = float(balance['free'])
+
+    #             print(f"{snapshot_date}-{asset}")
                 
-                # ignore if balance = 0
-                if daily_balance == 0.0:
-                    continue
+    #             # ignore if balance = 0
+    #             if daily_balance == 0.0:
+    #                 continue
 
-                symbol_with_trade_against = asset+trade_against
+    #             symbol_with_trade_against = asset+trade_against
 
-                if asset in [trade_against]:
-                     balance_usd = daily_balance
-                elif symbol_with_trade_against not in symbols:
-                     print(f"{asset} not in available symbols")
-                     balance_usd = 0
-                else:
-                    # convert snapshot_date from date to datetime
-                    date = datetime.combine(snapshot_date, datetime.min.time())
-                    # get unit USDT price
-                    unit_price_usd = get_price_close_by_symbol_and_date(symbol_with_trade_against, date)
-                    balance_usd = unit_price_usd * daily_balance
-                    btc_value = get_price_close_by_symbol_and_date("BTCUSDT", date)
-                    unit_price_btc = unit_price_usd/btc_value
-                    balance_btc = unit_price_btc * daily_balance
+    #             # convert snapshot_date from date to datetime
+    #             date = datetime.combine(snapshot_date, datetime.min.time())
+    #             btc_value = get_price_close_by_symbol_and_date("BTCUSDT", date)
 
-                df_new = pd.DataFrame({
-                    'Date': [snapshot_date],
-                    'Asset': [asset],
-                    'Balance': [daily_balance],
-                    'USD_Price': [unit_price_usd],
-                    'BTC_Price': [btc_value],
-                    'Balance_USD': [balance_usd],
-                    'Balance_BTC': [balance_btc],
-                    'Total_Balance_BTC': [totalAssetOfBtc]
-                    })
-                # add to total
-                df_balance = pd.concat([df_balance, df_new], ignore_index=True)
+    #             if asset in [trade_against]:
+    #                 balance_usd = daily_balance
+    #                 unit_price_usd = 1
+    #                 unit_price_btc = unit_price_usd/btc_value
+    #                 balance_btc = unit_price_btc * daily_balance
+    #             elif symbol_with_trade_against not in symbols:
+    #                  print(f"{asset} not in available symbols")
+    #                  balance_usd = 0
+    #                  balance_btc = 0
+    #                  unit_price_usd = 0
+    #             else:
+    #                 # convert snapshot_date from date to datetime
+    #                 date = datetime.combine(snapshot_date, datetime.min.time())
+    #                 # get unit USDT price
+    #                 unit_price_usd = get_price_close_by_symbol_and_date(symbol_with_trade_against, date)
+    #                 balance_usd = unit_price_usd * daily_balance
+    #                 unit_price_btc = unit_price_usd/btc_value
+    #                 balance_btc = unit_price_btc * daily_balance
+
+    #             df_new = pd.DataFrame({
+    #                 'Date': [snapshot_date],
+    #                 'Asset': [asset],
+    #                 'Balance': [daily_balance],
+    #                 'USD_Price': [unit_price_usd],
+    #                 'BTC_Price': [btc_value],
+    #                 'Balance_USD': [balance_usd],
+    #                 'Balance_BTC': [balance_btc],
+    #                 'Total_Balance_BTC': [totalAssetOfBtc]
+    #                 })
+    #             # add to total
+    #             df_balance = pd.concat([df_balance, df_new], ignore_index=True)
 
     # Print the daily balances for each asset
     # print(df_balance)

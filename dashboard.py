@@ -13,10 +13,12 @@ from millify import millify
 import streamlit_authenticator as stauth
 import altair as alt
 
-import utils.database as database
 import utils.config as config
+import utils.database as database
 import utils.exchange as exchange
 import utils.general as general
+
+from symbol_by_market_phase import main as run_symbol_by_market_phase
 
 import update 
 
@@ -36,6 +38,22 @@ st.set_page_config(
 
 # for testing purposes
 # st.session_state
+
+# Initialization
+if 'name' not in  st.session_state:
+    st.session_state.name = ''
+if 'username' not in  st.session_state:
+    st.session_state.username = ''
+if 'user_password' not in  st.session_state:
+    st.session_state.user_password = 'None'
+if 'reset_form_open' not in st.session_state:
+    st.session_state.reset_form_open = False
+if 'reset_password_submitted' not in  st.session_state:
+    st.session_state.reset_password_submitted = False
+if 'authentication_status' not in  st.session_state:
+    st.session_state.authentication_status = False
+if 'trade_against_switch' not in  st.session_state:
+    st.session_state.trade_against_switch = False
 
 # im using to find which bots are running
 def find_file_paths(filename: str):
@@ -129,14 +147,14 @@ def get_chart_daily_balance(asset):
         col1, col2 = st.columns([10, 1])
         with col1:
             st.caption(f'Last Daily Balance: {current_total_balance}')
-        with col2:
-            refresh_balance = st.button("Refresh", key=f"refresh_balance_{asset}")
+        # with col2:
+        #     refresh_balance = st.button("Refresh", key=f"refresh_balance_{asset}")
 
-        if refresh_balance:
-            with st.spinner("Creating balance snapshot. It can take a few minutes..."):
-                exchange.create_balance_snapshot(telegram_prefix="")
-                # dasboard refresh
-                st.experimental_rerun()
+        # if refresh_balance:
+        #     with st.spinner("Creating balance snapshot. It can take a few minutes..."):
+        #         exchange.create_balance_snapshot(telegram_prefix="")
+        #         # dasboard refresh
+        #         st.rerun()
 
         # exit if there is no data to display on chart
         if source.empty:
@@ -305,15 +323,12 @@ def realized_pnl():
 
         result_closed_positions, trades_month_1d, trades_month_4h, trades_month_1h = calculate_realized_pnl(str(year), str(month_number))
         # print("\nPnL - Total")
-        # apply the lambda function to make the last row bold
-        # result_closed_positions = result_closed_positions.apply(lambda x: ['font-weight: bold' if i == len(x)-1 else '' for i in range(len(x))], axis=1)
-
         # print(result_closed_positions)
 
         st.header("Realized PnL - Total")
-        # tab_rpnl.dataframe(result_closed_positions.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['Pnl_Perc','Pnl_Value']))
-        st.dataframe(result_closed_positions.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
-
+        result_closed_positions = result_closed_positions.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value'])
+        st.dataframe(result_closed_positions)    
+    
         # print("Realized PnL - Detail")
         # print(trades_month_1d)
         # print(trades_month_4h)
@@ -321,11 +336,11 @@ def realized_pnl():
 
         st.header(f"Realized PnL - Detail")
         st.subheader("Bot 1d")
-        st.dataframe(trades_month_1d.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
+        st.dataframe(trades_month_1d.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
         st.subheader("Bot 4h")
-        st.dataframe(trades_month_4h.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
+        st.dataframe(trades_month_4h.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
         st.subheader("Bot 1h")
-        st.dataframe(trades_month_1h.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
+        st.dataframe(trades_month_1h.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
 
         # print('\n----------------------------\n')
 
@@ -343,38 +358,39 @@ def unrealized_pnl():
 
         # st.sidebar.subheader('Unrealized PnL %')
         # col1, col2, col3 = st.sidebar.columns(3)
-        currPnL_1d_value = result_open_positions.loc[result_open_positions['Bot'] == '1d', 'PnL_Value'].iloc[0]
-        currPnL_4h_value = result_open_positions.loc[result_open_positions['Bot'] == '4h', 'PnL_Value'].iloc[0]
-        currPnL_1h_value = result_open_positions.loc[result_open_positions['Bot'] == '1h', 'PnL_Value'].iloc[0]
-        currPnL_total_value = float(currPnL_1d_value) + float(currPnL_4h_value) + float(currPnL_1h_value)
+        # currPnL_1d_value = result_open_positions.loc[result_open_positions['Bot'] == '1d', 'PnL_Value'].iloc[0]
+        # currPnL_4h_value = result_open_positions.loc[result_open_positions['Bot'] == '4h', 'PnL_Value'].iloc[0]
+        # currPnL_1h_value = result_open_positions.loc[result_open_positions['Bot'] == '1h', 'PnL_Value'].iloc[0]
+        # currPnL_total_value = float(currPnL_1d_value) + float(currPnL_4h_value) + float(currPnL_1h_value)
 
-        # Convert long numbers into a human-readable format in Python
-        # 1200 to 1.2k; 12345678 to 12.35M 
-        currPnL_1d_value = millify(currPnL_1d_value, precision=num_decimals)
-        currPnL_4h_value = millify(currPnL_4h_value, precision=num_decimals)
-        currPnL_1h_value = millify(currPnL_1h_value, precision=num_decimals)
-        currPnL_total_value = millify(currPnL_total_value, precision=num_decimals)
+        # # Convert long numbers into a human-readable format in Python
+        # # 1200 to 1.2k; 12345678 to 12.35M 
+        # currPnL_1d_value = millify(currPnL_1d_value, precision=num_decimals)
+        # currPnL_4h_value = millify(currPnL_4h_value, precision=num_decimals)
+        # currPnL_1h_value = millify(currPnL_1h_value, precision=num_decimals)
+        # currPnL_total_value = millify(currPnL_total_value, precision=num_decimals)
 
-        currPnL_1d_perc = result_open_positions.loc[result_open_positions['Bot'] == '1d', 'PnL_Perc'].iloc[0]
-        currPnL_4h_perc = result_open_positions.loc[result_open_positions['Bot'] == '4h', 'PnL_Perc'].iloc[0]
-        currPnL_1h_perc = result_open_positions.loc[result_open_positions['Bot'] == '1h', 'PnL_Perc'].iloc[0]
-        currPnL_total_perc = float(currPnL_1d_perc) + float(currPnL_4h_perc) + float(currPnL_1h_perc)
+        # currPnL_1d_perc = result_open_positions.loc[result_open_positions['Bot'] == '1d', 'PnL_Perc'].iloc[0]
+        # currPnL_4h_perc = result_open_positions.loc[result_open_positions['Bot'] == '4h', 'PnL_Perc'].iloc[0]
+        # currPnL_1h_perc = result_open_positions.loc[result_open_positions['Bot'] == '1h', 'PnL_Perc'].iloc[0]
+        # currPnL_total_perc = float(currPnL_1d_perc) + float(currPnL_4h_perc) + float(currPnL_1h_perc)
 
-        currPnL_1d_perc = millify(currPnL_1d_perc, precision=2)
-        currPnL_4h_perc = millify(currPnL_4h_perc, precision=2)
-        currPnL_1h_perc = millify(currPnL_1h_perc, precision=2)
-        currPnL_total_perc = millify(currPnL_total_perc, precision=2)
+        # currPnL_1d_perc = millify(currPnL_1d_perc, precision=2)
+        # currPnL_4h_perc = millify(currPnL_4h_perc, precision=2)
+        # currPnL_1h_perc = millify(currPnL_1h_perc, precision=2)
+        # currPnL_total_perc = millify(currPnL_total_perc, precision=2)
 
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("1d", currPnL_1d_value, str(currPnL_1d_perc)+"%")
-        col2.metric("4h", currPnL_4h_value, str(currPnL_4h_perc)+"%")
-        col3.metric("1h", currPnL_1h_value, str(currPnL_1h_perc)+"%")
-        col4.metric("Total", currPnL_total_value, str(currPnL_total_perc)+"%")
+        # col1, col2, col3, col4 = st.columns(4)
+        # col1.metric("1d", currPnL_1d_value, str(currPnL_1d_perc)+"%")
+        # col2.metric("4h", currPnL_4h_value, str(currPnL_4h_perc)+"%")
+        # col3.metric("1h", currPnL_1h_value, str(currPnL_1h_perc)+"%")
+        # col4.metric("Total", currPnL_total_value, str(currPnL_total_perc)+"%")
 
-        st.write("")
+        # st.write("")
 
-        st.dataframe(data=result_open_positions.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
-
+        result_open_positions = result_open_positions.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value'])
+        st.dataframe(result_open_positions)
+        
         # print("Unrealized PnL - Detail")
         # print(positions_df_1d)
         # print(positions_df_4h)
@@ -382,15 +398,51 @@ def unrealized_pnl():
 
         st.header(f"Unrealized PnL - Detail")
         st.subheader("Bot 1d")
-        st.dataframe(positions_df_1d.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
+        st.dataframe(positions_df_1d.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
+                     column_config = {
+                         "PnL_Perc": st.column_config.NumberColumn(
+                                                                    # "PnL %",
+                                                                    # help="The price of the product in USD",
+                                                                    # min_value=0,
+                                                                    # max_value=1000,
+                                                                    # step=1,
+                                                                    format="%.2f",
+                                                                ),
+                         "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f",)
+                    }
+                )
         st.subheader("Bot 4h")
-        st.dataframe(positions_df_4h.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
+        st.dataframe(positions_df_4h.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
+                     column_config = {
+                         "PnL_Perc": st.column_config.NumberColumn(
+                                                                    # "PnL %",
+                                                                    # help="The price of the product in USD",
+                                                                    # min_value=0,
+                                                                    # max_value=1000,
+                                                                    # step=1,
+                                                                    format="%.2f",
+                                                                ),
+                         "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f",) 
+                    }
+                )
         st.subheader("Bot 1h")
-        st.dataframe(positions_df_1h.style.apply(last_row_bold, axis=0).applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
+        st.dataframe(positions_df_1h.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
+                     column_config = {
+                         "PnL_Perc": st.column_config.NumberColumn(
+                                                                    # "PnL %",
+                                                                    # help="The price of the product in USD",
+                                                                    # min_value=0,
+                                                                    # max_value=1000,
+                                                                    # step=1,
+                                                                    format="%.2f",
+                                                                ),
+                         "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f",) 
+                    }
+                )        
 
         #----------------------
         # Force Close Position
-        st.header("Forced Selling")
+        st.header("Force Selling")
         # add expander
         sell_expander = st.expander("Choose position to sell")
         bots = ["1d", "4h", "1h"]
@@ -410,28 +462,49 @@ def unrealized_pnl():
             label='Position?',
             options=(list_positions),
             label_visibility='collapsed')
-        # sell_expander.write(sell_symbol)
-        disable_sell_confirmation1 = sell_symbol == None 
-        # sell_expander.write(disable_sell_confirmation1)
-        sell_reason = sell_expander.text_input("Reason")
-        sell_confirmation1 = sell_expander.checkbox(f"I confirm the Sell of **{sell_symbol}** in **{sell_bot}** bot", disabled=disable_sell_confirmation1)
-        # if button pressed then sell position
-        if sell_confirmation1:
-            sell_confirmation2 = sell_expander.button("SELL")
-            if sell_confirmation2:
-                exchange.create_sell_order(symbol=sell_symbol,
-                                        bot=sell_bot,
-                                        reason=sell_reason) 
 
-                sell_expander.success(f"{sell_symbol} SOLD!")
-                time.sleep(3)
-                # dasboard refresh
-                st.experimental_rerun()
-        #----------------------
+        disable_sell_confirmation1 = sell_symbol == None
+        # get balance
+        if not disable_sell_confirmation1:
+            # sell_symbol = "INJUSDT" # test
+            sell_amount_perc = sell_expander.slider('Amount', 10, 100, 25, 5, format="%d%%", disabled=disable_sell_confirmation1)
+            
+            # get current position balance
+            df_pos = database.get_positions_by_bot_symbol_position(database.conn, bot=sell_bot, symbol=sell_symbol, position=1)
+            if not df_pos.empty:
+                balance_qty = df_pos['Qty'].iloc[0]
+            else:
+                balance_qty = 0
+            # symbol_only, symbol_stable = general.separate_symbol_and_trade_against(sell_symbol)
+            # balance_qty = exchange.get_symbol_balance(symbol=symbol_only, bot=sell_bot) 
+            
+            sell_amount = balance_qty*(sell_amount_perc/100)
+            sell_expander.text_input('Sell Amount / Position Balance', f'{sell_amount} / {balance_qty}', disabled=True)
+ 
+            # sell_expander.write(disable_sell_confirmation1)
+            sell_reason = sell_expander.text_input("Reason")
+            sell_confirmation1 = sell_expander.checkbox(f"I confirm the Sell of **{sell_amount_perc}%** of **{sell_symbol}** in **{sell_bot}** bot", disabled=disable_sell_confirmation1)
+        
+            # if button pressed then sell position
+            if sell_confirmation1:
+                sell_confirmation2 = sell_expander.button("SELL")
+                if sell_confirmation2:
+                    exchange.create_sell_order(symbol=sell_symbol,
+                                            bot=sell_bot,
+                                            reason=sell_reason,
+                                            percentage=sell_amount_perc
+                                            ) 
+
+                    sell_expander.success(f"{sell_symbol} SOLD!")
+                    time.sleep(5)
+                    # dasboard refresh
+                    st.rerun()
+            #----------------------
 
 def top_performers():
     with tab_top_perf:
-        st.subheader(f"Top {config.trade_top_performance} Performers")
+        top_perf = config.get_setting("trade_top_performance")
+        st.subheader(f"Top {top_perf} Performers")
         st.caption("The top performers are those in accumulation phase (Price > 50DSMA and Price > 200DSMA and 50DSMA < 200DSMA) and bullish phase (Price > 50DSMA and Price > 200DSMA and 50DSMA > 200DSMA) and then sorted by the price above the 200-day moving average (DSMA) in percentage terms. [Click here for more details](https://twitter.com/jptsantossilva/status/1539976855469428738?s=20).")
         df_mp = database.get_all_symbols_by_market_phase(connection)
         df_mp['Price'] = df_mp['Price'].apply(lambda x:f'{{:.{8}f}}'.format(x))
@@ -480,11 +553,40 @@ def blacklist():
             edited_blacklist.to_sql(name='Blacklist',con=connection, index=True, if_exists="replace")
             st.success("Blacklist changes saved")
 
-def best_ema():
-    with tab_best_ema:
-        st.subheader("Best EMA")
-        df_bema = database.get_all_best_ema(connection)
-        st.dataframe(df_bema)
+def backtesting_results():
+    with tab_backtesting_results:
+        st.subheader("Backtesting Results")
+
+        # search by strategy
+        search_strategy = st.multiselect(
+                    'Strategy',
+                    options=list(dict_strategies.keys()),
+                    format_func=format_func_strategies
+                    )
+        # st.write('You selected:', search_strategy)
+
+        df_bt_results = database.get_all_backtesting_results(connection)
+
+        # search by symbol
+        # get distinct symbols
+        list_symbols = df_bt_results['Symbol'].unique().tolist()
+        search_symbol = st.multiselect(
+                    'Symbol',
+                    options=list_symbols
+                    )
+        # st.write('You selected:', search_symbol)
+        
+        # if (not search_strategy) and (not search_symbol):
+        #     st.dataframe(df_bt_results)
+        if search_strategy:
+            df_bt_results = df_bt_results[df_bt_results['Strategy_Id'].isin(search_strategy)]
+        if search_symbol:
+            df_bt_results = df_bt_results[df_bt_results['Symbol'].isin(search_symbol)]
+
+        # remove strategy_id column
+        df_bt_results = df_bt_results.drop(columns=['Strategy_Id'])
+
+        st.dataframe(df_bt_results)
 
 def manage_config():
 
@@ -497,9 +599,56 @@ def manage_config():
         st.stop()
 
     # Create Streamlit widgets for each configuration option
-    col1_cfg, col2_cfg, col3_cfg = tab_settings.columns(3)
-    if tab_settings: 
+    col1_cfg, col2_cfg = tab_settings.columns(2)
+    if tab_settings:
+        
+        with col2_cfg:
+            st.write("**USDT Strategy**")
+
+            try:
+                main_strategy = st.selectbox('USDT Strategy', 
+                                            key="main_strategy",
+                                            options=list(dict_strategies_main.keys()),
+                                            format_func=format_func_strategies_main, 
+                                            label_visibility="collapsed"
+                                            )
+                # st.write(f"You selected option {main_strategy} called {format_func_strategies(main_strategy)}")       
+            except KeyError:
+                st.warning('Invalid or missing configuration: main_strategy')
+                st.stop()
+
+            
+            st.write("**BTC Strategy**")
+
+            try:
+                btc_strategy = st.selectbox('BTC Strategy', 
+                                            key="btc_strategy",
+                                            options=list(dict_strategies_btc.keys()),
+                                            format_func=format_func_strategies_btc,
+                                            label_visibility="collapsed",
+                                            # disabled=not st.session_state.trade_against_switch,
+                                            help=""""""
+                                            )
+            except KeyError:
+                st.warning('Invalid or missing configuration: btc_strategy')
+                st.stop()
+
+            trade_against_switch = st.checkbox("Automatically switch between trade against USDT or BTC",
+                                                key="trade_against_switch",
+                                                help="""Considering the chosen Bitcoin strategy will decide whether it is a Bull or Bear market. If Bull then will convert USDT to BTC and trade against BTC. If Bear will convert BTC into USDT and trade against USDT.""")
+            
+
+            # col1_stra, col2_stra = st.columns(2)
+            # with col1_stra:
+            run_backtesting = st.button("Run Backtesting", help="Please be patient, as it could take around 1 hour to complete.")
+            if run_backtesting:
+                with st.spinner('This task is taking a leisurely stroll through the digital landscape (+/- 1h). Why not do the same? Stretch those legs, grab a snack, or contemplate the meaning of life.'):
+                    trade_against = get_trade_against() 
+                    run_symbol_by_market_phase(time_frame="1d", trade_against=trade_against)
+
         with col1_cfg:
+            st.write("**Settings**")
+
             try:
                 prev_bot_1d = config['bot_1d']
                 bot_1d = st.checkbox(label='Bot 1D', value=prev_bot_1d,
@@ -606,11 +755,13 @@ def manage_config():
             except KeyError:
                 st.warning('Invalid or missing configuration: trade_top_performance')
                 st.stop()
+
             try:
                 stop_loss = st.number_input(label='Stop Loss %', 
-                                            min_value=0.0, 
-                                            value=float(config['stop_loss']), 
-                                            step=0.01,
+                                            min_value=0, 
+                                            value=int(config['stop_loss']), 
+                                            step=1,
+                                            # key="stop_loss",
                                             help="""Set stop loss to automatically sell if its price falls below a certain percentage.
                                                 \nExamples:
                                                 \n stop_loss = 0 => will not use stop loss. The stop loss used will be triggered when slow_ema > fast_ema
@@ -619,6 +770,67 @@ def manage_config():
             except KeyError:
                 st.warning('Invalid or missing configuration: stop_loss')
                 st.stop()
+
+            col1_tp1, col2_tp1 = col1_cfg.columns(2)
+
+            with col1_tp1:
+
+                try:
+                    take_profit_1 = st.number_input(label="Take Profit Level 1 %", 
+                                                    min_value=0, 
+                                                    value=int(config['take_profit_1']), 
+                                                    step=1,
+                                                    key="take_profit_1",
+                                                    help="The percentage increase in price at which the system will automatically trigger a sell order to secure profits."
+                                                    )
+                except KeyError:
+                    st.warning('Invalid or missing configuration: take_profit_1')
+                    st.stop()
+
+            with col2_tp1:
+                try:
+                    take_profit_1_amount = st.number_input(
+                                                            label="Amount %", 
+                                                            min_value=5, 
+                                                            max_value=100,
+                                                            value=int(config['take_profit_1_amount']), 
+                                                            step=5,
+                                                            key="take_profit_1_amount",
+                                                            help="The percentage to be sold when the take profits level 1 is achieved."
+                                                            )
+                except KeyError:
+                    st.warning('Invalid or missing configuration: take_profit_1_amount')
+                    st.stop()
+            
+            col1_tp2, col2_tp2 = col1_cfg.columns(2)
+
+            with col1_tp2:    
+                try:
+                    take_profit_2 = st.number_input(label="Take Profit Level 2 %", 
+                                                    min_value=0, 
+                                                    value=int(config['take_profit_2']), 
+                                                    step=1,
+                                                    key="take_profit_2",
+                                                    help="The percentage increase in price at which the system will automatically trigger a sell order to secure profits."
+                                                    )
+                except KeyError:
+                    st.warning('Invalid or missing configuration: take_profit_2')
+                    st.stop()
+
+            with col2_tp2:
+                try:
+                    take_profit_2_amount = st.number_input(
+                                                            label="Amount %", 
+                                                            min_value=5, 
+                                                            max_value=100,
+                                                            value=int(config['take_profit_2_amount']), 
+                                                            step=5,
+                                                            key="take_profit_2_amount",
+                                                            help="The percentage to be sold when the take profits level 2 is achieved."
+                                                            )
+                except KeyError:
+                    st.warning('Invalid or missing configuration: take_profit_2_amount')
+                    st.stop()
 
     # Update the configuration dictionary with the modified values
     config['stake_amount_type'] = stake_amount_type
@@ -631,6 +843,13 @@ def manage_config():
     config['bot_1d'] = bot_1d
     config['bot_4h'] = bot_4h
     config['bot_1h'] = bot_1h
+    config['main_strategy'] = main_strategy
+    config['btc_strategy'] = btc_strategy
+    config['trade_against_switch'] = trade_against_switch    
+    config['take_profit_1'] = take_profit_1 
+    config['take_profit_1_amount'] = take_profit_1_amount   
+    config['take_profit_2'] = take_profit_2    
+    config['take_profit_2_amount'] = take_profit_2_amount
 
     # Write the modified configuration dictionary back to the YAML file
     try:
@@ -651,7 +870,7 @@ def check_app_version():
     github_last_date = general.extract_date_from_github_changelog()
     if github_last_date != last_date:
         st.warning("Update Available! A new version of the BEC is available. Click UPDATE to get the latest features and improvements. Check the [Change Log](https://github.com/jptsantossilva/BEC/blob/main/CHANGELOG.md) for more details.")
-        update_version = st.button('UPDATE')
+        update_version = st.button('UPDATE', key="update_version")
         if update_version:
             with st.spinner('🎉 Hold on tight! 🎉 Our elves are sprinkling magic dust on the app to make it even better.'):
                 result = update.main() 
@@ -669,7 +888,7 @@ def check_app_version():
                     my_bar.progress(progress_percent, text=progress_text)
                     time.sleep(1)  
 
-                st.experimental_rerun()
+                st.rerun()
 
 def show_main_page():
     
@@ -694,15 +913,15 @@ def show_main_page():
     get_chart_daily_balance(asset="BTC")
     get_chart_daily_asset_balances()
 
-    global tab_upnl, tab_rpnl, tab_top_perf, tab_signals, tab_blacklist, tab_best_ema, tab_settings
-    tab_upnl, tab_rpnl, tab_signals, tab_top_perf, tab_blacklist, tab_best_ema, tab_settings = st.tabs(["Unrealized PnL", "Realized PnL", "Signals", "Top Performers", "Blacklist", "Best EMA", "Settings"])
+    global tab_upnl, tab_rpnl, tab_top_perf, tab_signals, tab_blacklist, tab_backtesting_results, tab_settings
+    tab_upnl, tab_rpnl, tab_signals, tab_top_perf, tab_blacklist, tab_backtesting_results, tab_settings = st.tabs(["Unrealized PnL", "Realized PnL", "Signals", "Top Performers", "Blacklist", "Backtesting Results", "Settings"])
 
     realized_pnl()
     unrealized_pnl()
     signals()
     top_performers()
     blacklist()
-    best_ema()
+    backtesting_results()
     manage_config()
 
 def check_open_positions(bot: str):
@@ -717,8 +936,8 @@ def show_form_reset_password():
             with st.form(key="reset_password"):
                 st.subheader("Reset password")
                 # password = st.text_input('Current password', type='password')
-                new_password = st.text_input('New password', type='password')
-                new_password_repeat = st.text_input('Repeat password', type='password')
+                new_password = st.text_input('New password', type='password', key="new_password")
+                new_password_repeat = st.text_input('Repeat password', type='password', key="new_password_repeat")
 
                 # st.form_submit_button(label='Reset Password', on_click=reset_password_submitted(True))
                 submitted = st.form_submit_button(label='Reset Password')
@@ -736,7 +955,7 @@ def show_form_reset_password():
                                 time.sleep(3)
                                 reset_password_submitted(False)
                                 reset_form_open(False)
-                                st.experimental_rerun()
+                                st.rerun()
                             else:
                                 st.error('New and current passwords are the same')
                         else:
@@ -930,14 +1149,6 @@ def set_pnl_color(val):
         color = '#E9967A' if val < 0 else '#8FBC8F' if val > 0 else ''
         return f'background-color: {color}'
 
-# # define the table style where the last row is bold
-def last_row_bold(row):
-    return ['font-weight: bold']*len(row)
-    if row.name == result_closed_positions.index[-1]:
-        # return ['font-weight: bold']*len(row)
-        return f'background-color: black'
-    return ['']*len(row)
-
 def reset_form_open(state):
     if 'reset_form_open' in  st.session_state:
         st.session_state.reset_form_open = state
@@ -946,19 +1157,28 @@ def reset_password_submitted(state):
     if 'reset_password_submitted' in  st.session_state:
         st.session_state.reset_password_submitted = state
 
+def format_func_strategies_main(option):
+        return dict_strategies_main[option]
+
+def format_func_strategies_btc(option):
+        return dict_strategies_btc[option]
+
+def format_func_strategies(option):
+        return dict_strategies[option]
+
 def main():
 
     # Initialization
-    if 'name' not in  st.session_state:
-        st.session_state.name = ''
-    if 'username' not in  st.session_state:
-        st.session_state.username = ''
-    if 'user_password' not in  st.session_state:
-        st.session_state.user_password = 'None'
-    if 'reset_form_open' not in st.session_state:
-        st.session_state.reset_form_open = False
-    if 'reset_password_submitted' not in  st.session_state:
-        st.session_state.reset_password_submitted = False
+    # if 'name' not in  st.session_state:
+    #     st.session_state.name = ''
+    # if 'username' not in  st.session_state:
+    #     st.session_state.username = ''
+    # if 'user_password' not in  st.session_state:
+    #     st.session_state.user_password = 'None'
+    # if 'reset_form_open' not in st.session_state:
+    #     st.session_state.reset_form_open = False
+    # if 'reset_password_submitted' not in  st.session_state:
+    #     st.session_state.reset_password_submitted = False
     # if 'authentication_status' not in  st.session_state:
     #     st.session_state.authentication_status = None
 
@@ -975,7 +1195,20 @@ def main():
         # Add each username and its corresponding user info to the `formatted_credentials` dictionary
         formatted_credentials['usernames'][username] = user_info
 
+    
+    # get strategies
+    df_strategies_main = database.get_strategies_for_main(connection)
+    df_strategies_btc = database.get_strategies_for_btc(connection)
+    df_strategies = database.get_all_strategies(connection)
+    # Convert the DataFrame to a dictionary with 'Id' as keys and 'Name' as values
+    # dict_strategies = df_strategies.set_index('Id')['Name'].to_dict()
+    global dict_strategies_main, dict_strategies_btc, dict_strategies
+    dict_strategies_main = df_strategies_main['Name'].to_dict()
+    dict_strategies_btc = df_strategies_btc['Name'].to_dict()
+    dict_strategies = df_strategies['Name'].to_dict()
+
     global authenticator
+
     st.title(f'BEC Dashboard')
 
     authenticator = stauth.Authenticate(
@@ -994,7 +1227,7 @@ def main():
         authenticator.logout('Logout', 'sidebar')
         
         # reset_clicked = st.sidebar.button("Reset", on_click=reset_form_open(True))
-        reset_clicked = st.sidebar.button("Reset")
+        reset_clicked = st.sidebar.button("Reset", key="reset_clicked")
         if reset_clicked:
             reset_form_open(True)
         show_form_reset_password()

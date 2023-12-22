@@ -11,7 +11,7 @@
             "program": "/home/joao/.local/share/virtualenvs/Binance-Trading-bot-EMA-Cross-dNJLOmpE/bin/streamlit",
             "console": "integratedTerminal",
             "justMyCode": true,
-            "args": ["run", "pnl.py"]
+            "args": ["run", "dashboard.py"]
         }
     ]
 }

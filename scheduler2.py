@@ -57,6 +57,7 @@ def run_super_rsi():
 # run_bot_1d()
 # run_mp()
 # run_balance_snapshot()
+run_srsi()
 
 local_time = dt.datetime.now()    
 utc_time = dt.datetime.now(pytz.timezone('UTC'))

@@ -133,3 +133,8 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+tests.py
+tests.py
+tests2 copy.ipynb
+tests2.ipynb
+utils/db_scripts/db_scripts_2023-09-15_20230919154650.sql

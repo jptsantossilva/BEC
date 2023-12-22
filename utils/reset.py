@@ -23,8 +23,8 @@ database.delete_all_symbols_by_market_phase(database.conn)
 # symbols_To_Calc
 database.delete_all_symbols_to_calc(database.conn)
 
-# Best_Ema - best ema values
-database.delete_all_best_ema(database.conn)
+# Backtesting Results
+database.delete_all_backtesting_results(database.conn)
 
 # blacklist - symbols not to trade
 database.delete_all_blacklist(database.conn)

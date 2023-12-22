@@ -6,12 +6,14 @@ import logging
 import timeit
 import pytz
 
+from backtesting.lib import crossover
+
 import utils.config as config
 import utils.database as database
 import utils.exchange as exchange
 import utils.telegram as telegram
 import add_symbol
-
+from my_backtesting import calc_backtesting, get_data, get_backtesting_results
 
 def get_blacklist():
     # Read symbols from blacklist to not trade
@@ -67,13 +69,11 @@ def get_data(symbol, time_frame):
         frame = frame.iloc[:, [0, 4]]  # Column selection
         frame.columns = ['Time', 'Price']  # Rename columns
         
-        # frame[['Price']] = frame[['Price']].astype(float)  # Cast to float
         # using dictionary to convert specific columns
-        convert_dict = {'Price': float}
+        convert_dict = {'Price': float} # Cast to float
         frame = frame.astype(convert_dict)
 
         frame['Symbol'] = symbol
-        # frame.index = [datetime.fromtimestamp(x / 1000.0) for x in frame.Time]
         frame.Time = pd.to_datetime(frame.Time, unit='ms')
         frame.index = frame.Time
         frame = frame[['Symbol', 'Price']]
@@ -158,7 +158,87 @@ def set_market_phases_to_symbols(symbols, time_frame):
 
     return df_result
 
+def trade_against_auto_switch():
 
+    if config.trade_against_switch:
+        btc_pair = "BTCUSDT"
+        btc_timeframe = "1d"
+        sell_timeframes = ["1d", "4h", "1h"]
+        sell_message = "Trade against auto switch"
+
+        df_btc = get_data(btc_pair, btc_timeframe)
+
+        btc_strategy_id = config.get_setting("btc_strategy")
+
+        # get buy and sell conditions
+        if btc_strategy_id in ['ema_cross']:
+
+            fast_ema, slow_ema = get_backtesting_results(strategy_id=btc_strategy_id, symbol=btc_pair, time_frame=btc_timeframe)
+            
+            # technical indicators
+            df_btc['FastEma'] = df_btc['Price'].ewm(span=fast_ema, adjust=False).mean()
+            df_btc['SlowEma'] = df_btc['Price'].ewm(span=slow_ema, adjust=False).mean()
+
+            buy_condition = crossover(df_btc.FastEMA, df_btc.SlowEMA)
+            sell_condition = crossover(df_btc.SlowEMA, df_btc.FastEMA)
+
+        elif btc_strategy_id in ["market_phases"]:
+
+            # technical indicators
+            df_btc['SMA50'] = df_btc['Price'].rolling(50).mean()
+            df_btc['SMA200'] = df_btc['Price'].rolling(200).mean()
+            
+            # last row
+            lastrow = df_btc.iloc[-1]
+            # second-to-last row 
+            second_to_last_row = df_btc.iloc[-2]
+            
+            accumulation_phase = (lastrow.Price > lastrow.SMA50) and (lastrow.Price > lastrow.SMA200) and (lastrow.SMA50 < lastrow.SMA200)
+            bullish_phase = (lastrow.Price > lastrow.SMA50) and (lastrow.Price > lastrow.SMA200) and (lastrow.SMA50 > lastrow.SMA200)
+
+            accumulation_phase_previous = (second_to_last_row.Price > second_to_last_row.SMA50) and (second_to_last_row.Price > second_to_last_row.SMA200) and (second_to_last_row.SMA50 < second_to_last_row.SMA200)
+            bullish_phase_previous = (second_to_last_row.Price > second_to_last_row.SMA50) and (second_to_last_row.Price > second_to_last_row.SMA200) and (second_to_last_row.SMA50 > second_to_last_row.SMA200)
+        
+            buy_condition_curr = accumulation_phase or bullish_phase    
+            buy_condition_previous = accumulation_phase_previous or bullish_phase_previous 
+            
+            buy_condition = buy_condition_curr and not buy_condition_previous
+            sell_condition = buy_condition_previous and not buy_condition_curr
+
+        # convert USDT to BTC
+        if config.trade_against == "USDT" and buy_condition:
+            # sell all positions to USDT
+            for tf in sell_timeframes:
+                df_sell = database.get_positions_by_bot_position(database.conn, bot=tf, position=1)
+                list_to_sell = df_sell.Symbol.tolist()
+                for symbol in list_to_sell:
+                    exchange.create_sell_order(symbol=symbol,
+                                                bot=tf,
+                                                reason=f"{sell_message}"
+                                                )  
+
+            # convert all USDT to BTC
+            exchange.create_buy_order(symbol=btc_pair, bot=btc_timeframe, convert_all_balance=True)
+                
+            # change trade against to BTC
+            config.set_trade_against("BTC")
+
+        elif config.trade_against == "BTC" and sell_condition:
+            # sell all positions to BTC
+            for tf in sell_timeframes:
+                df_sell = database.get_positions_by_bot_position(database.conn, bot=tf, position=1)
+                list_to_sell = df_sell.Symbol.tolist()
+                for symbol in list_to_sell:
+                    exchange.create_sell_order(symbol=symbol,
+                                                bot=tf,
+                                                reason=f"{sell_message}"
+                                                )  
+
+            # convert all BTC to USDT
+            exchange.create_sell_order(symbol=btc_pair, bot=btc_timeframe, convert_all_balance=True)
+
+            # change trade against to USDT
+            config.set_trade_against("USDT")
 
 def main(time_frame, trade_against):
     # Calculate program run time
@@ -184,7 +264,16 @@ def main(time_frame, trade_against):
 
     # create daily balance snapshot
     exchange.create_balance_snapshot(telegram_prefix="")
+
+    # backtest BTC Strategy
+    btc_pair = "BTCUSDT"
+    calc_backtesting(symbol=btc_pair, timeframe=time_frame, strategy=config.btc_strategy, optimize=config.btc_strategy_backtest_optimize)
     
+    # Automatically switch trade against
+    trade_against_auto_switch()
+
+    trade_against = config.get_setting("trade_against")
+
     symbols = get_symbols(trade_against=trade_against)
     msg = str(len(symbols)) + " symbols found. Calculating market phases..."
     msg = telegram.telegram_prefix_market_phases_sl + msg
@@ -252,11 +341,11 @@ def main(time_frame, trade_against):
     telegram.send_telegram_file(telegram.telegram_token_main, filename)
 
     if not df_top.empty:
-        # Remove symbols from position files that are not top performers in accumulation or bullish phase
+        # Remove symbols from positions table that are not top performers in accumulation or bullish phase
         database.delete_positions_not_top_rank(database.conn)
 
         # Add top rank symbols with positive returns to positions files
-        database.add_top_rank_to_position(database.conn)
+        database.add_top_rank_to_positions(database.conn)
 
         # Delete rows with calc completed and keep only symbols with calc not completed
         database.delete_symbols_to_calc_completed(database.conn)

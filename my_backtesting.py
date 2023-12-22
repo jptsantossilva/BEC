@@ -1,15 +1,19 @@
 import pandas as pd
-from backtesting import Backtest, Strategy
-from backtesting.lib import crossover
 import sys
 from datetime import date
 from dateutil.relativedelta import relativedelta
 import time
-import utils.telegram as telegram
 import logging
 import timeit
+
+from backtesting import Backtest, Strategy
+from backtesting.lib import crossover
+
+import utils.telegram as telegram
 import utils.database as database
+# import utils.config as config
 from utils.exchange import client
+
 
 # sets the output display precision in terms of decimal places to 8.
 # this is helpful when trading against BTC. The value in the dataframe has the precision 8 but when we display it 
@@ -24,7 +28,7 @@ logging.basicConfig(filename=log_filename, level=logging.INFO,
 # backtest with 4 years of price data 
 #-------------------------------------
 today = date.today() 
-# today - 4 years - 200 days
+# today - 4 years - 200 days (DSMA200)
 pastdate = today - relativedelta(years=4) - relativedelta(days=200)
 # print(pastdate)
 tuple = pastdate.timetuple()
@@ -53,11 +57,63 @@ def SMA(values, n):
     return pd.Series(values).rolling(n).mean()
 
 #-------------------------------------
+# Use SMA50 and SMA200
+# BUY when price close > SMA50 and price close > SMA200 and SMA50<SMA200 (Accumulation Phase)
+# BUY when price close > SMA50 and price close > SMA200 and SMA50 > SMA200
+# SELL when price close < SMA50 or SMA200 (whatever happens first)
+#-------------------------------------
+class market_phases(Strategy):
+    nFastSMA = 50
+    nSlowSMA = 200    
+    
+    def init(self):
+        self.sma50 = self.I(SMA, self.data.Close, self.nFastSMA)
+        self.sma200 = self.I(SMA, self.data.Close, self.nSlowSMA)
+
+    def next(self):
+        SMA50 = self.sma50
+        SMA200 = self.sma200
+        priceClose = self.data.Close
+
+        accumulationPhase = (priceClose > SMA50) and (priceClose > SMA200) and (SMA50 < SMA200)
+        bullishPhase = (priceClose > SMA50) and (priceClose > SMA200) and (SMA50 > SMA200)
+
+        
+        if not self.position:
+            if (accumulationPhase or bullishPhase): 
+            # if crossover(fastEMA, slowEMA):
+                self.buy()
+        
+        else: 
+            if not(accumulationPhase or bullishPhase):
+                self.position.close()
+
+#-------------------------------------
 # we will use 2 exponencial moving averages:
 # BUY when fast ema > slow ema
 # SELL when slow ema > fast ema  
 #-------------------------------------
-class EmaCross(Strategy):
+class ema_cross(Strategy):
+    n1 = 2
+    n2 = 14 
+    
+    def init(self):
+        self.emaFast = self.I(EMA, self.data.Close, self.n1)
+        self.emaSlow = self.I(EMA, self.data.Close, self.n2)
+
+    def next(self):
+        fastEMA = self.emaFast
+        slowEMA = self.emaSlow
+        
+        if not self.position:
+            if crossover(fastEMA, slowEMA): 
+                self.buy()
+        
+        else: 
+            if crossover(slowEMA, fastEMA): 
+                self.position.close()
+
+class ema_cross_with_market_phases(Strategy):
     n1 = 7
     n2 = 8
     nFastSMA = 50
@@ -88,7 +144,7 @@ class EmaCross(Strategy):
             if crossover(slowEMA, fastEMA): 
                 self.position.close()
             
-def get_data(pSymbol, pTimeframe):
+def get_data(symbol, timeframe):
     # makes 3 attempts to get historical data
     max_retry = 3
     retry_count = 1
@@ -96,8 +152,8 @@ def get_data(pSymbol, pTimeframe):
 
     while retry_count < max_retry and not success:
         try:
-            frame = pd.DataFrame(client.get_historical_klines(pSymbol
-                                                            ,pTimeframe
+            frame = pd.DataFrame(client.get_historical_klines(symbol
+                                                            ,timeframe
 
                                                             # better get all historical data. 
                                                             # Using a defined start date will affect ema values. 
@@ -138,96 +194,95 @@ def get_data(pSymbol, pTimeframe):
         frame = frame.drop(['Time'], axis=1)
         return frame
 
-def run_backtest(symbol, timeframe):
-    
-    if symbol.endswith("BTC"):
-        symbol_only = symbol[:-3]
-        symbol_stable = symbol[-3:]
-    elif symbol.endswith(("BUSD","USDT")):    
-        symbol_only = symbol[:-4]
-        symbol_stable = symbol[-4:]
+def run_backtest(symbol, timeframe, strategy, optimize):
 
-    if symbol.endswith("BTC"):
-        df = get_data(symbol, timeframe)
+    # vars initialization
+    n1 = 0
+    n2 = 0
 
-    # get historical data from BUSD and USDT and use the one with more data 
-    elif symbol.endswith(("BUSD","USDT")):
-        dfStableBUSD = pd.DataFrame()
-        dfStableUSDT = pd.DataFrame()
-    
-        iniBUSD = 0
-        iniUSDT = 0
-        
-        dfStableBUSD = get_data(symbol_only+"BUSD", timeframe)
-            
-        if not dfStableBUSD.empty:
-            ini1 = dfStableBUSD.index[0]
-
-        dfStableUSDT = get_data(symbol_only+"USDT", timeframe) 
-
-        if not dfStableUSDT.empty:
-            ini2 = dfStableUSDT.index[0]
-
-        # get start date and use the older one
-        if dfStableBUSD.empty and dfStableUSDT.empty:
-            # print("Both wrong")
-            return
-        elif dfStableBUSD.empty and not dfStableUSDT.empty:
-            # print("choose ini2")
-            df = dfStableUSDT.copy()
-        elif not dfStableBUSD.empty and dfStableUSDT.empty:
-            # print("choose ini1")
-            df = dfStableBUSD.copy()
-        elif ini1 > ini2:
-            # USDT has more history
-            print("USDT pair has more historical data")
-            df = dfStableUSDT.copy()
-        else:
-            # BUSD has more history
-            print("BUSD pair has more historical data")
-            df = dfStableBUSD.copy()
+    df = get_data(symbol, timeframe)
 
     if df.empty:
         return # exit function
+    
+    commission_value = float(0.005)
+    cash_value = float(100000)
 
-    bt = Backtest(df, EmaCross, cash=100000, commission=0.005, trade_on_close=True)
+    # Checking the value of strategy
+    bt = Backtest(df, strategy=strategy, cash=cash_value, commission=commission_value)
+    
     stats = bt.run()
     # print(stats)
     # bt.plot()
 
-    stats, heatmap = bt.optimize(
-        n1=range(10, 100, 10),
-        n2=range(20, 200, 10),
-        constraint=lambda param: param.n1 < param.n2,
-        maximize='Equity Final [$]',
-        return_heatmap=True
-    )
+    if optimize:
+        stats, heatmap = bt.optimize(
+            n1=range(10, 100, 10),
+            n2=range(20, 200, 10),
+            constraint=lambda param: param.n1 < param.n2,
+            maximize='Equity Final [$]',
+            return_heatmap=True
+        )   
 
-    dfbema = pd.DataFrame(heatmap.sort_values().iloc[-1:])
-    n1 = dfbema.index.get_level_values(0)[0]
-    n2 = dfbema.index.get_level_values(1)[0]
-    returnPerc = round(stats['Return [%]'],2)
-    BuyHoldReturnPerc = round(stats['Buy & Hold Return [%]'],2)
-    BacktestStartDate = str(df.index[0])
+        dfbema = pd.DataFrame(heatmap.sort_values().iloc[-1:])
+        n1 = dfbema.index.get_level_values(0)[0]
+        n2 = dfbema.index.get_level_values(1)[0]
+    
+    
+    return_perc = round(stats['Return [%]'],2)
+    buy_hold_return_Perc = round(stats['Buy & Hold Return [%]'],2)
+    backtest_start_date = str(df.index[0])
+    backtest_end_date = str(df.index[-1])
 
+    # get strategy name from strategy class
+    strategy_name = str(strategy).split('.')[-1][:-2]
+    
     # lista
-    print("n1=",n1)
-    print("n2=",n2)
-    print("Return [%] = ",round(returnPerc,2))
-    print("Buy & Hold Return [%] = ",round(BuyHoldReturnPerc,2))
-    print("Backtest start date =", BacktestStartDate)
+    print(f"Strategy = {strategy_name}")
+    
+    if optimize:
+        print("n1 = ",n1)
+        print("n2 = ",n2)
+    
+    print("Return [%] = ",return_perc)
+    print("Buy & Hold Return [%] = ",buy_hold_return_Perc)
+    print("Backtest start date = ", backtest_start_date)
+    print("Backtest end date =" , backtest_end_date)
 
-    database.add_best_ema(database.conn,
-                          timeframe=timeframe,
-                          symbol=symbol,
-                          ema_fast=n1,
-                          ema_slow=n2,
-                          return_perc=returnPerc,
-                          buy_hold_return_perc=BuyHoldReturnPerc,
-                          backtest_start_date=BacktestStartDate
-                          )
+    database.add_backtesting_results(database.conn,
+                                    timeframe=timeframe,
+                                    symbol=symbol,
+                                    ema_fast=n1,
+                                    ema_slow=n2,
+                                    return_perc=return_perc,
+                                    buy_hold_return_perc=buy_hold_return_Perc,
+                                    backtest_start_date=backtest_start_date,
+                                    backtest_end_date=backtest_end_date,
+                                    strategy_Id=strategy_name
+                                    )
+    
+def get_backtesting_results(strategy_id, symbol, time_frame):
+    
+    # get best ema
+    df = database.get_backtesting_results_by_symbol_timeframe_strategy(connection=database.conn, 
+                                                                        symbol=symbol, 
+                                                                        time_frame=time_frame, 
+                                                                        strategy_id=strategy_id)
 
-def calc_best_ema(symbol, timeframe):
+    if not df.empty:
+        fast_ema = int(df.Ema_Fast.values[0])
+        slow_ema = int(df.Ema_Slow.values[0])
+        strategy_name = df.Name.values[0]
+    else:
+        fast_ema = int("0")
+        slow_ema = int("0")
+
+    # strategy_name
+    # strategy_name = str(fast_ema)+"/"+str(slow_ema)+" "+strategy_name
+        
+    return fast_ema, slow_ema
+
+def calc_backtesting(symbol, timeframe, strategy, optimize):
 
     result = False
 
@@ -237,7 +292,9 @@ def calc_best_ema(symbol, timeframe):
         
         print("")
         print("Backtest - "+symbol+" - "+timeframe+" - Start")
-        run_backtest(symbol, timeframe)
+        
+        run_backtest(symbol, timeframe, strategy, optimize)
+        
         print("Backtest "+symbol+" - "+timeframe+" - End")
         
         stop = timeit.default_timer()
