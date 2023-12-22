@@ -2,6 +2,19 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2023-12-22]
+ 
+### Added
+- Dashboard - Settings - Added Multi strategy option. There are 3 strategies for USDT and 2 strategies for BTC. There is also a Auto Switch to trade against USDT or BTC. If activated, when BTC is in a bullish or accumulation phase (price above DSMA50 and DSMA200) will convert all assests to BTC and trade against BTC, or else when BTC is in a bear phase will convert all assets to USDT and trade against USDT.  
+- Dashboard - Unrealized PnL - Force Selling - you can now sell a position percentage. Before you could only sell full position.
+- Dashboard - Settings - Implemented a two-tiered take-profit system as a risk control feature. If the profit percentage reaches the specified level, a percentage of the position will be sold.
+- Dashboard - Backtesting Results - renamed tab from Best Ema to Backtesting Results. Filter by strategies and symbols to compare results.
+### Changed
+- Dashboard - renamed Dashboard python file from pnl.py to dashboard.py. Make sure to change your cronjob. See installation instructions [here](https://docs.google.com/document/d/1ERtxjcdrznMWXragmBh5ZimIn6_PGn2sde0j_x4CktA/edit?usp=sharing) for details. 
+-
+### Fixed
+- Dashboard - Daily balance Snapshot calculation.
+
 ## [2023-09-27]
  
 ### Added
