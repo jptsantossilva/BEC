@@ -11,7 +11,6 @@ All notable changes to this project will be documented in this file.
 - Dashboard - Backtesting Results - renamed tab from Best Ema to Backtesting Results. Filter by strategies and symbols to compare results.
 ### Changed
 - Dashboard - renamed Dashboard python file from pnl.py to dashboard.py. Make sure to change your cronjob. See installation instructions [here](https://docs.google.com/document/d/1ERtxjcdrznMWXragmBh5ZimIn6_PGn2sde0j_x4CktA/edit?usp=sharing) for details. 
--
 ### Fixed
 - Dashboard - Daily balance Snapshot calculation.
 
