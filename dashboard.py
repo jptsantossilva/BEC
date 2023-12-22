@@ -413,7 +413,9 @@ def unrealized_pnl():
                                                                     # step=1,
                                                                     format="%.2f",
                                                                 ),
-                         "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f",)
+                         "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"),
+                         "Take_Profit_1": st.column_config.CheckboxColumn(),
+                         "Take_Profit_2": st.column_config.CheckboxColumn()
                     }
                 )
         st.subheader("Bot 4h")
@@ -427,7 +429,9 @@ def unrealized_pnl():
                                                                     # step=1,
                                                                     format="%.2f",
                                                                 ),
-                         "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f",) 
+                         "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"), 
+                         "Take_Profit_1": st.column_config.CheckboxColumn(),
+                         "Take_Profit_2": st.column_config.CheckboxColumn()
                     }
                 )
         st.subheader("Bot 1h")
@@ -441,7 +445,9 @@ def unrealized_pnl():
                                                                     # step=1,
                                                                     format="%.2f",
                                                                 ),
-                         "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f",) 
+                         "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"), 
+                         "Take_Profit_1": st.column_config.CheckboxColumn(),
+                         "Take_Profit_2": st.column_config.CheckboxColumn()
                     }
                 )        
 
