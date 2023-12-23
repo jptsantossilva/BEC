@@ -1094,7 +1094,7 @@ def get_total_balance_all_time(connection, asset):
     elif asset == "BTC":
         num_decimals = 5
     
-    sql_get_total_balance_all_time = """
+    sql_get_total_balance_all_time = f"""
         SELECT Date, ROUND(SUM(Balance_{asset}), {num_decimals}) as Total_Balance_{asset}
         FROM Balances
         GROUP BY Date

@@ -136,9 +136,9 @@ def get_chart_daily_balance(asset):
             n_days = 90
             source = database.get_total_balance_last_n_days(connection, n_days, asset=asset)
         elif period_selected_balances == 'YTD':
-            source = database.get_total_balance_ytd(connection)
+            source = database.get_total_balance_ytd(connection, asset=asset)
         elif period_selected_balances == 'All Time':
-            source = database.get_total_balance_all_time(connection)
+            source = database.get_total_balance_all_time(connection, asset=asset)
 
         if source.empty:
             st.warning('No data on Balances yet! Click Refresh.')
