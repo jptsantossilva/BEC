@@ -18,10 +18,10 @@ import time
 
 import ta
 
+import utils.config as config
 import utils.telegram as telegram
 import utils.database as database 
 import utils.exchange as exchange
-import utils.config as config
 
 TELEGRAM_PREFIX_SIGNAL = "RSI-Uptrend" 
 RSI_LOOKBACK_PERIODS = 14 # 14 days
