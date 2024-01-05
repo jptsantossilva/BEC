@@ -257,7 +257,8 @@ def trade(time_frame, run_mode):
                 exchange.create_sell_order(symbol=symbol,
                                             bot=time_frame,
                                             fast_ema=fast_ema,
-                                            slow_ema=slow_ema
+                                            slow_ema=slow_ema,
+                                            reason=f"Ema Cross {fast_ema}/{slow_ema}"
                                             )  
 
             # sell take profit 1
