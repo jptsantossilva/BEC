@@ -235,7 +235,10 @@ def trade_against_auto_switch():
                                                 )  
 
             # convert all BTC to USDT
-            exchange.create_sell_order(symbol=btc_pair, bot=btc_timeframe, convert_all_balance=True)
+            exchange.create_sell_order(symbol=btc_pair, 
+                                       bot=btc_timeframe, 
+                                       convert_all_balance=True,
+                                       reason=f"{sell_message}")
 
             # change trade against to USDT
             config.set_trade_against("USDT")
