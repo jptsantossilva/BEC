@@ -40,20 +40,24 @@ st.set_page_config(
 # st.session_state
 
 # Initialization
-if 'name' not in st.session_state:
-    st.session_state.name = ''
-if 'username' not in st.session_state:
-    st.session_state.username = ''
-if 'user_password' not in st.session_state:
-    st.session_state.user_password = 'None'
-if 'reset_form_open' not in st.session_state:
+if "name" not in st.session_state:
+    st.session_state.name = ""
+if "username" not in st.session_state:
+    st.session_state.username = ""
+if "user_password" not in st.session_state:
+    st.session_state.user_password = "None"
+if "reset_form_open" not in st.session_state:
     st.session_state.reset_form_open = False
-if 'reset_password_submitted' not in st.session_state:
+if "reset_password_submitted" not in st.session_state:
     st.session_state.reset_password_submitted = False
-if 'authentication_status' not in st.session_state:
+if "authentication_status" not in st.session_state:
     st.session_state.authentication_status = False
-if 'trade_against_switch' not in st.session_state:
+if "trade_against_switch" not in st.session_state:
     st.session_state.trade_against_switch = config.get_setting("trade_against_switch")
+
+# if st.session_state.get('clear_force_selling'):
+#     st.session_state["select_bot"] = "1d"
+
 # if 'main_strategy' not in st.session_state:
 #     st.session_state.main_strategy = config.get_setting("main_strategy")
 # if 'btc_strategy' not in st.session_state:
@@ -414,8 +418,8 @@ def unrealized_pnl():
                                                                     format="%.2f",
                                                                 ),
                          "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"),
-                         "Take_Profit_1": st.column_config.CheckboxColumn(),
-                         "Take_Profit_2": st.column_config.CheckboxColumn()
+                         "TP1": st.column_config.CheckboxColumn(),
+                         "TP2": st.column_config.CheckboxColumn()
                     }
                 )
         st.subheader("Bot 4h")
@@ -430,8 +434,8 @@ def unrealized_pnl():
                                                                     format="%.2f",
                                                                 ),
                          "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"), 
-                         "Take_Profit_1": st.column_config.CheckboxColumn(),
-                         "Take_Profit_2": st.column_config.CheckboxColumn()
+                         "TP1": st.column_config.CheckboxColumn(),
+                         "TP2": st.column_config.CheckboxColumn()
                     }
                 )
         st.subheader("Bot 1h")
@@ -446,71 +450,89 @@ def unrealized_pnl():
                                                                     format="%.2f",
                                                                 ),
                          "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"), 
-                         "Take_Profit_1": st.column_config.CheckboxColumn(),
-                         "Take_Profit_2": st.column_config.CheckboxColumn()
+                         "TP1": st.column_config.CheckboxColumn(),
+                         "TP2": st.column_config.CheckboxColumn()
                     }
                 )        
+
+        # st.session_state
 
         #----------------------
         # Force Close Position
         st.header("Force Selling")
         # add expander
         sell_expander = st.expander("Choose position to sell")
-        bots = ["1d", "4h", "1h"]
-        sell_bot = sell_expander.selectbox(
-            label='Bot?',
-            options=(bots),
-            label_visibility='collapsed')
-        # symbols list
-        if sell_bot == "1d":
-            list_positions = positions_df_1d.Symbol.to_list()
-        elif sell_bot == "4h":
-            list_positions = positions_df_4h.Symbol.to_list()
-        elif sell_bot == "1h":
-            list_positions = positions_df_1h.Symbol.to_list()
+        with sell_expander:
 
-        sell_symbol = sell_expander.selectbox(
-            label='Position?',
-            options=(list_positions),
-            label_visibility='collapsed')
-
-        disable_sell_confirmation1 = sell_symbol == None
-        # get balance
-        if not disable_sell_confirmation1:
-            # sell_symbol = "INJUSDT" # test
-            sell_amount_perc = sell_expander.slider('Amount', 10, 100, 25, 5, format="%d%%", disabled=disable_sell_confirmation1)
+            # bots
+            bots = ["1d", "4h", "1h"]
+            sell_bot = st.selectbox(
+                label="Bot?",
+                options=(bots),
+                # index=st.session_state["sell_bot"],
+                # index = None,
+                # placeholder="Select bot",
+                label_visibility="collapsed",
+                # key="select_bot"
+                )
             
-            # get current position balance
-            df_pos = database.get_positions_by_bot_symbol_position(database.conn, bot=sell_bot, symbol=sell_symbol, position=1)
-            if not df_pos.empty:
-                balance_qty = df_pos['Qty'].iloc[0]
-            else:
-                balance_qty = 0
-            # symbol_only, symbol_stable = general.separate_symbol_and_trade_against(sell_symbol)
-            # balance_qty = exchange.get_symbol_balance(symbol=symbol_only, bot=sell_bot) 
-            
-            sell_amount = balance_qty*(sell_amount_perc/100)
-            sell_expander.text_input('Sell Amount / Position Balance', f'{sell_amount} / {balance_qty}', disabled=True)
- 
-            # sell_expander.write(disable_sell_confirmation1)
-            sell_reason = sell_expander.text_input("Reason")
-            sell_confirmation1 = sell_expander.checkbox(f"I confirm the Sell of **{sell_amount_perc}%** of **{sell_symbol}** in **{sell_bot}** bot", disabled=disable_sell_confirmation1)
-        
-            # if button pressed then sell position
-            if sell_confirmation1:
-                sell_confirmation2 = sell_expander.button("SELL")
-                if sell_confirmation2:
-                    exchange.create_sell_order(symbol=sell_symbol,
-                                            bot=sell_bot,
-                                            reason=sell_reason,
-                                            percentage=sell_amount_perc
-                                            ) 
+            if sell_bot == "1d":
+                list_positions = positions_df_1d.Symbol.to_list()
+            elif sell_bot == "4h":
+                list_positions = positions_df_4h.Symbol.to_list()
+            elif sell_bot == "1h":
+                list_positions = positions_df_1h.Symbol.to_list()
 
-                    sell_expander.success(f"{sell_symbol} SOLD!")
-                    time.sleep(5)
-                    # dasboard refresh
-                    st.rerun()
-            #----------------------
+            sell_symbol = st.selectbox(
+                label="Position?",
+                options=(list_positions),
+                label_visibility="collapsed",
+                # key="sell_symbol"
+                )
+
+            disable_sell_confirmation1 = sell_symbol == None    
+                    
+            # get balance
+            if not disable_sell_confirmation1:
+                # sell_symbol = "INJUSDT" # test
+                sell_amount_perc = st.slider('Amount', 10, 100, 25, 5, format="%d%%", disabled=disable_sell_confirmation1)
+                
+                # get current position balance
+                df_pos = database.get_positions_by_bot_symbol_position(database.conn, bot=sell_bot, symbol=sell_symbol, position=1)
+                if not df_pos.empty:
+                    balance_qty = df_pos['Qty'].iloc[0]
+                else:
+                    balance_qty = 0
+                # symbol_only, symbol_stable = general.separate_symbol_and_trade_against(sell_symbol)
+                # balance_qty = exchange.get_symbol_balance(symbol=symbol_only, bot=sell_bot) 
+                
+                sell_amount = balance_qty*(sell_amount_perc/100)
+                st.text_input('Sell Amount / Position Balance', f'{sell_amount} / {balance_qty}', disabled=True)
+    
+                # sell_expander.write(disable_sell_confirmation1)
+                sell_reason = f"Forced Selling of {sell_amount_perc}%"
+                sell_reason_input = st.text_input("Reason")
+                if sell_reason_input:
+                    sell_reason = f"{sell_reason} - {sell_reason_input}"
+                sell_confirmation1 = st.checkbox(f"I confirm the Sell of **{sell_amount_perc}%** of **{sell_symbol}** in **{sell_bot}** bot", disabled=disable_sell_confirmation1)
+
+                # if button pressed then sell position
+                if sell_confirmation1:
+                    sell_confirmation2 = sell_expander.button("SELL")
+                    if sell_confirmation2:
+                        exchange.create_sell_order(symbol=sell_symbol,
+                                                bot=sell_bot,
+                                                reason=f"Forced Selling of {sell_amount_perc}% - {sell_reason}",
+                                                percentage=sell_amount_perc
+                                                ) 
+
+                        sell_expander.success(f"{sell_symbol} SOLD!")
+                        
+                        time.sleep(5)
+                        
+                        # dasboard refresh
+                        st.rerun()
+                # ----------------------
 
 def top_performers():
     with tab_top_perf:
@@ -951,12 +973,12 @@ def check_app_version():
                 result = update.main() 
                 st.code(result)
 
-                restart_time = 5
+                restart_time = 10
                 progress_text = f"App will restart in {restart_time} seconds."
                 my_bar = st.progress(0, text=progress_text)
 
-                for step in range(6):
-                    progress_percent = step * 20
+                for step in range(restart_time+1):
+                    progress_percent = step * 10
                     if progress_percent != 0:
                         restart_time -= 1
                         progress_text = f"App will restart in {restart_time} seconds."
