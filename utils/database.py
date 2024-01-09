@@ -348,20 +348,22 @@ def get_positions_by_bot_position(connection, bot: str, position: int):
     return pd.read_sql(sql_get_positions_by_bot_position, connection, params=(bot, position))
 
 sql_get_unrealized_pnl_by_bot = """
-    SELECT Bot, Symbol, PnL_Perc, PnL_Value, Take_Profit_1 as TP1, Take_Profit_2 as TP2, Qty, Buy_Price, Date, Duration, Ema_Fast, Ema_Slow
-    FROM Positions 
+    SELECT pos.Bot, pos.Symbol, pos.PnL_Perc, pos.PnL_Value, pos.Take_Profit_1 as TP1, pos.Take_Profit_2 as TP2, pos.Qty, ROUND((pos.Qty/ord.Qty)*100,2) as "RPQ%", pos.Buy_Price, pos.Date, pos.Duration, pos.Ema_Fast, pos.Ema_Slow
+    FROM Positions pos
+    JOIN Orders ord ON pos.Buy_Order_Id = ord.Exchange_Order_Id 
     WHERE 
-        Bot = ?
-        AND Position = ?
+        pos.Bot = ?
+        AND pos.Position = ?
 """
 def get_unrealized_pnl_by_bot(connection, bot: str):
     position = 1
     df = pd.read_sql(sql_get_unrealized_pnl_by_bot, connection, params=(bot, position))
     
-    # convert column to float
+    # convert column
     df['PnL_Perc'] = df['PnL_Perc'].astype(float)
     df['PnL_Value'] = df['PnL_Value'].astype(float)
     df['Qty'] = df['Qty'].astype(float)
+    df['RPQ%'] = df['RPQ%'].astype(str)
     df['Buy_Price'] = df['Buy_Price'].astype(float)
     df['Ema_Fast'] = df['Ema_Fast'].astype(int)
     df['Ema_Slow'] = df['Ema_Slow'].astype(int)

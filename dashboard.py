@@ -356,7 +356,10 @@ def unrealized_pnl():
                                                                 ),
                          "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"),
                          "TP1": st.column_config.CheckboxColumn(),
-                         "TP2": st.column_config.CheckboxColumn()
+                         "TP2": st.column_config.CheckboxColumn(),
+                         "RPQ%": st.column_config.NumberColumn(help="Remaining Position Qty %",
+                                                            #    format="%.2f",
+                                                               )
                     }
                 )
         st.subheader("Bot 4h")
@@ -372,7 +375,10 @@ def unrealized_pnl():
                                                                 ),
                          "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"), 
                          "TP1": st.column_config.CheckboxColumn(),
-                         "TP2": st.column_config.CheckboxColumn()
+                         "TP2": st.column_config.CheckboxColumn(),
+                         "RPQ%": st.column_config.NumberColumn(help="Remaining Position Qty %",
+                                                            #    format="%.2f",
+                                                               )
                     }
                 )
         st.subheader("Bot 1h")
@@ -388,7 +394,10 @@ def unrealized_pnl():
                                                                 ),
                          "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"), 
                          "TP1": st.column_config.CheckboxColumn(),
-                         "TP2": st.column_config.CheckboxColumn()
+                         "TP2": st.column_config.CheckboxColumn(),
+                         "RPQ%": st.column_config.NumberColumn(help="Remaining Position Qty %",
+                                                            #    format="%.2f",
+                                                               )
                     }
                 )        
 
