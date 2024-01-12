@@ -249,6 +249,8 @@ def trade(time_frame, run_mode):
             if sell_stop_loss:
                 exchange.create_sell_order(symbol=symbol,
                                             bot=time_frame,
+                                            fast_ema=fast_ema,
+                                            slow_ema=slow_ema,
                                             reason=f"Stop loss {config.stop_loss}%"
                                             )  
                 
@@ -265,6 +267,8 @@ def trade(time_frame, run_mode):
             if sell_tp_1:
                 exchange.create_sell_order(symbol=symbol,
                                             bot=time_frame,
+                                            fast_ema=fast_ema,
+                                            slow_ema=slow_ema,
                                             reason=f"Take-Profit Level 1 - {config.take_profit_1_pnl_perc}%",
                                             percentage=config.take_profit_1_amount_perc,
                                             take_profit_num=1
@@ -273,6 +277,8 @@ def trade(time_frame, run_mode):
             if sell_tp_2:
                 exchange.create_sell_order(symbol=symbol,
                                             bot=time_frame,
+                                            fast_ema=fast_ema,
+                                            slow_ema=slow_ema,
                                             reason=f"Take-Profit Level 2 - {config.take_profit_2_pnl_perc}%",
                                             percentage=config.take_profit_2_amount_perc,
                                             take_profit_num=2

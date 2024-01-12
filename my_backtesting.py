@@ -1,5 +1,6 @@
 import pandas as pd
 import sys
+import os
 from datetime import date
 from dateutil.relativedelta import relativedelta
 import time
@@ -24,6 +25,8 @@ pd.set_option("display.precision", 8)
 log_filename = "symbol_by_market_phase.log"
 logging.basicConfig(filename=log_filename, level=logging.INFO,
                     format='%(asctime)s %(message)s', datefmt='%Y-%m-%d %I:%M:%S %p -')
+
+FOLDER_BACKTEST_RESULTS = "static/backtest_results"
 
 # backtest with 4 years of price data 
 #-------------------------------------
@@ -193,6 +196,142 @@ def get_data(symbol, timeframe):
         frame = frame.set_index(pd.DatetimeIndex(frame['Time']))
         frame = frame.drop(['Time'], axis=1)
         return frame
+    
+def get_strategy_name(strategy):
+    # get strategy name from strategy class
+    strategy_name = str(strategy).split('.')[-1][:-2]
+    return strategy_name
+
+def save_backtesting_to_html(bt, stats, strategy, timeframe, symbol):
+        # stats
+        df_stats = pd.DataFrame(stats)
+        # trades
+        df_trades = pd.DataFrame(stats._trades)
+        # remove Size column
+        df_trades = df_trades.drop(columns=['Size'])
+
+        strategy_name = get_strategy_name(strategy)
+        filename=f"{strategy_name} - {timeframe} - {symbol}"
+
+        # Create the folder if it doesn't exist
+        if not os.path.exists(FOLDER_BACKTEST_RESULTS):
+            os.makedirs(FOLDER_BACKTEST_RESULTS)
+
+        # Specify the CSV file path
+        csv_file_path = os.path.join(FOLDER_BACKTEST_RESULTS, filename+".csv")
+
+        # Export both DataFrames to the same CSV file
+        df_stats.to_csv(csv_file_path, index=True)
+        df_trades.to_csv(csv_file_path, mode='a', index=False, header=True)
+
+        filename_path = os.path.join(FOLDER_BACKTEST_RESULTS, filename)
+
+        bt.plot(
+                # plot_return = True,
+                # plot_drawdown = True,
+                filename = filename_path,
+                open_browser=False)  
+
+        # add stats and trade to html file
+
+        # add style
+        html_file_path = os.path.join(FOLDER_BACKTEST_RESULTS, filename+".html")
+        with open(html_file_path, 'r') as file:
+            html_content = file.read()
+
+        # Locate the style tag in the HTML content
+        style_tag_start = html_content.find('<style>')
+        if style_tag_start == -1:
+            head_tag_end = html_content.find('</head>')
+
+            style_content_to_add = """<style>\n</style>"""
+            modified_html_content = (
+                html_content[:head_tag_end-1]
+                + style_content_to_add
+                + html_content[head_tag_end-1:]
+            )
+            with open(html_file_path, 'w') as file:
+                file.write(modified_html_content)
+        #-----
+
+        with open(html_file_path, 'r') as file:
+            html_content = file.read()
+        # Locate the style tag in the HTML content
+        style_tag_start = html_content.find('<style>')
+        style_tag_end = html_content.find('</style>', style_tag_start)
+
+        # Append or modify the content of the style tag
+        
+        # dataframe {
+        #     text-align: left;
+        # }
+        style_content_to_add = """
+        h2 {
+            text-align: center;
+            font-family: Helvetica, Arial, sans-serif;
+        }
+        table { 
+            margin-left: auto;
+            margin-right: auto;
+        }
+        table, th, td {
+            border: 1px solid black;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 5px;
+            text-align: left;
+            font-family: Helvetica, Arial, sans-serif;
+            font-size: 90%;
+        }
+        table tbody tr:hover {
+            background-color: #dddddd;
+        }
+        .wide {
+            width: 90%; 
+        }
+        """
+        modified_html_content = (
+            html_content[:style_tag_end]
+            + style_content_to_add
+            + html_content[style_tag_end:]
+        )
+
+        with open(html_file_path, 'w') as file:
+            file.write(modified_html_content)
+        #-----
+
+        # Convert the DataFrame to an HTML table
+        stats_html_table = df_stats.to_html(index=True, header=False)
+        trades_html_table = df_trades.to_html(index=False)
+
+        #-----
+        # add style
+        # html_file_path = filename+".html"
+        with open(html_file_path, 'r') as file:
+            html_content = file.read()
+
+        # Locate the style tag in the HTML content
+        body_tag_start = html_content.find('<body>')
+        body_tag_end = html_content.find('</body>', body_tag_start)
+
+        # Append or modify the content of the style tag
+        stats_table_title = "<h2> STATS </h2>\n"
+        stats_content_to_add = stats_table_title + stats_html_table
+        trades_table_title = "<h2> TRADES </h2>\n"
+        trades_content_to_add = trades_table_title + trades_html_table
+        body_content_to_add = stats_content_to_add + trades_content_to_add
+
+        modified_html_content = (
+            html_content[:body_tag_end]
+            + body_content_to_add
+            + html_content[body_tag_end:]
+        )
+
+        with open(html_file_path, 'w') as file:
+            file.write(modified_html_content)
+        #------
+
 
 def run_backtest(symbol, timeframe, strategy, optimize):
 
@@ -235,7 +374,7 @@ def run_backtest(symbol, timeframe, strategy, optimize):
     backtest_end_date = str(df.index[-1])
 
     # get strategy name from strategy class
-    strategy_name = str(strategy).split('.')[-1][:-2]
+    strategy_name = get_strategy_name(strategy)
     
     # lista
     print(f"Strategy = {strategy_name}")
@@ -248,6 +387,10 @@ def run_backtest(symbol, timeframe, strategy, optimize):
     print("Buy & Hold Return [%] = ",buy_hold_return_Perc)
     print("Backtest start date = ", backtest_start_date)
     print("Backtest end date =" , backtest_end_date)
+
+    
+    # save results as html file
+    save_backtesting_to_html(bt, stats, strategy, timeframe, symbol)
 
     database.add_backtesting_results(database.conn,
                                     timeframe=timeframe,

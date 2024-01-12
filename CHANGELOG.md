@@ -2,6 +2,17 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2024-01-12]
+ 
+### Added
+- Dashboard - Backtesting Results - HTML and CSV link to get statistics and trades for the best strategy results  
+### Changed
+- Dashboard - Settings - Visual components adjustments
+- Telegram - When closing position, partial or full, more info was added to related telegram messages.
+- Dashboard - RPQ% - Remaining Position Qty column - moved in the grid for easier reading in mobiles
+### Fixed
+- Dashboard - Settings - Sometimes settings changes were not being saved 
+
 ## [2023-12-22]
  
 ### Added
