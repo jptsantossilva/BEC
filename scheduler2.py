@@ -6,7 +6,7 @@ import time
 
 import utils.config as config
 from main import scheduled_run as run_bot
-from utils.exchange import create_balance_snapshot as run_bs
+from exchanges.binance import create_balance_snapshot as run_bs
 from symbol_by_market_phase import scheduled_run as run_mp
 from signals.super_rsi import run as run_srsi
 

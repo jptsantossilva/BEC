@@ -11,10 +11,10 @@ import altair as alt
 
 import utils.config as config
 import utils.database as database
-import utils.exchange as exchange
+import exchanges.binance as binance
 import utils.general as general
 
-from symbol_by_market_phase import main as run_symbol_by_market_phase
+from symbol_by_market_phase import main as force_run_backtest
 from my_backtesting import FOLDER_BACKTEST_RESULTS
 
 import update 
@@ -438,7 +438,7 @@ def unrealized_pnl():
                 # if button pressed then sell position
                 if sell_confirmation1:
                     def sell_click():
-                        exchange.create_sell_order(symbol=sell_symbol,
+                        binance.create_sell_order(symbol=sell_symbol,
                                                    bot=sell_bot,
                                                    reason=f"Forced Selling of {sell_amount_perc}% - {sell_reason}",
                                                    percentage=sell_amount_perc
@@ -562,11 +562,14 @@ def backtesting_results():
 
         st.dataframe(df_bt_results,
                     column_config={
+                        "Strategy_Id": None,
                         "Backtest_HTML": st.column_config.LinkColumn(
+                            display_text="Open",
                             help="Backtesting results in HTML",
                             
                         ),
                         "Backtest_CSV": st.column_config.LinkColumn(
+                            display_text="Open",
                             help="Backtesting results in CSV",
                             
                         )
@@ -624,7 +627,7 @@ def manage_config():
             if run_backtesting:
                 with st.spinner('This task is taking a leisurely stroll through the digital landscape (+/- 1h). Why not do the same? Stretch those legs, grab a snack, or contemplate the meaning of life.'):
                     trade_against = config.get_setting("trade_against") 
-                    run_symbol_by_market_phase(time_frame="1d", trade_against=trade_against)
+                    force_run_backtest(time_frame="1d")
 
         with col1_cfg:
             container_bots = st.container(border=True)
@@ -802,7 +805,7 @@ def manage_config():
                                                         step=5,
                                                         key="take_profit_1_amount",
                                                         on_change=take_profit_1_amount_change,
-                                                        help="The percentage to be sold when the take profits level 1 is achieved."
+                                                        help="The percentage of the position quantity to be sold when take profits level 1 is achieved."
                                                         )
             
                 if "take_profit_2" not in st.session_state:
@@ -829,7 +832,7 @@ def manage_config():
                                                     step=5,
                                                     key="take_profit_2_amount",
                                                     on_change=take_profit_2_amount_change,
-                                                    help="The percentage to be sold when the take profits level 2 is achieved."
+                                                    help="The percentage of the position quantity to be sold when take profits level 2 is achieved."
                                                         )
     
 def check_app_version():
@@ -1173,12 +1176,11 @@ def main():
     df_strategies_main = database.get_strategies_for_main(connection)
     df_strategies_btc = database.get_strategies_for_btc(connection)
     df_strategies = database.get_all_strategies(connection)
-    # Convert the DataFrame to a dictionary with 'Id' as keys and 'Name' as values
-    # dict_strategies = df_strategies.set_index('Id')['Name'].to_dict()
     global dict_strategies_main, dict_strategies_btc, dict_strategies
-    dict_strategies_main = df_strategies_main['Name'].to_dict()
-    dict_strategies_btc = df_strategies_btc['Name'].to_dict()
-    dict_strategies = df_strategies['Name'].to_dict()
+    #create a dictionary with code and name columns
+    dict_strategies_main = dict(zip(df_strategies_main['Id'], df_strategies_main['Name']))
+    dict_strategies_btc = dict(zip(df_strategies_btc['Id'], df_strategies_btc['Name']))
+    dict_strategies = dict(zip(df_strategies['Id'], df_strategies['Name']))
 
     global authenticator
 

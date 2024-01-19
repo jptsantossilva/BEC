@@ -2,6 +2,16 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2024-01-19]
+ 
+### Added
+-  Backtesting - On our daily backtesting, we are now backtesting all Strategies and not only the one being used. With this we are able to compare the results from the used strategy with those strategies not in use.
+### Changed
+- Telegram - Take Profit level achieved - the sell order message now includes not only TP level % Pnl but also position amount %.     
+- Dashboard - Backtesting Results - Backtesting HTML and csv results now has string Open instead of path to file. 
+### Fixed
+- 
+
 ## [2024-01-12]
  
 ### Added

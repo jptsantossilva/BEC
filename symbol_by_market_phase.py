@@ -5,12 +5,13 @@ import sys
 import logging
 import timeit
 import pytz
+import importlib
 
 from backtesting.lib import crossover
 
 import utils.config as config
 import utils.database as database
-import utils.exchange as exchange
+import exchanges.binance as binance
 import utils.telegram as telegram
 import add_symbol
 from my_backtesting import calc_backtesting, get_data, get_backtesting_results
@@ -46,7 +47,7 @@ def get_data(symbol, time_frame):
 
     while retry_count < max_retry and not success:
         try:
-            frame = pd.DataFrame(exchange.client.get_historical_klines(symbol, time_frame,                                                           
+            frame = pd.DataFrame(binance.client.get_historical_klines(symbol, time_frame,                                                           
                                                             # better get all historical data. 
                                                             # Using a defined start date will affect ema values. 
                                                             # To get same ema and sma values of tradingview default historical data must be used.
@@ -100,7 +101,7 @@ def get_symbols(trade_against):
     # Get blacklist
     blacklist = get_blacklist()
 
-    exchange_info = exchange.get_exchange_info()
+    exchange_info = binance.get_exchange_info()
 
     symbols = set()
 
@@ -212,30 +213,31 @@ def trade_against_auto_switch():
                 df_sell = database.get_positions_by_bot_position(database.conn, bot=tf, position=1)
                 list_to_sell = df_sell.Symbol.tolist()
                 for symbol in list_to_sell:
-                    exchange.create_sell_order(symbol=symbol,
+                    binance.create_sell_order(symbol=symbol,
                                                 bot=tf,
                                                 reason=f"{sell_message}"
                                                 )  
 
             # convert all USDT to BTC
-            exchange.create_buy_order(symbol=btc_pair, bot=btc_timeframe, convert_all_balance=True)
+            binance.create_buy_order(symbol=btc_pair, bot=btc_timeframe, convert_all_balance=True)
                 
             # change trade against to BTC
             config.set_trade_against("BTC")
 
+        # convert BTC to USDT
         elif config.trade_against == "BTC" and sell_condition:
             # sell all positions to BTC
             for tf in sell_timeframes:
                 df_sell = database.get_positions_by_bot_position(database.conn, bot=tf, position=1)
                 list_to_sell = df_sell.Symbol.tolist()
                 for symbol in list_to_sell:
-                    exchange.create_sell_order(symbol=symbol,
+                    binance.create_sell_order(symbol=symbol,
                                                 bot=tf,
                                                 reason=f"{sell_message}"
                                                 )  
 
             # convert all BTC to USDT
-            exchange.create_sell_order(symbol=btc_pair, 
+            binance.create_sell_order(symbol=btc_pair, 
                                        bot=btc_timeframe, 
                                        convert_all_balance=True,
                                        reason=f"{sell_message}")
@@ -243,7 +245,7 @@ def trade_against_auto_switch():
             # change trade against to USDT
             config.set_trade_against("USDT")
 
-def main(time_frame, trade_against):
+def main(time_frame):
     # Calculate program run time
     start = timeit.default_timer()
 
@@ -266,11 +268,23 @@ def main(time_frame, trade_against):
         database.conn = database.connect()
 
     # create daily balance snapshot
-    exchange.create_balance_snapshot(telegram_prefix="")
+    binance.create_balance_snapshot(telegram_prefix="")
 
-    # backtest BTC Strategy
+    # run backtesting for all available BTC Strategies 
     btc_pair = "BTCUSDT"
-    calc_backtesting(symbol=btc_pair, timeframe=time_frame, strategy=config.btc_strategy, optimize=config.btc_strategy_backtest_optimize)
+    df_strategies_btc = database.get_strategies_for_btc(database.conn)
+    for index, row in df_strategies_btc.iterrows():    
+        # Dynamically import the entire strategies module
+        strategy_module = importlib.import_module('my_backtesting')
+        # Dynamically get the strategy class
+        btc_strategy_id = row['Id']
+        btc_strategy = getattr(strategy_module, btc_strategy_id)
+
+        # run backtesting
+        calc_backtesting(symbol=btc_pair, timeframe=time_frame,
+                         strategy=btc_strategy,
+                         optimize=bool(row['Backtest_Optimize'])
+                         )
     
     # Automatically switch trade against
     trade_against_auto_switch()
@@ -389,4 +403,4 @@ def scheduled_run(time_frame, trade_against):
 
 if __name__ == "__main__":
     time_frame, trade_against = read_arguments()
-    main(time_frame=time_frame, trade_against=trade_against)
+    main(time_frame=time_frame)

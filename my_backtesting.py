@@ -13,7 +13,7 @@ from backtesting.lib import crossover
 import utils.telegram as telegram
 import utils.database as database
 # import utils.config as config
-from utils.exchange import client
+from exchanges.binance import client
 
 
 # sets the output display precision in terms of decimal places to 8.
@@ -434,11 +434,13 @@ def calc_backtesting(symbol, timeframe, strategy, optimize):
         start = timeit.default_timer()
         
         print("")
-        print("Backtest - "+symbol+" - "+timeframe+" - Start")
+        # get strategy name from strategy class
+        strategy_name = get_strategy_name(strategy)
+        print(f"Backtest strategy {strategy_name} - {symbol} - {timeframe} - Start")
         
         run_backtest(symbol, timeframe, strategy, optimize)
-        
-        print("Backtest "+symbol+" - "+timeframe+" - End")
+
+        print(f"Backtest strategy {strategy_name} - {symbol} - {timeframe} - End")
         
         stop = timeit.default_timer()
         total_seconds = stop - start

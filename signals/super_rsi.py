@@ -20,7 +20,7 @@ import utils.config as config
 
 import utils.telegram as telegram
 import utils.database as database 
-import utils.exchange as exchange
+import exchanges.binance as binance
 
 
 
@@ -33,7 +33,7 @@ def get_data(symbol, time_frame, start_date):
 
     while retry_count < max_retry and not success:
         try:
-            df = pd.DataFrame(exchange.client.get_historical_klines(symbol,
+            df = pd.DataFrame(binance.client.get_historical_klines(symbol,
                                                                     time_frame,
                                                                     start_date
                                                                     ))
@@ -75,7 +75,7 @@ def apply_technicals(df, rsi_length):
 
 def super_rsi(symbol):
     # 15min timeframe
-    time_frame = exchange.client.KLINE_INTERVAL_15MINUTE
+    time_frame = binance.client.KLINE_INTERVAL_15MINUTE
     rsi_lookback_periods = 14 # 14 days
 
     # get start date

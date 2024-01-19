@@ -674,15 +674,15 @@ INSERT OR IGNORE INTO Strategies (Id, Name, Backtest_Optimize, BTC_Strategy) VAL
 
 sql_get_all_strategies = "SELECT * FROM Strategies;"
 def get_all_strategies(connection):
-    return pd.read_sql(sql_get_all_strategies, connection, index_col="Id")
+    return pd.read_sql(sql_get_all_strategies, connection)
 
 sql_get_strategies_for_main = "SELECT * FROM Strategies where Main_Strategy = 1;"
 def get_strategies_for_main(connection):
-    return pd.read_sql(sql_get_strategies_for_main, connection, index_col="Id")
+    return pd.read_sql(sql_get_strategies_for_main, connection)
 
 sql_get_strategies_for_btc = "SELECT * FROM Strategies where BTC_Strategy = 1;"
 def get_strategies_for_btc(connection):
-    return pd.read_sql(sql_get_strategies_for_btc, connection, index_col="Id")
+    return pd.read_sql(sql_get_strategies_for_btc, connection)
 
 sql_get_strategy_name = "SELECT Name FROM Strategies where Id = ?;"
 def get_strategy_name(connection, strategy_id: str):

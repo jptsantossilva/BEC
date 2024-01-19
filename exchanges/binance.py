@@ -386,6 +386,10 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percenta
 
             telegram_prefix = telegram.get_telegram_prefix(bot)
 
+            # if is a sale from crossover
+            if (slow_ema != 0 and fast_ema != 0) and reason == "":
+                reason = strategy_name
+
             # call send_telegram_alert with the appropriate alert type
             telegram.send_telegram_alert(telegram_token=telegram_token,
                                          telegram_prefix=telegram_prefix,

@@ -21,7 +21,7 @@ import ta
 import utils.config as config
 import utils.telegram as telegram
 import utils.database as database 
-import utils.exchange as exchange
+import exchanges.binance as binance
 
 TELEGRAM_PREFIX_SIGNAL = "RSI-Uptrend" 
 RSI_LOOKBACK_PERIODS = 14 # 14 days
@@ -35,7 +35,7 @@ def get_data(symbol, time_frame, start_date):
 
     while retry_count < max_retry and not success:
         try:
-            df = pd.DataFrame(exchange.client.get_historical_klines(symbol,
+            df = pd.DataFrame(binance.client.get_historical_klines(symbol,
                                                                     time_frame,
                                                                     start_date
                                                                     ))
@@ -79,7 +79,7 @@ def apply_technicals(df):
 
 def main(symbol):
     # 4H timeframe
-    time_frame = exchange.client.KLINE_INTERVAL_4HOUR
+    time_frame = binance.client.KLINE_INTERVAL_4HOUR
 
     # get start date
     today = date.today() 
@@ -139,7 +139,7 @@ def get_symbols(trade_against):
     # Get blacklist
     # blacklist = get_blacklist()
 
-    exchange_info = exchange.get_exchange_info()
+    exchange_info = binance.get_exchange_info()
 
     symbols = set()
 

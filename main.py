@@ -9,7 +9,7 @@ from backtesting.lib import crossover
 
 import utils.config as config
 import utils.database as database
-import utils.exchange as exchange
+import exchanges.binance as binance
 import utils.telegram as telegram
 
 # sets the output display precision in terms of decimal places to 8.
@@ -99,7 +99,7 @@ def get_data(symbol, time_frame):
 
     while retry_count < max_retry and not success:
         try:
-            frame = pd.DataFrame(exchange.client.get_historical_klines(symbol,
+            frame = pd.DataFrame(binance.client.get_historical_klines(symbol,
                                                                         time_frame    
                                                                         # better get all historical data. 
                                                                         # Using a defined start date will affect ema values. 
@@ -247,39 +247,38 @@ def trade(time_frame, run_mode):
             
             # stop loss
             if sell_stop_loss:
-                exchange.create_sell_order(symbol=symbol,
+                binance.create_sell_order(symbol=symbol,
                                             bot=time_frame,
                                             fast_ema=fast_ema,
                                             slow_ema=slow_ema,
                                             reason=f"Stop loss {config.stop_loss}%"
                                             )  
                 
-            # sell_codition or stop loss
+            # sell_codition ema crossover
             elif sell_condition:
-                exchange.create_sell_order(symbol=symbol,
+                binance.create_sell_order(symbol=symbol,
                                             bot=time_frame,
                                             fast_ema=fast_ema,
                                             slow_ema=slow_ema,
-                                            reason=f"Ema Cross {fast_ema}/{slow_ema}"
                                             )  
 
             # sell take profit 1
             if sell_tp_1:
-                exchange.create_sell_order(symbol=symbol,
+                binance.create_sell_order(symbol=symbol,
                                             bot=time_frame,
                                             fast_ema=fast_ema,
                                             slow_ema=slow_ema,
-                                            reason=f"Take-Profit Level 1 - {config.take_profit_1_pnl_perc}%",
+                                            reason=f"Take-Profit Level 1 - {config.take_profit_1_pnl_perc}% PnL - {config.take_profit_1_amount_perc}% Amount",
                                             percentage=config.take_profit_1_amount_perc,
                                             take_profit_num=1
                                             )  
             # sell take profit 2
             if sell_tp_2:
-                exchange.create_sell_order(symbol=symbol,
+                binance.create_sell_order(symbol=symbol,
                                             bot=time_frame,
                                             fast_ema=fast_ema,
                                             slow_ema=slow_ema,
-                                            reason=f"Take-Profit Level 2 - {config.take_profit_2_pnl_perc}%",
+                                            reason=f"Take-Profit Level 2 - {config.take_profit_2_pnl_perc}% PnL - {config.take_profit_2_amount_perc}% Amount",
                                             percentage=config.take_profit_2_amount_perc,
                                             take_profit_num=2
                                             )                       
@@ -341,7 +340,7 @@ def trade(time_frame, run_mode):
             buy_condition = accumulation_phase or bullish_phase            
 
         if buy_condition:
-                exchange.create_buy_order(symbol=symbol, bot=time_frame, fast_ema=fast_ema, slow_ema=slow_ema)    
+                binance.create_buy_order(symbol=symbol, bot=time_frame, fast_ema=fast_ema, slow_ema=slow_ema)    
         else:
             msg = f'{symbol} - {config.strategy_name} - Buy condition not fulfilled'
             msg = telegram_prefix_sl + msg

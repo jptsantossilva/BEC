@@ -9,7 +9,7 @@ import time
 from enum import Enum
 import ta
 
-from utils.exchange import client
+from exchanges.binance import client
 
 from backtesting import Backtest, Strategy 
 from backtesting.lib import crossover
