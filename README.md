@@ -1,4 +1,8 @@
-# BEC - Bot-EMA-Cross
+Like my work?
+
+<a href='https://ko-fi.com/C0C3TDKPG' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi3.png?v=3' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
+
+# BEC - Bot EMA Cross
 Trading bot for Binance exchange using EMA cross strategy with Telegram integration and web dashboard.
 
 ## Installation
@@ -17,8 +21,7 @@ Check [here](https://github.com/jptsantossilva/BEC/blob/main/coinpairBestEma%20F
 - For those symbols in accumulation and bullish phases, calculates EMA cross combination (with [backtesting python library](https://kernc.github.io/backtesting.py)) with highest returns for 1D, 4H and 1H time frames. 4-years of historicals prices are used in backtesting. 
 - Each symbol will be traded with its best EMA cross on each timeframe. 
 - If best EMA result is negative the symbols will be ignored and will not be traded. 
-- To calculate Best EMA against stable pairs uses the stable pair (USDT) with more historical data.
-- Web dashboard with realized and unrealized PnL, blacklist, Top Performers, Best EMAs,.
+- Web dashboard with realized and unrealized PnL, blacklist, Top Performers, Backtesting Results, etc.
 - Telegram message notifications - every time bot is executed; open position; close position; position status summary; symbols in accumulation and bullish market phases
 - Blacklist - symbols to be ignored. Bot will not trade them.
 
