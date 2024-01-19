@@ -440,7 +440,7 @@ def unrealized_pnl():
                     def sell_click():
                         binance.create_sell_order(symbol=sell_symbol,
                                                    bot=sell_bot,
-                                                   reason=f"Forced Selling of {sell_amount_perc}% - {sell_reason}",
+                                                   reason=f"Forced Selling of {sell_amount_perc}%",
                                                    percentage=sell_amount_perc
                                                    ) 
 
