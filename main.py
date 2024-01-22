@@ -79,13 +79,9 @@ def get_backtesting_results(strategy_id, symbol, time_frame):
     if not df.empty:
         fast_ema = int(df.Ema_Fast.values[0])
         slow_ema = int(df.Ema_Slow.values[0])
-        # strategy_name = df.Name.values[0]
     else:
         fast_ema = int("0")
         slow_ema = int("0")
-
-    # global strategy_name
-    # strategy_name = str(fast_ema)+"/"+str(slow_ema)+" "+strategy_name
 
     # if bestEMA does not exist return empty dataframe in order to no use that trading pair
     return fast_ema, slow_ema

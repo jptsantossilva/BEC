@@ -85,7 +85,7 @@ def run():
                         rank = database.get_rank_from_symbols_by_market_phase_by_symbol(database.conn, symbol)
                         database.set_rank_from_positions(database.conn, symbol=symbol, rank=rank)
                         # update best ema
-                        if config.strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
+                        if strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
                             database.set_backtesting_results_from_positions(database.conn, symbol=symbol, timeframe=tf, ema_fast=ema_fast, ema_slow=ema_slow)
             
         # mark as calc completed

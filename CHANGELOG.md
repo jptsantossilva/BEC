@@ -2,6 +2,15 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2024-01-22]
+ 
+### Added
+-  
+### Changed
+-  
+### Fixed
+- General - Best EMA values missing - Backtesting_Results table constraint fixed. It was missing the Strategy_Id as Unique. 
+
 ## [2024-01-19]
  
 ### Added
