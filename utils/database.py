@@ -438,15 +438,16 @@ sql_add_top_rank_to_positions = """
         INNER JOIN Backtesting_Results br ON mp.Symbol = br.Symbol
     WHERE   
         br.Return_Perc > 0
+        AND br.Strategy_Id = ?
         AND NOT EXISTS (
             SELECT 1 
             FROM Positions 
             WHERE Bot = br.Time_Frame AND Symbol = mp.Symbol
         );
 """
-def add_top_rank_to_positions(connection):
+def add_top_rank_to_positions(connection, strategy_id: str):
     with connection:
-        connection.execute(sql_add_top_rank_to_positions)
+        connection.execute(sql_add_top_rank_to_positions, (strategy_id,))
 
 sql_set_rank_from_positions = """
     UPDATE Positions

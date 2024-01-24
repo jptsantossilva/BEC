@@ -362,7 +362,7 @@ def main(time_frame):
         database.delete_positions_not_top_rank(database.conn)
 
         # Add top rank symbols with positive returns to positions files
-        database.add_top_rank_to_positions(database.conn)
+        database.add_top_rank_to_positions(database.conn, strategy_id=config.strategy_id)
 
         # Delete rows with calc completed and keep only symbols with calc not completed
         database.delete_symbols_to_calc_completed(database.conn)

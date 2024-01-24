@@ -95,13 +95,12 @@ def get_data(symbol, time_frame):
 
     while retry_count < max_retry and not success:
         try:
-            frame = pd.DataFrame(binance.client.get_historical_klines(symbol,
-                                                                        time_frame    
-                                                                        # better get all historical data. 
-                                                                        # Using a defined start date will affect ema values. 
-                                                                        # To get same ema and sma values of tradingview all historical data must be used. 
-                                                                        # ,lstartDate)
-                                                                        ))
+            df = pd.DataFrame(binance.client.get_historical_klines(symbol,
+                                                                    time_frame,    
+                                                                    # better get all historical data. 
+                                                                    # Using a defined start date will affect ema values. 
+                                                                    ))
+
             success = True
         except Exception as e:
             retry_count += 1
@@ -114,16 +113,24 @@ def get_data(symbol, time_frame):
         msg = telegram_prefix_sl + msg
         print(msg)
         telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
-        frame = pd.DataFrame()
-        return frame()
+        df = pd.DataFrame()
+        return df()
     else:
-        frame = frame[[0,4]]
-        frame.columns = ['Time','Close']
+        df = df[[0,4]]
+        df.columns = ['Time','Close']
         # using dictionary to convert specific columns
         convert_dict = {'Close': float}
-        frame = frame.astype(convert_dict)
-        frame.Time = pd.to_datetime(frame.Time, unit='ms')
-        return frame
+        df = df.astype(convert_dict)
+        df.Time = pd.to_datetime(df.Time, unit='ms')
+
+        # Remove the last row
+        # This functionality is valuable because our data collection doesn't always coincide precisely with the closing time of a candle. 
+        # As a result, the last row in our dataset represents the most current price information. 
+        # This becomes significant when applying technical analysis, as it directly influences the accuracy of metrics and indicators. 
+        # The implications extend to the decision-making process for buying or selling, making it essential to account for the real-time nature of the last row in our data.
+        df = df.drop(df.index[-1])
+
+        return df
 
 # calculates moving averages 
 def apply_technicals(df, fast_ema=0, slow_ema=0): 
