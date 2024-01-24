@@ -93,13 +93,30 @@ def get_data(symbol, time_frame):
     retry_count = 1
     success = False
 
+    from datetime import date
+    from dateutil.relativedelta import relativedelta
+    import time
+
+    # calc start date from were we need historical data candles
+    # we do this to make sure we get same ema/sma values as those at tradingview 
+    #-------------------------------------
+    today = date.today() 
+    if time_frame == "1h":
+        pastdate = today - relativedelta(hours=200*4)
+    elif time_frame == "4h":
+        pastdate = today - relativedelta(hours=200*4)
+    elif time_frame == "1d":
+        pastdate = today - relativedelta(days=200*4)
+    tuple = pastdate.timetuple()
+    timestamp = time.mktime(tuple)
+    startdate = str(timestamp)
+
     while retry_count < max_retry and not success:
         try:
-            df = pd.DataFrame(binance.client.get_historical_klines(symbol,
-                                                                    time_frame,    
-                                                                    # better get all historical data. 
-                                                                    # Using a defined start date will affect ema values. 
-                                                                    ))
+            df = pd.DataFrame(binance.client.get_historical_klines(symbol=symbol,
+                                                                   interval=time_frame,     
+                                                                   start_str=startdate
+                                                                   ))
 
             success = True
         except Exception as e:
