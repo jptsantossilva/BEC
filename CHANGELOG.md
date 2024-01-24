@@ -2,6 +2,14 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2024-01-25]
+ 
+### Added
+-  
+### Changed
+-  
+### Fixed
+- General - Technicals - SMA and EMA values now are more accurate and match those used on TradingView. The main difference is that we are getting more historical price data like we do on backtesting.
 
 ## [2024-01-24]
  
@@ -12,7 +20,7 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - General - Trade - Some BEC instances were opening positions while others don't. Data collection doesn't always coincide precisely with the closing time of a candle. As a result, the last row in our candle dataset represents the most current price information. This becomes significant when applying technical analysis, as it directly influences the accuracy of metrics and indicators. The implications extend to the decision-making process for buying or selling, making it essential to account for the real-time nature of the last row in our data. So, now we are now making sure the last row of the dataset is the one from the last candle close. 
 - General - Positions table had duplicated rows for the same symbol and time frame. This happened due to getting backtesting results without filtering the strategy.
-- General - Technicals - SMA and EMA values now are more accurate and match those used on TradingView. The main difference is that we are getting more historical price data like we do on backtesting.    
+- General - Technicals - SMA and EMA values now are more accurate and match those used on TradingView. The main difference is that we are getting more historical price data like we do on backtesting.
 
 ## [2024-01-22]
  
