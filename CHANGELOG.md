@@ -2,6 +2,15 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2024-02-06]
+ 
+### Added
+-  
+### Changed
+-  
+### Fixed
+- Backtesting - variable name pSymbol was not defined.
+
 ## [2024-01-25]
  
 ### Added

@@ -155,7 +155,7 @@ def get_data(symbol, timeframe):
 
     while retry_count < max_retry and not success:
         try:
-            frame = pd.DataFrame(client.get_historical_klines(symbol
+            df = pd.DataFrame(client.get_historical_klines(symbol
                                                             ,timeframe
 
                                                             # better get all historical data. 
@@ -171,31 +171,38 @@ def get_data(symbol, timeframe):
             print(msg)
             invalid_symbol_error = '"code":-1121,"msg":"Invalid symbol.'
             if invalid_symbol_error in msg:             
-                frame = pd.DataFrame()
-                return frame 
+                df = pd.DataFrame()
+                return df 
 
             retry_count += 1
-            msg = sys._getframe(  ).f_code.co_name+" - "+pSymbol+" - "+repr(e)
+            msg = sys._getframe(  ).f_code.co_name+" - "+symbol+" - "+repr(e)
             print(msg)
 
     if not success:
         msg = f"Failed after {max_retry} tries to get historical data. Unable to retrieve data. "
-        msg = msg + sys._getframe(  ).f_code.co_name+" - "+pSymbol
+        msg = msg + sys._getframe(  ).f_code.co_name+" - "+symbol
         msg = telegram.telegram_prefix_market_phases_sl + msg
         print(msg)
 
         telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_WARNING, msg)
-        frame = pd.DataFrame()
-        return frame
+        df = pd.DataFrame()
+        return df
     else:            
-        frame = frame.iloc[:,:6] # use the first 5 columns
-        frame.columns = ['Time','Open','High','Low','Close','Volume'] #rename columns
-        frame[['Open','High','Low','Close','Volume']] = frame[['Open','High','Low','Close','Volume']].astype(float) #cast to float
-        frame.Time = pd.to_datetime(frame.Time, unit='ms') #make human readable timestamp
-        # frame.index = [dt.datetime.fromtimestamp(x/1000.0) for x in frame.Time]
-        frame = frame.set_index(pd.DatetimeIndex(frame['Time']))
-        frame = frame.drop(['Time'], axis=1)
-        return frame
+        df = df.iloc[:,:6] # use the first 5 columns
+        df.columns = ['Time','Open','High','Low','Close','Volume'] #rename columns
+        df[['Open','High','Low','Close','Volume']] = df[['Open','High','Low','Close','Volume']].astype(float) #cast to float
+        df.Time = pd.to_datetime(df.Time, unit='ms') #make human readable timestamp
+        df = df.set_index(pd.DatetimeIndex(df['Time']))
+        df = df.drop(['Time'], axis=1)
+
+        # Remove the last row
+        # This functionality is valuable because our data collection doesn't always coincide precisely with the closing time of a candle. 
+        # As a result, the last row in our dataset represents the most current price information. 
+        # This becomes significant when applying technical analysis, as it directly influences the accuracy of metrics and indicators. 
+        # The implications extend to the decision-making process for buying or selling, making it essential to account for the real-time nature of the last row in our data.
+        df = df.drop(df.index[-1])
+
+        return df
     
 def get_strategy_name(strategy):
     # get strategy name from strategy class
