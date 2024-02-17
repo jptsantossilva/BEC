@@ -88,7 +88,8 @@ def run():
                         if strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
                             database.set_backtesting_results_from_positions(database.conn, symbol=symbol, timeframe=tf, ema_fast=ema_fast, ema_slow=ema_slow)
             
-        # mark as calc completed
+    # mark symbols as calc completed
+    for symbol in list_not_completed.Symbol:    
         database.set_symbols_to_calc_completed(database.conn, symbol=symbol)
 
 if __name__ == "__main__":

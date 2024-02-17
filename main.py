@@ -263,6 +263,13 @@ def trade(time_frame, run_mode):
         elif config.strategy_id in ["market_phases"]:
             sell_condition = (lastrow.Close < lastrow.SMA50) or (lastrow.Close < lastrow.SMA200) 
 
+        # set current PnL
+        current_price = lastrow.Close
+        database.update_position_pnl(database.conn,
+                                     bot=time_frame,
+                                     symbol=symbol, 
+                                     curr_price=current_price)
+
         if sell_condition or sell_stop_loss or sell_tp_1 or sell_tp_2:
             
             # stop loss
@@ -308,13 +315,6 @@ def trade(time_frame, run_mode):
             msg = telegram_prefix_sl + msg
             print(msg)
             telegram.send_telegram_message(telegram_token, "", msg)
-            
-            # set current PnL
-            current_price = lastrow.Close
-            database.update_position_pnl(database.conn,
-                                         bot=time_frame,
-                                         symbol=symbol, 
-                                         curr_price=current_price)
 
 
     # check symbols not in positions and BUY if conditions are fulfilled

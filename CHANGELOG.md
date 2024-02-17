@@ -2,6 +2,16 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2024-02-17]
+ 
+### Added
+-  
+### Changed
+-  
+### Fixed
+- Trading - When profit levels were triggered, the PnL value was not being updated immediately after. 
+- Backtesting - After backtesting calculation, the symbols in table Symbols_To_Calc were not being set as completed.  
+
 ## [2024-02-06]
  
 ### Added
