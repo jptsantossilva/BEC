@@ -159,6 +159,13 @@ def create_buy_order(symbol: str, bot: str, fast_ema: int = 0, slow_ema: int = 0
             # convert full symbol_trade_against balance to symbol_trade_against
             try:
                 balance = float(client.get_asset_balance(asset = symbol_trade_against)['free'])
+                
+                # remove locked values from the balance
+                lock_values = config.get_setting("lock_values")
+                if lock_values:
+                    locked_values = database.get_total_locked_values(database.conn)
+                    balance = balance-locked_values
+                
                 tradable_balance = balance*config.tradable_balance_ratio      
                 position_size = tradable_balance
             except Exception as e:
@@ -327,33 +334,44 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percenta
                 buy_order_id = str(0)
             else:
                 # get Buy_Order_Id from positions table
-                df_pos = database.get_positions_by_bot_symbol_position(connection=database.conn, 
-                                                                    bot=bot, 
-                                                                    symbol=symbol, 
-                                                                    position=1)
-
-                # update position as closed position
+                df_pos = database.get_positions_by_bot_symbol_position(connection=database.conn,
+                                                                       bot=bot, 
+                                                                       symbol=symbol, 
+                                                                       position=1)
+                
+                if not df_pos.empty:
+                    buy_order_id = str(df_pos['Buy_Order_Id'].iloc[0])
+                else:
+                    buy_order_id = str(0)
                 
                 if percentage == 100:
+                    # update position as closed position
                     database.set_position_sell(database.conn, bot=bot, symbol=symbol)
-                else:      
+                    
+                    # release all locked values from position
+                    if not df_pos.empty:
+                        database.release_value(database.conn, df_pos['Id'].iloc[0])
+                else: # percentage < 100     
                     if not df_pos.empty:
                         # if we are selling a position percentage we must update the qty
                         previous_qty = float(df_pos['Qty'].iloc[0])
                         new_qty = previous_qty - order_qty
                         database.set_position_qty(database.conn, bot=bot, symbol=symbol, qty=new_qty)
 
-                        # update take profit to inform that we already took profit1 or 2
+                        # update take profit to inform that we already took profit 1 or 2
                         if take_profit_num == 1:
                             database.set_position_take_profit_1(database.conn, bot=bot, symbol=symbol, take_profit_1=1)
                         elif take_profit_num == 2:
                             database.set_position_take_profit_2(database.conn, bot=bot, symbol=symbol, take_profit_2=1)
                         
-                
-                if not df_pos.empty:
-                    buy_order_id = str(df_pos['Buy_Order_Id'].iloc[0])
-                else:
-                    buy_order_id = str(0)
+                        # lock values from parcial sales amounts
+                        lock_values = config.get_setting("lock_values")
+                        if lock_values:
+                            database.lock_value(database.conn, 
+                                                position_id=df_pos['Id'].iloc[0],
+                                                buy_order_id=buy_order_id,
+                                                amount=order_avg_price*order_qty
+                                                )
     
             # add to orders database table
             pnl_value, pnl_perc = database.add_order_sell(database.conn,

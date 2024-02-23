@@ -8,7 +8,7 @@
             "name": "Streamlit",
             "type": "python",
             "request": "launch",
-            "program": "/home/joao/.local/share/virtualenvs/Binance-Trading-bot-EMA-Cross-dNJLOmpE/bin/streamlit",
+            "program": "/home/joao/.local/share/virtualenvs/BEC-HeXlVwMU/bin/streamlit",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": ["run", "dashboard.py"]

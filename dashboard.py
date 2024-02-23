@@ -279,11 +279,26 @@ def realized_pnl():
 
         st.header(f"Realized PnL - Detail")
         st.subheader("Bot 1d")
-        st.dataframe(trades_month_1d.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
+        st.dataframe(trades_month_1d.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
+                     column_config = {
+                         "PnL_Perc": st.column_config.NumberColumn(format="%.2f"),
+                         "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f")
+                         }
+                    )
         st.subheader("Bot 4h")
-        st.dataframe(trades_month_4h.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
+        st.dataframe(trades_month_4h.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
+                     column_config = {
+                         "PnL_Perc": st.column_config.NumberColumn(format="%.2f"),
+                         "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f")
+                         }
+                    )
         st.subheader("Bot 1h")
-        st.dataframe(trades_month_1h.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']))
+        st.dataframe(trades_month_1h.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
+                     column_config = {
+                         "PnL_Perc": st.column_config.NumberColumn(format="%.2f"),
+                         "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f")
+                         }
+                    )
 
         # print('\n----------------------------\n')
 
@@ -446,7 +461,7 @@ def unrealized_pnl():
 
                         sell_expander.success(f"SOLD **{sell_amount_perc}%** of {sell_symbol} from **{sell_bot}** bot!")
                         
-                        time.sleep(5)
+                        # time.sleep(3)
 
                         st.session_state.sell_bot = None
                         
@@ -575,265 +590,284 @@ def backtesting_results():
                         )
                     })
 
-def manage_config():
+def settings():
 
-    col1_cfg, col2_cfg = tab_settings.columns(2)
-    if 1==1:# tab_settings:
+    col1_cfg, col2_cfg = tab_settings.columns(2)    
+
+    with col2_cfg:
+        container_main_strategy = st.container(border=True)
+        with container_main_strategy:
+            st.write("**Main Strategy**")
+
+            if "main_strategy" not in st.session_state:
+                st.session_state.main_strategy = config.get_setting("main_strategy")
+            def main_strategy_change():
+                config.set_setting("main_strategy", st.session_state.main_strategy)
+            main_strategy = st.selectbox(label='Main Strategy',
+                                        options=list(dict_strategies_main.keys()),
+                                        key="main_strategy",
+                                        on_change=main_strategy_change,
+                                        format_func=format_func_strategies_main, 
+                                        label_visibility="collapsed"
+                                        )
         
-        with col2_cfg:
-            container_main_strategy = st.container(border=True)
-            with container_main_strategy:
-                st.write("**Main Strategy**")
+        
+        container_btc_strategy = st.container(border=True)
+        with container_btc_strategy:
+            st.write("**BTC Strategy**")
 
-                if "main_strategy" not in st.session_state:
-                    st.session_state.main_strategy = config.get_setting("main_strategy")
-                def main_strategy_change():
-                    config.set_setting("main_strategy", st.session_state.main_strategy)
-                main_strategy = st.selectbox(label='Main Strategy',
-                                            options=list(dict_strategies_main.keys()),
-                                            key="main_strategy",
-                                            on_change=main_strategy_change,
-                                            format_func=format_func_strategies_main, 
-                                            label_visibility="collapsed"
-                                            )
+            if "btc_strategy" not in st.session_state:
+                st.session_state.btc_strategy = config.get_setting("btc_strategy")
+            def btc_strategy_change():
+                config.set_setting("btc_strategy", st.session_state.btc_strategy)
+            btc_strategy = st.selectbox(label='BTC Strategy',
+                                        options=list(dict_strategies_btc.keys()),
+                                        key="btc_strategy",
+                                        on_change=btc_strategy_change,
+                                        format_func=format_func_strategies_btc, 
+                                        label_visibility="collapsed"
+                                        )
+
+            if "trade_against_switch" not in st.session_state:
+                st.session_state.trade_against_switch = config.get_setting("trade_against_switch")
+            def trade_against_switch_change():
+                config.set_setting("trade_against_switch", st.session_state.trade_against_switch)
+            trade_against_switch = st.checkbox(label="Auto switch between trade against USDT or BTC",
+                                                key="trade_against_switch",
+                                                on_change=trade_against_switch_change,
+                                                help="""Considering the chosen Bitcoin strategy will decide whether it is a Bull or Bear market. If Bull then will convert USDT to BTC and trade against BTC. If Bear will convert BTC into USDT and trade against USDT.""")
+        
+        run_backtesting = st.button("Run Backtesting", help="Please be patient, as it could take a few hours to complete.")
+        if run_backtesting:
+            with st.spinner('This task is taking a leisurely stroll through the digital landscape (+/- 1h). Why not do the same? Stretch those legs, grab a snack, or contemplate the meaning of life.'):
+                trade_against = config.get_setting("trade_against") 
+                force_run_backtest(time_frame="1d")
+
+    with col1_cfg:
+        container_bots = st.container(border=True)
+        with container_bots:
+            st.write("**Bots by Time Frame**")
+            if "bot_1d" not in st.session_state:
+                st.session_state.bot_1d = config.get_setting("bot_1d")
+            def bot_1d_change():
+                config.set_setting("bot_1d", st.session_state.bot_1d)
+            bot_1d = st.checkbox(label='Bot 1D',
+                                    key="bot_1d",
+                                    on_change=bot_1d_change,
+                                    help="""Turn the Bot ON or OFF""")
             
+            if "bot_4h" not in st.session_state:
+                st.session_state.bot_4h = config.get_setting("bot_4h")
+            def bot_4h_change():
+                config.set_setting("bot_4h", st.session_state.bot_4h)
+            bot_4h = st.checkbox(label='Bot 4h',
+                                    key="bot_4h",
+                                    on_change=bot_4h_change,
+                                    help="""Turn the Bot ON or OFF""")
             
-            container_btc_strategy = st.container(border=True)
-            with container_btc_strategy:
-                st.write("**BTC Strategy**")
-
-                if "btc_strategy" not in st.session_state:
-                    st.session_state.btc_strategy = config.get_setting("btc_strategy")
-                def btc_strategy_change():
-                    config.set_setting("btc_strategy", st.session_state.btc_strategy)
-                btc_strategy = st.selectbox(label='BTC Strategy',
-                                            options=list(dict_strategies_btc.keys()),
-                                            key="btc_strategy",
-                                            on_change=btc_strategy_change,
-                                            format_func=format_func_strategies_btc, 
-                                            label_visibility="collapsed"
-                                            )
-
-                if "trade_against_switch" not in st.session_state:
-                    st.session_state.trade_against_switch = config.get_setting("trade_against_switch")
-                def trade_against_switch_change():
-                    config.set_setting("trade_against_switch", st.session_state.trade_against_switch)
-                trade_against_switch = st.checkbox(label="Auto switch between trade against USDT or BTC",
-                                                    key="trade_against_switch",
-                                                    on_change=trade_against_switch_change,
-                                                    help="""Considering the chosen Bitcoin strategy will decide whether it is a Bull or Bear market. If Bull then will convert USDT to BTC and trade against BTC. If Bear will convert BTC into USDT and trade against USDT.""")
+            if "bot_1h" not in st.session_state:
+                st.session_state.bot_1h = config.get_setting("bot_1h")
+            def bot_1h_change():
+                config.set_setting("bot_1h", st.session_state.bot_1h)
+            bot_1h = st.checkbox(label='Bot 1h',
+                                    key="bot_1h",
+                                    on_change=bot_1h_change,
+                                    help="""Turn the Bot ON or OFF""")
+        
+        # try:
+        #     prev_stake_amount_type = config.get_setting("stake_amount_type")
+        #     stake_amount_type = st.selectbox('Stake Amount Type', ['unlimited'], 
+        #                                     help="""Stake_amount is the amount of stake the bot will use for each trade. 
+        #                                         \nIf stake_amount = "unlimited" the increasing/decreasing of stakes will depend on the performance of the bot. Lower stakes if the bot is losing, higher stakes if the bot has a winning record since higher balances are available and will result in profit compounding.
+        #                                         \nIf stake amount = static number, that is the amount per trade
+        #                                     """)
+        #     if stake_amount_type != prev_stake_amount_type:
+        #         config.set_setting("stake_amount_type", stake_amount_type)
+        # except KeyError:
+        #     st.warning('Invalid or missing configuration: stake_amount_type')
+        #     st.stop()
             
-            run_backtesting = st.button("Run Backtesting", help="Please be patient, as it could take around 1 hour to complete.")
-            if run_backtesting:
-                with st.spinner('This task is taking a leisurely stroll through the digital landscape (+/- 1h). Why not do the same? Stretch those legs, grab a snack, or contemplate the meaning of life.'):
-                    trade_against = config.get_setting("trade_against") 
-                    force_run_backtest(time_frame="1d")
+        container_others = st.container(border=True)
+        with container_others:
 
-        with col1_cfg:
-            container_bots = st.container(border=True)
-            with container_bots:
-                st.write("**Bots by Time Frame**")
-                if "bot_1d" not in st.session_state:
-                    st.session_state.bot_1d = config.get_setting("bot_1d")
-                def bot_1d_change():
-                    config.set_setting("bot_1d", st.session_state.bot_1d)
-                bot_1d = st.checkbox(label='Bot 1D',
-                                        key="bot_1d",
-                                        on_change=bot_1d_change,
-                                        help="""Turn the Bot ON or OFF""")
-                
-                if "bot_4h" not in st.session_state:
-                    st.session_state.bot_4h = config.get_setting("bot_4h")
-                def bot_4h_change():
-                    config.set_setting("bot_4h", st.session_state.bot_4h)
-                bot_4h = st.checkbox(label='Bot 4h',
-                                        key="bot_4h",
-                                        on_change=bot_4h_change,
-                                        help="""Turn the Bot ON or OFF""")
-                
-                if "bot_1h" not in st.session_state:
-                    st.session_state.bot_1h = config.get_setting("bot_1h")
-                def bot_1h_change():
-                    config.set_setting("bot_1h", st.session_state.bot_1h)
-                bot_1h = st.checkbox(label='Bot 1h',
-                                        key="bot_1h",
-                                        on_change=bot_1h_change,
-                                        help="""Turn the Bot ON or OFF""")
+            if "trade_against" not in st.session_state:
+                st.session_state.trade_against = config.get_setting("trade_against")
+            def trade_against_change():
+                config.set_setting("trade_against", st.session_state.trade_against)
+                min_position_size_change()
+            trade_against = st.selectbox(label='Trade Against',
+                                        options=['USDT', 'BTC'], 
+                                        key="trade_against",
+                                        on_change=trade_against_change,
+                                        help="""Trade against USDT or BTC
+                                            """)
             
-            # try:
-            #     prev_stake_amount_type = config.get_setting("stake_amount_type")
-            #     stake_amount_type = st.selectbox('Stake Amount Type', ['unlimited'], 
-            #                                     help="""Stake_amount is the amount of stake the bot will use for each trade. 
-            #                                         \nIf stake_amount = "unlimited" the increasing/decreasing of stakes will depend on the performance of the bot. Lower stakes if the bot is losing, higher stakes if the bot has a winning record since higher balances are available and will result in profit compounding.
-            #                                         \nIf stake amount = static number, that is the amount per trade
-            #                                     """)
-            #     if stake_amount_type != prev_stake_amount_type:
-            #         config.set_setting("stake_amount_type", stake_amount_type)
-            # except KeyError:
-            #     st.warning('Invalid or missing configuration: stake_amount_type')
-            #     st.stop()
-             
-            container_others = st.container(border=True)
-            with container_others:
+            if "max_number_of_open_positions" not in st.session_state:
+                st.session_state.max_number_of_open_positions = config.get_setting("max_number_of_open_positions")
+            def max_number_of_open_positions_change():
+                config.set_setting("max_number_of_open_positions", st.session_state.max_number_of_open_positions)
+            max_number_of_open_positions = st.number_input(label="Max Number of Open Positions",
+                                                        min_value=1,
+                                                        max_value=50,
+                                                        step=1,
+                                                        key="max_number_of_open_positions",
+                                                        on_change=max_number_of_open_positions_change,
+                                                        help="""
+                                                        If tradable balance = 1000 and max_number_of_open_positions = 10, the stake_amount = 1000/10 = 100
+                                                                """)
+            
+            # min_position_size 
+            if "min_position_size" not in st.session_state:
+                st.session_state.min_position_size = config.get_setting("min_position_size")
+            MIN_POSITION_SIZE_USD = 20
+            def min_position_size_change():
+                if st.session_state.trade_against in ["USDT"]:
+                    if int(st.session_state.min_position_size) < MIN_POSITION_SIZE_USD:
+                        st.session_state.min_position_size = MIN_POSITION_SIZE_USD
+                elif st.session_state.trade_against == "BTC":
+                    if float(st.session_state.min_position_size) >= MIN_POSITION_SIZE_USD:
+                        st.session_state.min_position_size = 0.0001                    
+                config.set_setting("min_position_size", st.session_state.min_position_size)
 
-                if "trade_against" not in st.session_state:
-                    st.session_state.trade_against = config.get_setting("trade_against")
-                def trade_against_change():
-                    config.set_setting("trade_against", st.session_state.trade_against)
-                    min_position_size_change()
-                trade_against = st.selectbox(label='Trade Against',
-                                            options=['USDT', 'BTC'], 
-                                            key="trade_against",
-                                            on_change=trade_against_change,
-                                            help="""Trade against USDT or BTC
+            if trade_against in ["USDT"]:
+                trade_min_val = MIN_POSITION_SIZE_USD
+                trade_step = 10
+                trade_format = None
+            elif trade_against == "BTC":
+                trade_min_val = 0.0001
+                trade_step = 0.0001
+                trade_format = "%.4f"    
+
+            min_position_size = st.number_input(label='Minimum Position Size', 
+                                                min_value=trade_min_val, 
+                                                step=trade_step,
+                                                format=trade_format,
+                                                key="min_position_size",
+                                                on_change=min_position_size_change,
+                                                help="""If trade_against = USDT => min_position_size = 20
+                                                    \nIf trade_against = BTC => min_position_size = 0.001
+                                                """)      
+            # ---  
+
+            if "stop_loss" not in st.session_state:
+                st.session_state.stop_loss = config.get_setting("stop_loss")
+            def stop_loss_change():
+                config.set_setting("stop_loss", st.session_state.stop_loss)
+            stop_loss = st.number_input(label='Stop Loss %', 
+                                        min_value=0, 
+                                        step=1,
+                                        key="stop_loss",
+                                        on_change=stop_loss_change,
+                                        help="""Set stop loss to automatically sell if its price falls below a certain percentage.
+                                            \nExamples:
+                                            \n stop_loss = 0 => will not use stop loss. The stop loss used will be triggered when slow_ema > fast_ema
+                                            \n stop_loss = 10 => 10%   
+                                        """)
+
+            if "trade_top_performance" not in st.session_state:
+                st.session_state.trade_top_performance = config.get_setting("trade_top_performance")
+            def trade_top_performance_change():
+                config.set_setting("trade_top_performance", st.session_state.trade_top_performance)
+            trade_top_performance = st.slider(label='Trade Top Performance Symbols', 
+                                            min_value=0, 
+                                            max_value=100, 
+                                            step=5,
+                                            key="trade_top_performance",
+                                            on_change=trade_top_performance_change,
+                                            help="""
+                                                    Trade top X performance symbols                                              
                                                 """)
+            
+            if "tradable_balance_ratio" not in st.session_state:
+                st.session_state.tradable_balance_ratio = config.get_setting("tradable_balance_ratio")*100
+            def tradable_balance_ratio_change():
+                config.set_setting("tradable_balance_ratio", st.session_state.tradable_balance_ratio/100)
+            tradable_balance_ratio = st.slider(label='Tradable Balance Ratio',
+                                            min_value=0, 
+                                            max_value=100,
+                                            step=1, 
+                                            format="%d%%",
+                                            key="tradable_balance_ratio",
+                                            on_change=tradable_balance_ratio_change, 
+                                            help="""Tradable percentage of the balance
+                                                """)   
+        
+        
+        st.write("**Take-Profit Levels**")
+        container_tp = st.container(border=True)
+        with container_tp:
+            if "take_profit_1" not in st.session_state:
+                st.session_state.take_profit_1 = config.get_setting("take_profit_1")
+            def take_profit_1_change():
+                config.set_setting("take_profit_1", st.session_state.take_profit_1)
                 
-                if "max_number_of_open_positions" not in st.session_state:
-                    st.session_state.max_number_of_open_positions = config.get_setting("max_number_of_open_positions")
-                def max_number_of_open_positions_change():
-                    config.set_setting("max_number_of_open_positions", st.session_state.max_number_of_open_positions)
-                max_number_of_open_positions = st.number_input(label="Max Number of Open Positions",
-                                                            min_value=1,
-                                                            max_value=50,
-                                                            step=1,
-                                                            key="max_number_of_open_positions",
-                                                            on_change=max_number_of_open_positions_change,
-                                                            help="""
-                                                            If tradable balance = 1000 and max_number_of_open_positions = 10, the stake_amount = 1000/10 = 100
-                                                                    """)
-                
-                # min_position_size 
-                if "min_position_size" not in st.session_state:
-                    st.session_state.min_position_size = config.get_setting("min_position_size")
-                MIN_POSITION_SIZE_USD = 20
-                def min_position_size_change():
-                    if st.session_state.trade_against in ["USDT"]:
-                        if int(st.session_state.min_position_size) < MIN_POSITION_SIZE_USD:
-                            st.session_state.min_position_size = MIN_POSITION_SIZE_USD
-                    elif st.session_state.trade_against == "BTC":
-                        if float(st.session_state.min_position_size) >= MIN_POSITION_SIZE_USD:
-                            st.session_state.min_position_size = 0.0001                    
-                    config.set_setting("min_position_size", st.session_state.min_position_size)
-
-                if trade_against in ["USDT"]:
-                    trade_min_val = MIN_POSITION_SIZE_USD
-                    trade_step = 10
-                    trade_format = None
-                elif trade_against == "BTC":
-                    trade_min_val = 0.0001
-                    trade_step = 0.0001
-                    trade_format = "%.4f"    
-
-                min_position_size = st.number_input(label='Minimum Position Size', 
-                                                    min_value=trade_min_val, 
-                                                    step=trade_step,
-                                                    format=trade_format,
-                                                    key="min_position_size",
-                                                    on_change=min_position_size_change,
-                                                    help="""If trade_against = USDT => min_position_size = 20
-                                                        \nIf trade_against = BTC => min_position_size = 0.001
-                                                    """)      
-                # ---  
-
-                if "stop_loss" not in st.session_state:
-                    st.session_state.stop_loss = config.get_setting("stop_loss")
-                def stop_loss_change():
-                    config.set_setting("stop_loss", st.session_state.stop_loss)
-                stop_loss = st.number_input(label='Stop Loss %', 
+            take_profit_1 = st.number_input(label="TP1 (%)", 
                                             min_value=0, 
                                             step=1,
-                                            key="stop_loss",
-                                            on_change=stop_loss_change,
-                                            help="""Set stop loss to automatically sell if its price falls below a certain percentage.
-                                                \nExamples:
-                                                \n stop_loss = 0 => will not use stop loss. The stop loss used will be triggered when slow_ema > fast_ema
-                                                \n stop_loss = 10 => 10%   
-                                            """)
+                                            key="take_profit_1",
+                                            on_change=take_profit_1_change,
+                                            help="The percentage increase in price at which the system will automatically trigger a sell order to secure profits."
+                                            )                    
 
-                if "trade_top_performance" not in st.session_state:
-                    st.session_state.trade_top_performance = config.get_setting("trade_top_performance")
-                def trade_top_performance_change():
-                    config.set_setting("trade_top_performance", st.session_state.trade_top_performance)
-                trade_top_performance = st.slider(label='Trade Top Performance Symbols', 
-                                                min_value=0, 
-                                                max_value=100, 
-                                                step=5,
-                                                key="trade_top_performance",
-                                                on_change=trade_top_performance_change,
-                                                help="""
-                                                        Trade top X performance symbols                                              
-                                                    """)
-                
-                if "tradable_balance_ratio" not in st.session_state:
-                    st.session_state.tradable_balance_ratio = config.get_setting("tradable_balance_ratio")*100
-                def tradable_balance_ratio_change():
-                    config.set_setting("tradable_balance_ratio", st.session_state.tradable_balance_ratio/100)
-                tradable_balance_ratio = st.slider(label='Tradable Balance Ratio',
-                                                min_value=0, 
-                                                max_value=100,
-                                                step=1, 
-                                                format="%d%%",
-                                                key="tradable_balance_ratio",
-                                                on_change=tradable_balance_ratio_change, 
-                                                help="""Tradable percentage of the balance
-                                                    """)   
-            
-            
-            st.write("**Take-Profit Levels**")
-            container_tp = st.container(border=True)
-            with container_tp:
-                if "take_profit_1" not in st.session_state:
-                    st.session_state.take_profit_1 = config.get_setting("take_profit_1")
-                def take_profit_1_change():
-                    config.set_setting("take_profit_1", st.session_state.take_profit_1)
-                    
-                take_profit_1 = st.number_input(label="TP1 (%)", 
-                                                min_value=0, 
-                                                step=1,
-                                                key="take_profit_1",
-                                                on_change=take_profit_1_change,
-                                                help="The percentage increase in price at which the system will automatically trigger a sell order to secure profits."
-                                                )                    
-
-                if "take_profit_1_amount" not in st.session_state:
-                    st.session_state.take_profit_1_amount = config.get_setting("take_profit_1_amount")
-                def take_profit_1_amount_change():
-                    config.set_setting("take_profit_1_amount", st.session_state.take_profit_1_amount)
-                take_profit_1_amount = st.number_input(label="TP1 Amount (%)", 
-                                                        min_value=5, 
-                                                        max_value=100,
-                                                        step=5,
-                                                        key="take_profit_1_amount",
-                                                        on_change=take_profit_1_amount_change,
-                                                        help="The percentage of the position quantity to be sold when take profits level 1 is achieved."
-                                                        )
-            
-                if "take_profit_2" not in st.session_state:
-                    st.session_state.take_profit_2 = config.get_setting("take_profit_2")
-                def take_profit_2_change():
-                    config.set_setting("take_profit_2", st.session_state.take_profit_2)
-
-                take_profit_2 = st.number_input(label="TP2 (%)", 
-                                                min_value=0, 
-                                                step=1,
-                                                key="take_profit_2",
-                                                on_change=take_profit_2_change,
-                                                help="The percentage increase in price at which the system will automatically trigger a sell order to secure profits."
-                                                )
-                    
-                if "take_profit_2_amount" not in st.session_state:
-                    st.session_state.take_profit_2_amount = config.get_setting("take_profit_2_amount")
-                def take_profit_2_amount_change():
-                    config.set_setting("take_profit_2_amount", st.session_state.take_profit_2_amount)
-
-                take_profit_2_amount = st.number_input(label="TP2 Amount (%)", 
+            if "take_profit_1_amount" not in st.session_state:
+                st.session_state.take_profit_1_amount = config.get_setting("take_profit_1_amount")
+            def take_profit_1_amount_change():
+                config.set_setting("take_profit_1_amount", st.session_state.take_profit_1_amount)
+            take_profit_1_amount = st.number_input(label="TP1 Amount (%)", 
                                                     min_value=5, 
                                                     max_value=100,
                                                     step=5,
-                                                    key="take_profit_2_amount",
-                                                    on_change=take_profit_2_amount_change,
-                                                    help="The percentage of the position quantity to be sold when take profits level 2 is achieved."
-                                                        )
+                                                    key="take_profit_1_amount",
+                                                    on_change=take_profit_1_amount_change,
+                                                    help="The percentage of the position quantity to be sold when take profits level 1 is achieved."
+                                                    )
+        
+            if "take_profit_2" not in st.session_state:
+                st.session_state.take_profit_2 = config.get_setting("take_profit_2")
+            def take_profit_2_change():
+                config.set_setting("take_profit_2", st.session_state.take_profit_2)
+
+            take_profit_2 = st.number_input(label="TP2 (%)", 
+                                            min_value=0, 
+                                            step=1,
+                                            key="take_profit_2",
+                                            on_change=take_profit_2_change,
+                                            help="The percentage increase in price at which the system will automatically trigger a sell order to secure profits."
+                                            )
+                
+            if "take_profit_2_amount" not in st.session_state:
+                st.session_state.take_profit_2_amount = config.get_setting("take_profit_2_amount")
+            def take_profit_2_amount_change():
+                config.set_setting("take_profit_2_amount", st.session_state.take_profit_2_amount)
+
+            take_profit_2_amount = st.number_input(label="TP2 Amount (%)", 
+                                                min_value=5, 
+                                                max_value=100,
+                                                step=5,
+                                                key="take_profit_2_amount",
+                                                on_change=take_profit_2_amount_change,
+                                                help="The percentage of the position quantity to be sold when take profits level 2 is achieved."
+                                                )
+            
+        st.write("**Locked Values**")
+        container_lv = st.container(border=True)
+        with container_lv:
+            if "lock_values" not in st.session_state:
+                st.session_state.lock_values = config.get_setting("lock_values")
+            def lock_values_change():
+                config.set_setting("lock_values", st.session_state.lock_values)
+            lock_values = st.checkbox(label='Lock Values from partial sales',
+                                    key="lock_values",
+                                    on_change=lock_values_change,
+                                    help="""When enabled, means that any amount obtained from partially selling a position will be temporarily locked and cannot be used to purchase another position until the entire position is sold. 
+                                        \nWhen disabled, partial sales can be freely reinvested into new positions. It's important to note that this may increase the risk of larger position amounts, as funds from partial sales may be immediately reinvested without reservation.
+                                    """)
+            
+            
+            expander_lv = st.expander(label=f"Current Locked Values", expanded=False)
+            with expander_lv:
+                df_clv = database.get_all_locked_values(database.conn)
+                st.dataframe(df_clv)
     
 def check_app_version():
     last_date = general.extract_date_from_local_changelog()
@@ -898,7 +932,7 @@ def show_main_page():
     top_performers()
     blacklist()
     backtesting_results()
-    manage_config()
+    settings()
 
 def check_open_positions(bot: str):
     num = database.get_num_open_positions_by_bot(connection=connection, bot=bot)
@@ -1074,7 +1108,11 @@ def calculate_unrealized_pnl():
     df_positions_1d['Buy_Price'] = df_positions_1d['Buy_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x))
     df_positions_4h['Buy_Price'] = df_positions_4h['Buy_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x))
     df_positions_1h['Buy_Price'] = df_positions_1h['Buy_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x))
-    
+
+    df_positions_1d['Position_Value'] = df_positions_1d['Position_Value'].apply(lambda x:f'{{:.{8}f}}'.format(x))
+    df_positions_4h['Position_Value'] = df_positions_4h['Position_Value'].apply(lambda x:f'{{:.{8}f}}'.format(x))
+    df_positions_1h['Position_Value'] = df_positions_1h['Position_Value'].apply(lambda x:f'{{:.{8}f}}'.format(x))
+
     # print(df_positions_1d)
     # print(df_positions_4h)
     # print(df_positions_1h)

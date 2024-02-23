@@ -85,6 +85,10 @@ def get_setting(setting_name):
                 setting_value = "prod"
                 config[setting_name] = setting_value 
 
+            if setting_name in ["lock_values"]:
+                setting_value = True
+                config[setting_name] = setting_value  
+
             # write config file
             with open("config.yaml", "w") as f:
                 yaml.dump(config, f)
@@ -201,6 +205,7 @@ def get_all_settings():
     take_profit_2_pnl_perc       = get_setting("take_profit_2")
     take_profit_2_amount_perc    = get_setting("take_profit_2_amount")
     run_mode                     = get_setting("run_mode")
+    lock_values                  = get_setting("lock_values")
 
     # Check if connection is already established
     if database.is_connection_open(database.conn):

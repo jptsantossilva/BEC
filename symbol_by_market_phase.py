@@ -214,9 +214,9 @@ def trade_against_auto_switch():
                 list_to_sell = df_sell.Symbol.tolist()
                 for symbol in list_to_sell:
                     binance.create_sell_order(symbol=symbol,
-                                                bot=tf,
-                                                reason=f"{sell_message}"
-                                                )  
+                                              bot=tf,
+                                              reason=f"{sell_message}"
+                                              )  
 
             # convert all USDT to BTC
             binance.create_buy_order(symbol=btc_pair, bot=btc_timeframe, convert_all_balance=True)

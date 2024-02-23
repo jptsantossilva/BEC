@@ -292,8 +292,9 @@ def get_orders_by_bot_side_year_month(connection, bot: str, side: str, year: str
         year_month = str(year)+"-%"
     else:
         year_month = str(year)+"-"+str(month)+"-%"
-    
-    return pd.read_sql(sql_get_orders_by_bot_side_year_month, connection, params=(bot, side, year_month))
+
+    df = pd.read_sql(sql_get_orders_by_bot_side_year_month, connection, params=(bot, side, year_month))
+    return df
 
 # POSITIONS
 sql_create_positions_table = """
@@ -348,7 +349,7 @@ def get_positions_by_bot_position(connection, bot: str, position: int):
     return pd.read_sql(sql_get_positions_by_bot_position, connection, params=(bot, position))
 
 sql_get_unrealized_pnl_by_bot = """
-    SELECT pos.Bot, pos.Symbol, pos.PnL_Perc, pos.PnL_Value, pos.Take_Profit_1 as TP1, pos.Take_Profit_2 as TP2, ROUND((pos.Qty/ord.Qty)*100,2) as "RPQ%", pos.Qty, pos.Buy_Price, pos.Date, pos.Duration, pos.Ema_Fast, pos.Ema_Slow
+    SELECT pos.Bot, pos.Symbol, pos.PnL_Perc, pos.PnL_Value, pos.Take_Profit_1 as TP1, pos.Take_Profit_2 as TP2, ROUND((pos.Qty/ord.Qty)*100,2) as "RPQ%", pos.Qty, pos.Buy_Price, (pos.Qty*pos.Buy_Price) Position_Value, pos.Date, pos.Duration, pos.Ema_Fast, pos.Ema_Slow
     FROM Positions pos
     JOIN Orders ord ON pos.Buy_Order_Id = ord.Exchange_Order_Id 
     WHERE 
@@ -363,6 +364,7 @@ def get_unrealized_pnl_by_bot(connection, bot: str):
     df['PnL_Perc'] = df['PnL_Perc'].astype(float)
     df['PnL_Value'] = df['PnL_Value'].astype(float)
     df['Qty'] = df['Qty'].astype(float)
+    df['Position_Value'] = df['Position_Value'].astype(float)
     df['RPQ%'] = df['RPQ%'].astype(str)
     df['Buy_Price'] = df['Buy_Price'].astype(float)
     df['Ema_Fast'] = df['Ema_Fast'].astype(int)
@@ -1142,6 +1144,65 @@ def add_signal_log(connection, date: datetime, signal: str, signal_message: str,
     with connection:
         connection.execute(sql_add_signal_log, (date_formatted, signal, signal_message, symbol, notes))
 
+
+# Locked_Values
+sql_create_locked_values_table = """
+    CREATE TABLE IF NOT EXISTS Locked_Values (
+        Id INTEGER PRIMARY KEY AUTOINCREMENT,
+        Position_Id INTEGER NOT NULL,
+        Buy_Order_Id TEXT NOT NULL,
+        Locked_Amount REAL NOT NULL,
+        Locked_At DATETIME DEFAULT CURRENT_TIMESTAMP,
+        Released BOOLEAN DEFAULT 0,
+        Released_At DATETIME DEFAULT NULL,
+        FOREIGN KEY (Position_Id) REFERENCES Positions(Id)
+);
+"""
+# Function to lock a value for a specific position
+def lock_value(connection, position_id, buy_order_id, amount):
+    with connection:
+        connection.execute("INSERT INTO Locked_Values (Position_Id, Buy_Order_Id, Locked_Amount) VALUES (?, ?, ?)", (position_id, buy_order_id, amount))
+    
+
+# Function to release a value when the position is fully closed
+def release_value(connection, position_id):
+    sql = "UPDATE Locked_Values SET Released_At = CURRENT_TIMESTAMP, Released = 1 WHERE Position_Id = ?"
+    with connection:
+        connection.execute(sql, (position_id,))
+
+
+def get_total_locked_values(connection):
+    sql = """
+        SELECT SUM(Locked_Amount) AS Total_Locked
+        FROM Locked_Values
+        WHERE Released = 0;
+    """
+ 
+    df = pd.read_sql(sql, connection)
+    if df.empty:
+        result = float(0)
+    else:
+        result = float(df.iloc[0, 0])
+    return result
+
+def get_all_locked_values(connection):
+    sql = """
+        WITH cte AS (
+            SELECT po.Bot, po.Symbol, lv.Locked_Amount, lv.Locked_At
+            FROM Locked_Values lv
+            JOIN Positions po ON po.Id = lv.Position_Id
+            WHERE Released = 0
+            ORDER BY Bot, Symbol
+            )
+        SELECT *
+        FROM cte
+        UNION ALL
+        SELECT 'Total', NULL, SUM(Locked_Amount), NULL
+        FROM cte;
+    """
+
+    return pd.read_sql(sql, connection)
+        
 # PRAGMA
 sql_get_pragma_user_version = """
     PRAGMA user_version;
@@ -1198,6 +1259,8 @@ def create_tables(connection):
         connection.execute(sql_create_balances_table)
         # signals log
         connection.execute(sql_create_signals_log_table)
+        # locked values
+        connection.execute(sql_create_locked_values_table)
 
         # update version on db
         # commented because the db user version must be in the end of database script to make sure everything was ok with the script
