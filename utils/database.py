@@ -1161,7 +1161,7 @@ sql_create_locked_values_table = """
 # Function to lock a value for a specific position
 def lock_value(connection, position_id, buy_order_id, amount):
     with connection:
-        connection.execute("INSERT INTO Locked_Values (Position_Id, Buy_Order_Id, Locked_Amount) VALUES (?, ?, ?)", (position_id, buy_order_id, amount))
+        connection.execute("INSERT INTO Locked_Values (Position_Id, Buy_Order_Id, Locked_Amount) VALUES (?, ?, ?)", (str(position_id), buy_order_id, amount))
     
 
 # Function to release a value when the position is fully closed
