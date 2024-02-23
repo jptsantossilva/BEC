@@ -1168,7 +1168,7 @@ def lock_value(connection, position_id, buy_order_id, amount):
 def release_value(connection, position_id):
     sql = "UPDATE Locked_Values SET Released_At = CURRENT_TIMESTAMP, Released = 1 WHERE Position_Id = ?"
     with connection:
-        connection.execute(sql, (position_id,))
+        connection.execute(sql, (str(position_id),))
 
 
 def get_total_locked_values(connection):
