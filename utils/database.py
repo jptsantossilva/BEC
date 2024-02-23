@@ -267,9 +267,11 @@ sql_get_orders_by_bot_side_year_month = """
         ob.Date as Buy_Date,
         ob.Price as Buy_Price,
         ob.Qty as Buy_Qty,
+        (ob.Qty*ob.Price) Buy_Position_Value,
         os.Date as Sell_Date,
         os.Price as Sell_Price,
         os.Qty as Sell_Qty,
+        (os.Qty*os.Price) Sell_Position_Value,
         os.Ema_Fast,
         os.Ema_Slow,
         os.Exit_Reason    
@@ -285,7 +287,7 @@ def get_orders_by_bot_side_year_month(connection, bot: str, side: str, year: str
     month = month.zfill(2)
 
     if year == None:
-        df = pd.DataFrame(columns=['Bot', 'Symbol', 'Date', 'Qty', 'PnL_Perc', 'PnL_Value', 'Ema_Fast','Ema_Slow','Exit_Reason'])
+        df = pd.DataFrame(columns=['Bot', 'Symbol', 'PnL_Perc', 'PnL_Value','Buy_Date', 'Buy_Price', 'Buy_Qty', 'Position_Value', 'Sell_Date','Sell_Price','Sell_Qty','Sell_Position_Value','Ema_Fast','Ema_Slow','Exit_Reason'])
         return df
     
     if month == '13':

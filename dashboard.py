@@ -1034,12 +1034,19 @@ def calculate_realized_pnl(year: str, month: str):
     # set decimal precision 
     df_month_1d['Buy_Price'] = df_month_1d['Buy_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x) if x is not None else 'None')
     df_month_1d['Sell_Price'] = df_month_1d['Sell_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x) if x is not None else 'None')
+    df_month_1d['Buy_Position_Value'] = df_month_1d['Buy_Position_Value'].apply(lambda x:f'{{:.{8}f}}'.format(x) if x is not None else 'None')
+    df_month_1d['Sell_Position_Value'] = df_month_1d['Sell_Position_Value'].apply(lambda x:f'{{:.{8}f}}'.format(x) if x is not None else 'None')
     
     df_month_4h['Buy_Price'] = df_month_4h['Buy_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x) if x is not None else 'None')
     df_month_4h['Sell_Price'] = df_month_4h['Sell_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x) if x is not None else 'None')
+    df_month_4h['Buy_Position_Value'] = df_month_4h['Buy_Position_Value'].apply(lambda x:f'{{:.{8}f}}'.format(x) if x is not None else 'None')
+    df_month_4h['Sell_Position_Value'] = df_month_4h['Sell_Position_Value'].apply(lambda x:f'{{:.{8}f}}'.format(x) if x is not None else 'None')
     
     df_month_1h['Buy_Price'] = df_month_1h['Buy_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x) if x is not None else 'None')
     df_month_1h['Sell_Price'] = df_month_1h['Sell_Price'].apply(lambda x:f'{{:.{8}f}}'.format(x) if x is not None else 'None')
+    df_month_1h['Buy_Position_Value'] = df_month_1h['Buy_Position_Value'].apply(lambda x:f'{{:.{8}f}}'.format(x) if x is not None else 'None')
+    df_month_1h['Sell_Position_Value'] = df_month_1h['Sell_Position_Value'].apply(lambda x:f'{{:.{8}f}}'.format(x) if x is not None else 'None')
+    
     # print('')              
     # print(df_month_1d)
     # print(df_month_4h)
