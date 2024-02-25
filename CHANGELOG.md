@@ -2,6 +2,17 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2024-02-23]
+ 
+### Added
+- Dashboard - Settings - Locked Values - When enabled, means that any amount obtained from partially selling a position will be temporarily locked and cannot be used to purchase another position until the entire position is sold. When disabled, partial sales can be freely reinvested into new positions. It's important to note that when disabled it may increase the risk of larger position amounts, as funds from partial sales may be immediately reinvested without reservation.
+- Dashboard - Unrealized PnL - Position_Value column added. We had Qty and Buy_Price, why not multiply both :)
+- Dashboard - Realized PnL - Buy_Position_Value and Sell_Position_Value columns added. We had Qty and Price, why not multiply both :)
+### Changed
+-  
+### Fixed
+- Dashboard - Realized PnL - PnL_Perc and PnL_Value were not correctly ordered when user clicked on column header   
+
 ## [2024-02-17]
  
 ### Added

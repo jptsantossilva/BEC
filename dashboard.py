@@ -760,8 +760,8 @@ def settings():
                                         on_change=stop_loss_change,
                                         help="""Set stop loss to automatically sell if its price falls below a certain percentage.
                                             \nExamples:
-                                            \n stop_loss = 0 => will not use stop loss. The stop loss used will be triggered when slow_ema > fast_ema
-                                            \n stop_loss = 10 => 10%   
+                                            \n stop_loss = 0 => will not use stop loss.
+                                            \n stop_loss = 10 => 10%.   
                                         """)
 
             if "trade_top_performance" not in st.session_state:
@@ -852,17 +852,24 @@ def settings():
         st.write("**Locked Values**")
         container_lv = st.container(border=True)
         with container_lv:
+            
             if "lock_values" not in st.session_state:
                 st.session_state.lock_values = config.get_setting("lock_values")
+            
             def lock_values_change():
+                if not st.session_state.lock_values:
+                    database.release_all_values(database.conn)
                 config.set_setting("lock_values", st.session_state.lock_values)
+
             lock_values = st.checkbox(label='Lock Values from partial sales',
                                     key="lock_values",
                                     on_change=lock_values_change,
-                                    help="""When enabled, means that any amount obtained from partially selling a position will be temporarily locked and cannot be used to purchase another position until the entire position is sold. 
-                                        \nWhen disabled, partial sales can be freely reinvested into new positions. It's important to note that this may increase the risk of larger position amounts, as funds from partial sales may be immediately reinvested without reservation.
+                                    help="""When **enabled**, means that any amount obtained from partially selling a position will be temporarily locked and cannot be used to purchase another position until the entire position is sold. 
+                                        \nWhen **disabled**, partial sales can be freely reinvested into new positions. It's important to note that this may increase the risk of larger position amounts, as funds from partial sales may be immediately reinvested without reservation.
+                                        \nNote that disabling this option will **release all** locked values.
                                     """)
-            
+            if st.session_state.lock_values:
+                st.caption("Note that disabling this option will **release all** locked values.")
             
             expander_lv = st.expander(label=f"Current Locked Values", expanded=False)
             with expander_lv:

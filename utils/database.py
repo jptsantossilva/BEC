@@ -1172,6 +1172,12 @@ def release_value(connection, position_id):
     with connection:
         connection.execute(sql, (str(position_id),))
 
+# Function to release all locked values
+def release_all_values(connection):
+    sql = "UPDATE Locked_Values SET Released_At = CURRENT_TIMESTAMP, Released = 1 WHERE Released = 0"
+    with connection:
+        connection.execute(sql)
+
 
 def get_total_locked_values(connection):
     sql = """
@@ -1199,7 +1205,7 @@ def get_all_locked_values(connection):
         SELECT *
         FROM cte
         UNION ALL
-        SELECT 'Total', NULL, SUM(Locked_Amount), NULL
+        SELECT 'Total', '', COALESCE(SUM(Locked_Amount), 0), ''
         FROM cte;
     """
 
