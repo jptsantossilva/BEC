@@ -117,7 +117,12 @@ def calc_stake_amount(symbol, bot):
             return 0
     
         tradable_balance = balance*config.tradable_balance_ratio 
-        
+        # remove locked values from the balance
+        lock_values = config.get_setting("lock_values")
+        if lock_values:
+            locked_values = database.get_total_locked_values(database.conn)
+            tradable_balance = tradable_balance-locked_values
+            
         stake_amount = tradable_balance/(config.max_number_of_open_positions-num_open_positions)
         
         if symbol == "BTC":
@@ -158,14 +163,7 @@ def create_buy_order(symbol: str, bot: str, fast_ema: int = 0, slow_ema: int = 0
         else:
             # convert full symbol_trade_against balance to symbol_trade_against
             try:
-                balance = float(client.get_asset_balance(asset = symbol_trade_against)['free'])
-                
-                # remove locked values from the balance
-                lock_values = config.get_setting("lock_values")
-                if lock_values:
-                    locked_values = database.get_total_locked_values(database.conn)
-                    balance = balance-locked_values
-                
+                balance = float(client.get_asset_balance(asset = symbol_trade_against)['free'])                
                 tradable_balance = balance*config.tradable_balance_ratio      
                 position_size = tradable_balance
             except Exception as e:

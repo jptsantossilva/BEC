@@ -218,6 +218,10 @@ def trade_against_auto_switch():
                                               reason=f"{sell_message}"
                                               )  
 
+            
+            # release locked values from the balance
+            database.release_all_values(database.conn)
+            
             # convert all USDT to BTC
             binance.create_buy_order(symbol=btc_pair, bot=btc_timeframe, convert_all_balance=True)
                 
@@ -235,6 +239,9 @@ def trade_against_auto_switch():
                                                 bot=tf,
                                                 reason=f"{sell_message}"
                                                 )  
+                    
+            # release locked values from the balance
+            database.release_all_values(database.conn)
 
             # convert all BTC to USDT
             binance.create_sell_order(symbol=btc_pair, 
