@@ -5,11 +5,11 @@ All notable changes to this project will be documented in this file.
 ## [2024-03-02]
  
 ### Added
-- Dashboard - Settings - Locked Values - Was not locking values when enabled.
+- 
 ### Changed
 -  
 ### Fixed
-- 
+- Dashboard - Settings - Locked Values - Was not locking values when enabled.
 
 ## [2024-02-23]
  
