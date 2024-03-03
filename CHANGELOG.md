@@ -2,6 +2,15 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2024-03-03]
+ 
+### Added
+- 
+### Changed
+-  
+### Fixed
+- General - Fix for the error: BUY create_order - TypeError(float() argument must be a string or a real number, not NoneType)
+
 ## [2024-03-02]
  
 ### Added

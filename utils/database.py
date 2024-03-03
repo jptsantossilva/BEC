@@ -1181,7 +1181,7 @@ def release_all_values(connection):
 
 def get_total_locked_values(connection):
     sql = """
-        SELECT SUM(Locked_Amount) AS Total_Locked
+        SELECT COALESCE(SUM(Locked_Amount), 0) AS Total_Locked
         FROM Locked_Values
         WHERE Released = 0;
     """
