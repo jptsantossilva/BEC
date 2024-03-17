@@ -634,18 +634,32 @@ def backtesting_results():
             trades_total = trades_below_0 + trades_0_10 + trades_10_20 + trades_20_30 + trades_30_40 + trades_40_50 + trades_50_60 + trades_60_70 + trades_70_80 + trades_80_90 + trades_90_100 + trades_above_100
 
             round_num = 2
-            trades_below_0_perc = round(trades_below_0/trades_total,round_num)*100
-            trades_above_100_perc = round(trades_above_100/trades_total,round_num)*100
-            trades_0_10_perc = round(trades_0_10/trades_total,round_num)*100
-            trades_10_20_perc = round(trades_10_20/trades_total,round_num)*100
-            trades_20_30_perc = round(trades_20_30/trades_total,round_num)*100
-            trades_30_40_perc = round(trades_30_40/trades_total,round_num)*100
-            trades_40_50_perc = round(trades_40_50/trades_total,round_num)*100
-            trades_50_60_perc = round(trades_50_60/trades_total,round_num)*100
-            trades_60_70_perc = round(trades_60_70/trades_total,round_num)*100
-            trades_70_80_perc = round(trades_70_80/trades_total,round_num)*100
-            trades_80_90_perc = round(trades_80_90/trades_total,round_num)*100
-            trades_90_100_perc = round(trades_90_100/trades_total,round_num)*100
+            if trades_total != 0:
+                trades_below_0_perc = round(trades_below_0/trades_total,round_num)*100
+                trades_above_100_perc = round(trades_above_100/trades_total,round_num)*100
+                trades_0_10_perc = round(trades_0_10/trades_total,round_num)*100
+                trades_10_20_perc = round(trades_10_20/trades_total,round_num)*100
+                trades_20_30_perc = round(trades_20_30/trades_total,round_num)*100
+                trades_30_40_perc = round(trades_30_40/trades_total,round_num)*100
+                trades_40_50_perc = round(trades_40_50/trades_total,round_num)*100
+                trades_50_60_perc = round(trades_50_60/trades_total,round_num)*100
+                trades_60_70_perc = round(trades_60_70/trades_total,round_num)*100
+                trades_70_80_perc = round(trades_70_80/trades_total,round_num)*100
+                trades_80_90_perc = round(trades_80_90/trades_total,round_num)*100
+                trades_90_100_perc = round(trades_90_100/trades_total,round_num)*100
+            else:
+                trades_below_0_perc = 0
+                trades_above_100_perc = 0
+                trades_0_10_perc = 0
+                trades_10_20_perc = 0
+                trades_20_30_perc = 0
+                trades_30_40_perc = 0
+                trades_40_50_perc = 0
+                trades_50_60_perc = 0
+                trades_60_70_perc = 0
+                trades_70_80_perc = 0
+                trades_80_90_perc = 0
+                trades_90_100_perc = 0
             
             trades_by_Return_perc = {
                 'Category': ['< 0%',  '0-10%', '10-20%', '20-30%', '30-40%', '40-50%', '50-60%', '60-70%', '70-80%', '80-90%', '90-100%', '> 100%'],
