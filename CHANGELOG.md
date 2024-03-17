@@ -2,7 +2,7 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
-## [2024-03-03]
+## [2024-03-17]
  
 ### Added
 - Dashboard - Settings - Added 2 more take profit levels. TP3 and TP4.
