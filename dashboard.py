@@ -697,7 +697,10 @@ def backtesting_results():
             st.altair_chart(chart_tbrp, use_container_width=True)
 
             # Display the results in a table
-            st.dataframe(df_tbrp,height=(len(df_tbrp) + 1) * 35 + 3)
+            st.dataframe(
+                df_tbrp,
+                hide_index=True,
+                height=(len(df_tbrp) + 1) * 35 + 3)
             
             
 
