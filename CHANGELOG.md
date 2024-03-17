@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 ## [2024-03-03]
  
 ### Added
+- Dashboard - Settings - Added 2 more take profit levels. TP3 and TP4.
+- Dashboard - Backtesting Results - Backtesting Trades - Trades added to show the return percentage by levels for every backtesting trade. This can be usefull to decide the values to insert on the Take Profit levels.  
+- Dashboard - Settings - Bot Prefix - When there are multiple instances of BEC running in the same server, the prefix is useful to distinguish which BEC the telegram message belongs to.
+- Dashboard - Settings - Max Number Open Positions - Displays a caption that gives usefull information regarding the calculation on the position value for the next position.
+- Dashboard - Locked Values - Added the option to release a single or multiple locked values.  
+### Changed
+- Dashboard - Unrealized PnL - Shows ocupied and Max Number Open Positions on The Unrealized PnL Total grid.  
+- Trading - When selling a position, partial or full, if the value is below minimal required by the exchange it will throw a custom message instead of a error code message.
+### Fixed
+- Dashboard - Realized PnL - Exit reason column size adjusted to show full text
+- BEC Update - Avoid removing backtesting html and csv files when updating BEC to newer versions 
+
+## [2024-03-03]
+ 
+### Added
 - 
 ### Changed
 -  
