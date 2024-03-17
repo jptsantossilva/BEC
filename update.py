@@ -102,10 +102,11 @@ def download_files_from_github():
         for item in os.listdir(extracted_folder):
             item_path = os.path.join(extracted_folder, item)
             destination_path = os.path.join(current_folder, item)
-            if os.path.isfile(item_path):
-                shutil.move(item_path, destination_path)
-            elif os.path.isdir(item_path):
-                shutil.move(item_path, destination_path)
+            if item != "static":  # Skip the "static" folder
+                if os.path.isfile(item_path):
+                    shutil.move(item_path, destination_path)
+                elif os.path.isdir(item_path):
+                    shutil.move(item_path, destination_path)
 
         # Clean up: remove the downloaded zip file and the extracted folder
         os.remove(zip_file_path)
