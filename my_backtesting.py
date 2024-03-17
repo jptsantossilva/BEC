@@ -411,6 +411,40 @@ def run_backtest(symbol, timeframe, strategy, optimize):
                                     strategy_Id=strategy_name
                                     )
     
+    # trades
+    df_trades = pd.DataFrame(stats._trades)
+    # remove Size column
+    df_trades = df_trades.drop(columns=['Size'])
+
+    # Insert the new columns at the beginning of the DataFrame
+    df_trades.insert(0, "Symbol", symbol)
+    df_trades.insert(1, "Time_Frame", timeframe)
+    df_trades.insert(2, "Strategy_Id", strategy_name)
+
+    # convert data type to string
+    df_trades['Duration'] = df_trades['Duration'].astype(str)
+
+    df_trades['ReturnPct'] = df_trades['ReturnPct']*100
+    
+    # Save trades to database
+    # df_trades.to_sql('Backtesting_Trades', database.conn, index=False, if_exists='append')
+    for index, row in df_trades.iterrows():
+        database.add_backtesting_trade(
+            connection=database.conn,
+            symbol=row['Symbol'],
+            timeframe=row['Time_Frame'],
+            strategy_id=row['Strategy_Id'],
+            entry_bar=row['EntryBar'],
+            exit_bar=row['ExitBar'],
+            entry_price=row['EntryPrice'],
+            exit_price=row['ExitPrice'],
+            pnl=row['PnL'],
+            return_pct=row['ReturnPct'],
+            entry_time=row['EntryTime'],
+            exit_time=row['ExitTime'],
+            duration=row['Duration']
+        )
+    
 def get_backtesting_results(strategy_id, symbol, time_frame):
     
     # get best ema

@@ -443,6 +443,12 @@ def run_backtest(symbol, timeframe, strategy, start_date):
     df_trades = pd.DataFrame(stats._trades)
     # remove Size column
     df_trades = df_trades.drop(columns=['Size'])
+
+    # Insert the new columns at the beginning of the DataFrame
+    df_trades.insert(0, "Symbol", symbol)
+    df_trades.insert(1, "Time_Frame", time_frame)
+    df_trades.insert(2, "Strategy_Id", strategy)
+
     print(df_trades)
 
     filename=f"{strategy} - {time_frame} - {symbol}"

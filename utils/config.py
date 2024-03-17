@@ -35,6 +35,7 @@ btc_strategy_name = None
 strategy_name = None
 trade_against_switch = None
 run_mode = None
+bot_prefix = None
 
 n_decimals = None
 
@@ -81,12 +82,32 @@ def get_setting(setting_name):
                 setting_value = 5
                 config[setting_name] = setting_value
 
+            if setting_name in ["take_profit_3"]:
+                setting_value = 0
+                config[setting_name] = setting_value 
+
+            if setting_name in ["take_profit_3_amount"]:
+                setting_value = 5
+                config[setting_name] = setting_value
+
+            if setting_name in ["take_profit_4"]:
+                setting_value = 0
+                config[setting_name] = setting_value 
+
+            if setting_name in ["take_profit_4_amount"]:
+                setting_value = 5
+                config[setting_name] = setting_value
+
             if setting_name in ["run_mode"]:
                 setting_value = "prod"
                 config[setting_name] = setting_value 
 
             if setting_name in ["lock_values"]:
                 setting_value = True
+                config[setting_name] = setting_value  
+
+            if setting_name in ["bot_prefix"]:
+                setting_value = "BEC"
                 config[setting_name] = setting_value  
 
             # write config file
@@ -183,8 +204,10 @@ def get_all_settings():
     global btc_strategy, btc_strategy_name, btc_strategy_backtest_optimize
     global trade_against_switch
     global strategy_id, strategy_name, strategy, strategy_backtest_optimize
-    global take_profit_1_pnl_perc, take_profit_1_amount_perc, take_profit_2_pnl_perc, take_profit_2_amount_perc
+    global take_profit_1_pnl_perc, take_profit_1_amount_perc, take_profit_2_pnl_perc, take_profit_2_amount_perc, take_profit_3_pnl_perc, take_profit_3_amount_perc, take_profit_4_pnl_perc, take_profit_4_amount_perc
     global run_mode
+    global lock_values
+    global bot_prefix
 
     # get settings from config file
     stake_amount_type            = get_setting("stake_amount_type")
@@ -204,8 +227,13 @@ def get_all_settings():
     take_profit_1_amount_perc    = get_setting("take_profit_1_amount")
     take_profit_2_pnl_perc       = get_setting("take_profit_2")
     take_profit_2_amount_perc    = get_setting("take_profit_2_amount")
+    take_profit_3_pnl_perc       = get_setting("take_profit_3")
+    take_profit_3_amount_perc    = get_setting("take_profit_3_amount")
+    take_profit_4_pnl_perc       = get_setting("take_profit_4")
+    take_profit_4_amount_perc    = get_setting("take_profit_4_amount")
     run_mode                     = get_setting("run_mode")
     lock_values                  = get_setting("lock_values")
+    bot_prefix                   = get_setting("bot_prefix")
 
     # Check if connection is already established
     if database.is_connection_open(database.conn):

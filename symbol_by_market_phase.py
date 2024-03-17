@@ -260,7 +260,7 @@ def main(time_frame):
     msg = "Start"
     msg = telegram.telegram_prefix_market_phases_sl + msg
     print(msg)
-    telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_START, msg)
+    telegram.send_telegram_message(telegram.telegram_token_main, "", msg)
 
     # Log file to store error messages
     log_filename = "symbol_by_market_phase.log"
@@ -403,7 +403,7 @@ def main(time_frame):
     msg = "End"
     msg = telegram.telegram_prefix_market_phases_sl + msg
     print(msg)
-    telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_STOP, msg)
+    telegram.send_telegram_message(telegram.telegram_token_main, "", msg)
 
 def scheduled_run(time_frame, trade_against):
     main(time_frame=time_frame, trade_against=trade_against)

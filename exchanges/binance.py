@@ -65,8 +65,8 @@ def adjust_size(symbol, amount):
     order_quantity = round_step_size(amount, stepSize)
     return order_quantity
 
-def get_symbol_balance(symbol, bot):
-    telegram_token = telegram.get_telegram_token(bot)
+def get_symbol_balance(symbol):
+    telegram_token = telegram.get_telegram_token()
     try:
         qty = float(client.get_asset_balance(asset=symbol)['free'])  
         return qty
@@ -92,7 +92,7 @@ def separate_symbol_and_trade_against(symbol):
     return symbol_only, symbol_stable
 
 def calc_stake_amount(symbol, bot):
-    telegram_token = telegram.get_telegram_token(bot)
+    telegram_token = telegram.get_telegram_token()
 
     if config.stake_amount_type == "unlimited":
         num_open_positions = database.get_num_open_positions(database.conn)
@@ -152,7 +152,7 @@ def create_buy_order(symbol: str, bot: str, fast_ema: int = 0, slow_ema: int = 0
         print("Exiting the function because run_mode is 'test'.")
         return
     
-    telegram_token = telegram.get_telegram_token(bot)
+    telegram_token = telegram.get_telegram_token()
 
     try:
         # separate symbol from stable. example symbol=BTCUSDT symbol_only=BTC symbol_stable=USDT
@@ -282,12 +282,12 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percenta
         print("Exiting the function because run_mode is 'test'.")
         return
     
-    telegram_token = telegram.get_telegram_token(bot)
+    telegram_token = telegram.get_telegram_token()
 
     try:
         symbol_only, symbol_trade_against = separate_symbol_and_trade_against(symbol)
         # get balance
-        balance_qty = get_symbol_balance(symbol=symbol_only, bot=bot)  
+        balance_qty = get_symbol_balance(symbol=symbol_only)  
         
         # verify sell quantity
         if convert_all_balance:
@@ -316,6 +316,9 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percenta
                                         type=client.ORDER_TYPE_MARKET,
                                         quantity = sell_qty
                                         )
+            
+            result = True
+            msg = "Sold Successfully"
         
             sell_order_id = str(order['orderId'])
 
@@ -356,11 +359,15 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percenta
                         new_qty = previous_qty - order_qty
                         database.set_position_qty(database.conn, bot=bot, symbol=symbol, qty=new_qty)
 
-                        # update take profit to inform that we already took profit 1 or 2
+                        # update take profit to inform that we already took profit 1, 2, 3 or 4
                         if take_profit_num == 1:
                             database.set_position_take_profit_1(database.conn, bot=bot, symbol=symbol, take_profit_1=1)
                         elif take_profit_num == 2:
                             database.set_position_take_profit_2(database.conn, bot=bot, symbol=symbol, take_profit_2=1)
+                        elif take_profit_num == 3:
+                            database.set_position_take_profit_3(database.conn, bot=bot, symbol=symbol, take_profit_3=1)
+                        elif take_profit_num == 4:
+                            database.set_position_take_profit_4(database.conn, bot=bot, symbol=symbol, take_profit_4=1)
                         
                         # lock values from parcial sales amounts
                         lock_values = config.get_setting("lock_values")
@@ -427,19 +434,31 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percenta
             database.set_position_sell(connection=database.conn,
                                        bot=bot, 
                                        symbol=symbol)
+            result = False
+            msg = "Unable to sell position. The position size in your balance is currently zero. No sell order was placed, and the position was removed from the unrealized PnL table."
         
     except BinanceAPIException as e:
-        msg = "create_sell_order - "+repr(e)
-        print(msg)
+        result = False
+        # customize error message based on the exception
+        if e.code == -1013:
+            error_description = "Sorry, your sell order cannot be placed because the total value of the trade (notional) is too low. Please adjust the quantity or price to meet the minimum notional value requirement set by the exchange."
+            msg = f"create_sell_order - {bot} - {symbol} - Sell_Qty:{sell_qty} - {error_description}"
+        else:
+            msg = f"create_sell_order - {bot} - {symbol} - {repr(e)}"
+        # print(msg)
         telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
     except BinanceOrderException as e:
-        msg = "create_sell_order - "+repr(e)
-        print(msg)
+        result = False
+        msg = f"create_sell_order - {bot} - {symbol} - {repr(e)}"
+        # print(msg)
         telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
     except Exception as e:
-        msg = "create_sell_order - "+repr(e)
-        print(msg)
+        result = False
+        msg = f"create_sell_order - {bot} - {symbol} - {repr(e)}"
+        # print(msg)
         telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
+
+    return result, msg
 
 def get_price_close_by_symbol_and_date(symbol: str, date: date):
     # Convert date to timestamp

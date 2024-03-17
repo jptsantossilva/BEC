@@ -14,7 +14,12 @@ logging.basicConfig(filename=log_filename, level=logging.INFO,
 try:
     with open("config.yaml", "r") as file:
         config = yaml.safe_load(file)
-    trade_against = config["trade_against"]
+    
+    trade_against = config.get("trade_against")
+    
+    # Check if bot_prefix exists in config, otherwise assign default value
+    DEFAULT_BOT_PREFIX = "BEC"
+    bot_prefix = config.get("bot_prefix", DEFAULT_BOT_PREFIX)
 
 except FileNotFoundError as e:
     msg = "Error: The file config.yaml could not be found."
@@ -59,14 +64,14 @@ telegram_prefix_signals_ml = "SGN\n"
 telegram_prefix_errors_sl = "ERR - "
 telegram_prefix_errors_ml = "ERR\n"
 
-telegram_prefix_bot_1d_sl = "B1D - "
-telegram_prefix_bot_1d_ml = "B1D\n"
+telegram_prefix_bot_1d_sl = "1D "
+telegram_prefix_bot_1d_ml = "1D\n"
 
-telegram_prefix_bot_4h_sl = "B4H - "
-telegram_prefix_bot_4h_ml = "B4H\n"
+telegram_prefix_bot_4h_sl = "4h "
+telegram_prefix_bot_4h_ml = "4h\n"
 
-telegram_prefix_bot_1h_sl = "B1H - "
-telegram_prefix_bot_1h_ml = "B1H\n"
+telegram_prefix_bot_1h_sl = "1h "
+telegram_prefix_bot_1h_ml = "1h\n"
 
 def read_env_var():
     # environment variables
@@ -78,13 +83,11 @@ def read_env_var():
     global telegram_token_signals
 
     try:
-        add_at_the_end = "_btc" if trade_against == "BTC" else ""
-
         telegram_chat_id = os.environ.get('telegram_chat_id')
-        telegram_token_closed_position = os.environ.get('telegram_token_closed_positions'+add_at_the_end) 
-        telegram_token_errors = os.environ.get('telegram_token_errors'+add_at_the_end)
-        telegram_token_main = os.environ.get('telegram_token_main'+add_at_the_end)
-        telegram_token_signals = os.environ.get('telegram_token_signals'+add_at_the_end)
+        telegram_token_closed_position = os.environ.get('telegram_token_closed_positions') 
+        telegram_token_errors = os.environ.get('telegram_token_errors')
+        telegram_token_main = os.environ.get('telegram_token_main')
+        telegram_token_signals = os.environ.get('telegram_token_signals')
 
     except KeyError as e: 
         msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
@@ -105,19 +108,21 @@ def remove_chars_exceptions(string):
 
     return string
 
-def get_telegram_token(bot) -> str:
+def get_telegram_token() -> str:
     telegram_token = telegram_token_main
     return telegram_token
 
 def get_telegram_prefix(bot, multi_line=False):
     if bot == "1h":
-        return telegram_prefix_bot_1h_ml if multi_line else telegram_prefix_bot_1h_sl
+        result = telegram_prefix_bot_1h_ml if multi_line else telegram_prefix_bot_1h_sl
     elif bot == "4h":
-        return telegram_prefix_bot_4h_ml if multi_line else telegram_prefix_bot_4h_sl
+        result = telegram_prefix_bot_4h_ml if multi_line else telegram_prefix_bot_4h_sl
     elif bot == "1d":
-        return telegram_prefix_bot_1d_ml if multi_line else telegram_prefix_bot_1d_sl
+        result = telegram_prefix_bot_1d_ml if multi_line else telegram_prefix_bot_1d_sl
     else:
         raise ValueError(f"Invalid bot type: {bot}")
+    
+    return result
 
 def send_telegram_message(telegram_token, emoji, msg):
 
@@ -125,12 +130,12 @@ def send_telegram_message(telegram_token, emoji, msg):
 
     max_limit = 4096
     if emoji:
-        additional_characters = EMOJI_WARNING+" <pre> </pre>Part [10/99]"
+        additional_characters = f"{EMOJI_WARNING} {bot_prefix} <pre> </pre>Part [10/99]"
     else:
-        additional_characters = "<pre> </pre>Part [10/99]"
+        additional_characters = f"{bot_prefix} <pre> </pre>Part [10/99]"
 
     if emoji:
-        msg = emoji+" "+msg
+        msg = emoji+" - "+msg
 
     num_additional_characters = len(additional_characters)
     max_limit = 4096 - num_additional_characters 
@@ -140,9 +145,9 @@ def send_telegram_message(telegram_token, emoji, msg):
         message_parts = [msg[i:i+max_limit] for i in range(0, len(msg), max_limit)]
         n_parts = len(message_parts)
         for i, part in enumerate(message_parts):
-            print(f'Part [{i+1}/{n_parts}]\n{part}')
+            # print(f"Part [{i+1}/{n_parts}]\n{part}")
         
-            lmsg = "<pre>Part ["+str(i+1)+"/"+str(n_parts)+"]\n"+part+"</pre>"
+            lmsg = "<pre>"+bot_prefix+" - "+"Part ["+str(i+1)+"/"+str(n_parts)+"]\n"+part+"</pre>"
             
             params = {
             "chat_id": telegram_chat_id,
@@ -181,7 +186,7 @@ def send_telegram_message(telegram_token, emoji, msg):
 
         # To fix the issues with dataframes alignments, the message is sent as HTML and wraped with <pre> tag
         # Text in a <pre> element is displayed in a fixed-width font, and the text preserves both spaces and line breaks
-        lmsg = "<pre>"+msg+"</pre>"
+        lmsg = "<pre>"+bot_prefix+" - "+msg+"</pre>"
 
         params = {
         "chat_id": telegram_chat_id,
@@ -226,7 +231,8 @@ def send_telegram_alert(telegram_token, telegram_prefix, emoji, date, symbol, ti
 
     # To fix the issues with dataframes alignments, the message is sent as HTML and wraped with <pre> tag
     # Text in a <pre> element is displayed in a fixed-width font, and the text preserves both spaces and line breaks
-    lmsg = "<pre>"+lmsg+"</pre>"
+    # lmsg = "<pre>"+lmsg+"</pre>"
+    lmsg = "<pre>"+bot_prefix+" - "+lmsg+"</pre>"
 
     params = {
     "chat_id": telegram_chat_id,

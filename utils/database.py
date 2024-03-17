@@ -317,7 +317,9 @@ sql_create_positions_table = """
         Duration TEXT,
         Buy_Order_Id TEXT,
         Take_Profit_1 INTEGER NOT NULL DEFAULT 0,
-        Take_Profit_2 INTEGER NOT NULL DEFAULT 0
+        Take_Profit_2 INTEGER NOT NULL DEFAULT 0,
+        Take_Profit_3 INTEGER NOT NULL DEFAULT 0,
+        Take_Profit_4 INTEGER NOT NULL DEFAULT 0
     );
 """
 
@@ -351,7 +353,7 @@ def get_positions_by_bot_position(connection, bot: str, position: int):
     return pd.read_sql(sql_get_positions_by_bot_position, connection, params=(bot, position))
 
 sql_get_unrealized_pnl_by_bot = """
-    SELECT pos.Bot, pos.Symbol, pos.PnL_Perc, pos.PnL_Value, pos.Take_Profit_1 as TP1, pos.Take_Profit_2 as TP2, ROUND((pos.Qty/ord.Qty)*100,2) as "RPQ%", pos.Qty, pos.Buy_Price, (pos.Qty*pos.Buy_Price) Position_Value, pos.Date, pos.Duration, pos.Ema_Fast, pos.Ema_Slow
+    SELECT pos.Bot, pos.Symbol, pos.PnL_Perc, pos.PnL_Value, pos.Take_Profit_1 as TP1, pos.Take_Profit_2 as TP2, pos.Take_Profit_3 as TP3, pos.Take_Profit_4 as TP4, ROUND((pos.Qty/ord.Qty)*100,2) as "RPQ%", pos.Qty, pos.Buy_Price, (pos.Qty*pos.Buy_Price) Position_Value, pos.Date, pos.Duration, pos.Ema_Fast, pos.Ema_Slow
     FROM Positions pos
     JOIN Orders ord ON pos.Buy_Order_Id = ord.Exchange_Order_Id 
     WHERE 
@@ -566,7 +568,9 @@ sql_set_position_sell = """
         Duration = 0,        
         Buy_Order_Id = NULL,
         Take_Profit_1 = 0,
-        Take_Profit_2 = 0
+        Take_Profit_2 = 0,
+        Take_Profit_3 = 0,
+        Take_Profit_4 = 0
     WHERE
         Bot = ? 
         AND Symbol = ? ;        
@@ -613,6 +617,32 @@ sql_set_position_take_profit_2 = """
 def set_position_take_profit_2(connection, bot: str, symbol: str, take_profit_2: int):
     with connection:
         connection.execute(sql_set_position_take_profit_2, (take_profit_2, bot, symbol))
+
+sql_set_position_take_profit_3 = """
+    UPDATE Positions
+    SET 
+        Take_Profit_3 = ?
+    WHERE
+        Bot = ? 
+        AND Symbol = ? 
+        AND Position = 1;        
+"""
+def set_position_take_profit_3(connection, bot: str, symbol: str, take_profit_3: int):
+    with connection:
+        connection.execute(sql_set_position_take_profit_3, (take_profit_3, bot, symbol))
+
+sql_set_position_take_profit_4 = """
+    UPDATE Positions
+    SET 
+        Take_Profit_4 = ?
+    WHERE
+        Bot = ? 
+        AND Symbol = ? 
+        AND Position = 1;        
+"""
+def set_position_take_profit_4(connection, bot: str, symbol: str, take_profit_4: int):
+    with connection:
+        connection.execute(sql_set_position_take_profit_4, (take_profit_4, bot, symbol))
 
 sql_delete_all_positions = "DELETE FROM Positions;"
 def delete_all_positions(connection):
@@ -766,6 +796,61 @@ def delete_all_backtesting_results(connection):
     with connection:
         connection.execute(sql_delete_all_backtesting_results)
 
+# BACKTESTING_TRADES
+sql_create_backtesting_trades_table = """
+    CREATE TABLE IF NOT EXISTS "Backtesting_Trades" (
+        Id INTEGER PRIMARY KEY,
+        "Symbol"	TEXT,
+        "Time_Frame"	TEXT,
+        "Strategy_Id"	TEXT,
+        "EntryBar"	INTEGER,
+        "ExitBar"	INTEGER,
+        "EntryPrice"	REAL,
+        "ExitPrice"	REAL,
+        "PnL"	REAL,
+        "ReturnPct"	REAL,
+        "EntryTime"	TIMESTAMP,
+        "ExitTime"	TIMESTAMP,
+        "Duration"	TEXT,
+        CONSTRAINT "bt_symbol__timeframe_strategy_entrytime_exittime" UNIQUE("Symbol","Time_Frame","Strategy_Id","EntryTime","ExitTime")
+);
+"""
+
+sql_get_all_backtesting_trades = """
+    SELECT bt.Symbol, bt.Time_Frame, bt.ReturnPct, 
+    bt.Strategy_Id, st.Name as Strategy_Name, 
+    bt.EntryTime, bt.ExitTime, bt.EntryPrice, bt.ExitPrice, bt.PnL, bt.Duration  
+    FROM Backtesting_Trades AS bt
+    JOIN Strategies AS st ON bt.Strategy_Id = st.Id
+    ORDER BY bt.Symbol, st.Name;
+"""
+def get_all_backtesting_trades(connection):
+    return pd.read_sql(sql_get_all_backtesting_trades, connection)
+
+sql_add_backtesting_trade = """
+    INSERT OR REPLACE INTO Backtesting_Trades (
+        Symbol, Time_Frame, Strategy_Id, EntryBar, ExitBar, EntryPrice, ExitPrice, PnL, ReturnPct, EntryTime, ExitTime, Duration
+        ) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+"""
+
+def add_backtesting_trade(connection, symbol: str, timeframe: str, strategy_id: str, entry_bar: int, exit_bar: int, entry_price: float, exit_price: float, pnl: float, return_pct: float, entry_time: str, exit_time: str, duration: str):
+    with connection:
+        connection.execute(sql_add_backtesting_trade, (
+            str(symbol),
+            str(timeframe),
+            str(strategy_id),
+            int(entry_bar),
+            int(exit_bar),
+            float(entry_price),
+            float(exit_price),
+            float(pnl),
+            float(return_pct),
+            str(entry_time),
+            str(exit_time),
+            str(duration)
+        ))
+
 # SYMBOLS_TO_CALC
 sql_create_symbols_to_calc_table = """
     CREATE TABLE IF NOT EXISTS Symbols_To_Calc (
@@ -855,7 +940,7 @@ sql_create_symbols_by_market_phase_table = """
     );
 """
 
-sql_create_symbols_by_market_phase_Historical_table = """
+sql_create_symbols_by_market_phase_historical_table = """
     CREATE TABLE IF NOT EXISTS Symbols_By_Market_Phase_Historical (
             Id INTEGER PRIMARY KEY,
             Symbol TEXT,
@@ -1178,6 +1263,11 @@ def release_all_values(connection):
     with connection:
         connection.execute(sql)
 
+# Function to release a value when the position is fully closed
+def release_locked_value_by_id(connection, id):
+    sql = "UPDATE Locked_Values SET Released_At = CURRENT_TIMESTAMP, Released = 1 WHERE Id = ?"
+    with connection:
+        connection.execute(sql, (str(id),))
 
 def get_total_locked_values(connection):
     sql = """
@@ -1196,7 +1286,7 @@ def get_total_locked_values(connection):
 def get_all_locked_values(connection):
     sql = """
         WITH cte AS (
-            SELECT po.Bot, po.Symbol, lv.Locked_Amount, lv.Locked_At
+            SELECT lv.Id, po.Bot, po.Symbol, lv.Locked_Amount, lv.Locked_At
             FROM Locked_Values lv
             JOIN Positions po ON po.Id = lv.Position_Id
             WHERE Released = 0
@@ -1205,7 +1295,7 @@ def get_all_locked_values(connection):
         SELECT *
         FROM cte
         UNION ALL
-        SELECT 'Total', '', COALESCE(SUM(Locked_Amount), 0), ''
+        SELECT 0, 'Total', '', COALESCE(SUM(Locked_Amount), 0), ''
         FROM cte;
     """
 
@@ -1249,6 +1339,7 @@ def create_tables(connection):
         connection.execute(sql_create_positions_table)
         connection.execute(sql_create_blacklist_table)
         connection.execute(sql_create_backtesting_results_table)
+        connection.execute(sql_create_backtesting_trades_table)
         connection.execute(sql_create_strategies_table)
         # Split the SQL statements and execute them one by one
         for statement in sql_strategies_add_default_strategies.split(';'):
@@ -1257,7 +1348,7 @@ def create_tables(connection):
         
         connection.execute(sql_create_symbols_to_calc_table)
         connection.execute(sql_create_symbols_by_market_phase_table)
-        connection.execute(sql_create_symbols_by_market_phase_Historical_table)
+        connection.execute(sql_create_symbols_by_market_phase_historical_table)
         # users
         connection.execute(sql_create_users_table)
         default_admin_password = "admin"

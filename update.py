@@ -39,20 +39,33 @@ def create_backup():
 def delete_files():
     current_folder = os.getcwd()
 
-    # Get a list of all files and directories in the current folder
-    all_files = os.listdir(current_folder)
+    # Folders to exclude from deletion and their subfolders
+    folders_to_keep = ["static"]
 
-    # Files and directories to exclude from deletion
+    # Files to keep
     files_to_keep = ["config.yaml", "data.db", "update.py"]
 
-    for item in all_files:
-        item_path = os.path.join(current_folder, item)
-        if os.path.isfile(item_path) and item not in files_to_keep:
-            os.remove(item_path)
-        elif os.path.isdir(item_path) and item not in files_to_keep:
-            shutil.rmtree(item_path)
+    for root, dirs, files in os.walk(current_folder, topdown=True):
+        # Exclude specific folders and their contents from deletion
+        if os.path.basename(root) in folders_to_keep:
+            dirs[:] = [d for d in dirs if d in folders_to_keep]  # Only keep specified subfolders
+            continue
 
-    msg = "Deleted unnecessary files."
+        # Delete files not in files_to_keep
+        for file in files:
+            file_path = os.path.join(root, file)
+            if file not in files_to_keep:
+                os.remove(file_path)
+                print(f"Deleted file: {file_path}")
+
+        # Delete directories not in folders_to_keep
+        for dir_name in dirs:
+            dir_path = os.path.join(root, dir_name)
+            if dir_name not in folders_to_keep:
+                shutil.rmtree(dir_path)
+                print(f"Deleted folder: {dir_path}")
+
+    msg = "Deleted unnecessary files and folders."
     print(msg)
     return msg
 

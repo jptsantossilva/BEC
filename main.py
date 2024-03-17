@@ -244,7 +244,7 @@ def trade(time_frame, run_mode):
             if tp1_occurred == 0:
                 sell_tp_1 = current_pnl >= config.take_profit_1_pnl_perc
 
-        # if using take profit 1
+        # if using take profit 2
         sell_tp_2 = False
         if config.take_profit_2_pnl_perc > 0:
             # check if tp1 occurred already
@@ -255,6 +255,30 @@ def trade(time_frame, run_mode):
             # if not occurred
             if tp2_occurred == 0:
                 sell_tp_2 = current_pnl >= config.take_profit_2_pnl_perc
+
+        # if using take profit 3
+        sell_tp_3 = False
+        if config.take_profit_3_pnl_perc > 0:
+            # check if tp1 occurred already
+            # Filter
+            df_tp3 = df_sell.loc[df_sell['Symbol'] == symbol, 'Take_Profit_3']
+            # Extract the single value from the result (assuming only one row matches)
+            tp3_occurred = df_tp3.values[0]
+            # if not occurred
+            if tp3_occurred == 0:
+                sell_tp_3 = current_pnl >= config.take_profit_3_pnl_perc
+
+        # if using take profit 3
+        sell_tp_4 = False
+        if config.take_profit_4_pnl_perc > 0:
+            # check if tp1 occurred already
+            # Filter
+            df_tp4 = df_sell.loc[df_sell['Symbol'] == symbol, 'Take_Profit_4']
+            # Extract the single value from the result (assuming only one row matches)
+            tp4_occurred = df_tp4.values[0]
+            # if not occurred
+            if tp4_occurred == 0:
+                sell_tp_4 = current_pnl >= config.take_profit_4_pnl_perc
 
         # check sell condition for the strategy
         if config.strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
@@ -270,45 +294,74 @@ def trade(time_frame, run_mode):
                                      symbol=symbol, 
                                      curr_price=current_price)
 
-        if sell_condition or sell_stop_loss or sell_tp_1 or sell_tp_2:
+        if sell_condition or sell_stop_loss or sell_tp_1 or sell_tp_2 or sell_tp_3 or sell_tp_4:
             
             # stop loss
             if sell_stop_loss:
-                binance.create_sell_order(symbol=symbol,
-                                            bot=time_frame,
-                                            fast_ema=fast_ema,
-                                            slow_ema=slow_ema,
-                                            reason=f"Stop loss {config.stop_loss}%"
-                                            )  
+                binance.create_sell_order(
+                    symbol=symbol,
+                    bot=time_frame,
+                    fast_ema=fast_ema,
+                    slow_ema=slow_ema,
+                    reason=f"Stop loss {config.stop_loss}%"
+                )  
                 
             # sell_codition ema crossover
             elif sell_condition:
-                binance.create_sell_order(symbol=symbol,
-                                            bot=time_frame,
-                                            fast_ema=fast_ema,
-                                            slow_ema=slow_ema,
-                                            )  
+                binance.create_sell_order(
+                    symbol=symbol,
+                    bot=time_frame,
+                    fast_ema=fast_ema,
+                    slow_ema=slow_ema,
+                )  
 
             # sell take profit 1
             if sell_tp_1:
-                binance.create_sell_order(symbol=symbol,
-                                            bot=time_frame,
-                                            fast_ema=fast_ema,
-                                            slow_ema=slow_ema,
-                                            reason=f"Take-Profit Level 1 - {config.take_profit_1_pnl_perc}% PnL - {config.take_profit_1_amount_perc}% Amount",
-                                            percentage=config.take_profit_1_amount_perc,
-                                            take_profit_num=1
-                                            )  
+                binance.create_sell_order(
+                    symbol=symbol,
+                    bot=time_frame,
+                    fast_ema=fast_ema,
+                    slow_ema=slow_ema,
+                    reason=f"Take-Profit Level 1 - {config.take_profit_1_pnl_perc}% PnL - {config.take_profit_1_amount_perc}% Amount",
+                    percentage=config.take_profit_1_amount_perc,
+                    take_profit_num=1
+                )  
+            
             # sell take profit 2
             if sell_tp_2:
-                binance.create_sell_order(symbol=symbol,
-                                            bot=time_frame,
-                                            fast_ema=fast_ema,
-                                            slow_ema=slow_ema,
-                                            reason=f"Take-Profit Level 2 - {config.take_profit_2_pnl_perc}% PnL - {config.take_profit_2_amount_perc}% Amount",
-                                            percentage=config.take_profit_2_amount_perc,
-                                            take_profit_num=2
-                                            )                       
+                binance.create_sell_order(
+                    symbol=symbol,
+                    bot=time_frame,
+                    fast_ema=fast_ema,
+                    slow_ema=slow_ema,
+                    reason=f"Take-Profit Level 2 - {config.take_profit_2_pnl_perc}% PnL - {config.take_profit_2_amount_perc}% Amount",
+                    percentage=config.take_profit_2_amount_perc,
+                    take_profit_num=2
+                )  
+
+            # sell take profit 2
+            if sell_tp_3:
+                binance.create_sell_order(
+                    symbol=symbol,
+                    bot=time_frame,
+                    fast_ema=fast_ema,
+                    slow_ema=slow_ema,
+                    reason=f"Take-Profit Level 3 - {config.take_profit_3_pnl_perc}% PnL - {config.take_profit_3_amount_perc}% Amount",
+                    percentage=config.take_profit_3_amount_perc,
+                    take_profit_num=3
+                ) 
+
+            # sell take profit 2
+            if sell_tp_4:
+                binance.create_sell_order(
+                    symbol=symbol,
+                    bot=time_frame,
+                    fast_ema=fast_ema,
+                    slow_ema=slow_ema,
+                    reason=f"Take-Profit Level 4 - {config.take_profit_4_pnl_perc}% PnL - {config.take_profit_4_amount_perc}% Amount",
+                    percentage=config.take_profit_4_amount_perc,
+                    take_profit_num=4
+                )                      
         
         else:
             msg = f'{symbol} - {config.strategy_name} - Sell condition not fulfilled'
