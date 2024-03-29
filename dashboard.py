@@ -2,6 +2,7 @@ import pandas as pd
 import time
 import os
 import calendar
+from datetime import datetime
 
 import streamlit as st
 from millify import millify
@@ -61,7 +62,8 @@ def get_chart_daily_balance(asset):
             index=1,
             horizontal=True,
             label_visibility='collapsed',
-            key=f'period_selected_balances_{asset}')
+            key=f'period_selected_balances_{asset}'
+        )
 
         if period_selected_balances == 'Last 7 days':
             n_days = 7
@@ -277,30 +279,36 @@ def realized_pnl():
         # print(trades_month_1h)
 
         st.header(f"Realized PnL - Detail")
+        
         st.subheader("Bot 1d")
-        st.dataframe(trades_month_1d.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
-                     column_config = {
-                         "PnL_Perc": st.column_config.NumberColumn(format="%.2f"),
-                         "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"),
-                         "Exit_Reason": st.column_config.TextColumn(width="large")
-                         }
-                    )
+        st.dataframe(
+            trades_month_1d.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
+            column_config = {
+                "PnL_Perc": st.column_config.NumberColumn(format="%.2f"),
+                "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"),
+                "Exit_Reason": st.column_config.TextColumn(width="large")
+                }
+        )
+        
         st.subheader("Bot 4h")
-        st.dataframe(trades_month_4h.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
-                     column_config = {
-                         "PnL_Perc": st.column_config.NumberColumn(format="%.2f"),
-                         "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"),
-                         "Exit_Reason": st.column_config.TextColumn(width="large")
-                         }
-                    )
+        st.dataframe(
+            trades_month_4h.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
+            column_config = {
+                "PnL_Perc": st.column_config.NumberColumn(format="%.2f"),
+                "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"),
+                "Exit_Reason": st.column_config.TextColumn(width="large")
+                }
+        )
+        
         st.subheader("Bot 1h")
-        st.dataframe(trades_month_1h.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
-                     column_config = {
-                         "PnL_Perc": st.column_config.NumberColumn(format="%.2f"),
-                         "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"),
-                         "Exit_Reason": st.column_config.TextColumn(width="large")
-                         }
-                    )
+        st.dataframe(
+            trades_month_1h.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
+            column_config = {
+                "PnL_Perc": st.column_config.NumberColumn(format="%.2f"),
+                "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"),
+                "Exit_Reason": st.column_config.TextColumn(width="large")
+                }
+        )
 
         # print('\n----------------------------\n')
 
@@ -325,62 +333,68 @@ def unrealized_pnl():
         # print(positions_df_1h)
 
         st.header(f"Unrealized PnL - Detail")
+        
         st.subheader("Bot 1d")
-        st.dataframe(positions_df_1d.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
-                     column_config = {
-                         "PnL_Perc": st.column_config.NumberColumn(format="%.2f"),
-                         "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"),
-                         "TP1": st.column_config.CheckboxColumn(),
-                         "TP2": st.column_config.CheckboxColumn(),
-                         "TP3": st.column_config.CheckboxColumn(),
-                         "TP4": st.column_config.CheckboxColumn(),
-                         "RPQ%": st.column_config.NumberColumn(help="Remaining Position Qty %",
-                                                            #    format="%.2f",
-                                                               )
-                    }
-                )
+        st.dataframe(
+            positions_df_1d.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
+            column_config = {
+                "PnL_Perc": st.column_config.NumberColumn(format="%.2f"),
+                "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"),
+                "TP1": st.column_config.CheckboxColumn(),
+                "TP2": st.column_config.CheckboxColumn(),
+                "TP3": st.column_config.CheckboxColumn(),
+                "TP4": st.column_config.CheckboxColumn(),
+                "RPQ%": st.column_config.NumberColumn(help="Remaining Position Qty %",
+                                                #    format="%.2f",
+                                                    )
+            }
+        )
+        
         st.subheader("Bot 4h")
-        st.dataframe(positions_df_4h.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
-                     column_config = {
-                         "PnL_Perc": st.column_config.NumberColumn(
-                                                                    # "PnL %",
-                                                                    # help="The price of the product in USD",
-                                                                    # min_value=0,
-                                                                    # max_value=1000,
-                                                                    # step=1,
-                                                                    format="%.2f",
-                                                                ),
-                         "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"), 
-                         "TP1": st.column_config.CheckboxColumn(),
-                         "TP2": st.column_config.CheckboxColumn(),
-                         "TP3": st.column_config.CheckboxColumn(),
-                         "TP4": st.column_config.CheckboxColumn(),
-                         "RPQ%": st.column_config.NumberColumn(help="Remaining Position Qty %",
-                                                            #    format="%.2f",
-                                                               )
-                    }
-                )
+        st.dataframe(
+            positions_df_4h.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
+            column_config = {
+                "PnL_Perc": st.column_config.NumberColumn(
+                                                        # "PnL %",
+                                                        # help="The price of the product in USD",
+                                                        # min_value=0,
+                                                        # max_value=1000,
+                                                        # step=1,
+                                                        format="%.2f",
+                                                    ),
+                "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"), 
+                "TP1": st.column_config.CheckboxColumn(),
+                "TP2": st.column_config.CheckboxColumn(),
+                "TP3": st.column_config.CheckboxColumn(),
+                "TP4": st.column_config.CheckboxColumn(),
+                "RPQ%": st.column_config.NumberColumn(help="Remaining Position Qty %",
+                                                #    format="%.2f",
+                                                    )
+            }
+        )
+
         st.subheader("Bot 1h")
-        st.dataframe(positions_df_1h.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
-                     column_config = {
-                         "PnL_Perc": st.column_config.NumberColumn(
-                                                                    # "PnL %",
-                                                                    # help="The price of the product in USD",
-                                                                    # min_value=0,
-                                                                    # max_value=1000,
-                                                                    # step=1,
-                                                                    format="%.2f",
-                                                                ),
-                         "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"), 
-                         "TP1": st.column_config.CheckboxColumn(),
-                         "TP2": st.column_config.CheckboxColumn(),
-                         "TP3": st.column_config.CheckboxColumn(),
-                         "TP4": st.column_config.CheckboxColumn(),
-                         "RPQ%": st.column_config.NumberColumn(help="Remaining Position Qty %",
-                                                            #    format="%.2f",
-                                                               )
-                    }
-                )        
+        st.dataframe(
+            positions_df_1h.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
+            column_config = {
+                "PnL_Perc": st.column_config.NumberColumn(
+                                                        # "PnL %",
+                                                        # help="The price of the product in USD",
+                                                        # min_value=0,
+                                                        # max_value=1000,
+                                                        # step=1,
+                                                        format="%.2f",
+                                                    ),
+                "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"), 
+                "TP1": st.column_config.CheckboxColumn(),
+                "TP2": st.column_config.CheckboxColumn(),
+                "TP3": st.column_config.CheckboxColumn(),
+                "TP4": st.column_config.CheckboxColumn(),
+                "RPQ%": st.column_config.NumberColumn(help="Remaining Position Qty %",
+                                                #    format="%.2f",
+                                                    )
+            }
+        )        
 
         #----------------------
         # Force Close Position
@@ -397,12 +411,13 @@ def unrealized_pnl():
                 st.session_state.sell_bot = None
             # def sell_bot_change():
 
-            sell_bot = st.selectbox(label="Bot",
-                                    options=(bots),
-                                    # label_visibility="collapsed",
-                                    key="sell_bot",
-                                    # on_change=sell_bot_change
-                                    )
+            sell_bot = st.selectbox(
+                label="Bot",
+                options=(bots),
+                # label_visibility="collapsed",
+                key="sell_bot",
+                # on_change=sell_bot_change
+            )
             
             if st.session_state.sell_bot == "1d":
                 list_positions = positions_df_1d.Symbol.to_list()
@@ -416,25 +431,28 @@ def unrealized_pnl():
             if "sell_symbol" not in st.session_state:
                 st.session_state.sell_symbol = None
 
-            sell_symbol = st.selectbox(label="Symbol",
-                                       options=(list_positions),
-                                       # label_visibility="collapsed",
-                                       key="sell_symbol",
-                                       disabled=len(list_positions) == 0
-                                       )
+            sell_symbol = st.selectbox(
+                label="Symbol",
+                options=(list_positions),
+                # label_visibility="collapsed",
+                key="sell_symbol",
+                disabled=len(list_positions) == 0
+            )
 
             disable_sell_confirmation1 = sell_symbol == None    
                     
             # get balance
             if not disable_sell_confirmation1:
                 # sell_symbol = "INJUSDT" # test
-                sell_amount_perc = st.slider(label='Amount', 
-                                             min_value=10, 
-                                             max_value=100, 
-                                             value=25, 
-                                             step=5, 
-                                             format="%d%%", 
-                                             disabled=disable_sell_confirmation1)
+                sell_amount_perc = st.slider(
+                    label='Amount', 
+                    min_value=10, 
+                    max_value=100, 
+                    value=25, 
+                    step=5, 
+                    format="%d%%", 
+                    disabled=disable_sell_confirmation1
+                )
                 
                 # get current position balance
                 df_pos = database.get_positions_by_bot_symbol_position(database.conn, bot=sell_bot, symbol=sell_symbol, position=1)
@@ -446,10 +464,11 @@ def unrealized_pnl():
                 # balance_qty = exchange.get_symbol_balance(symbol=symbol_only, bot=sell_bot) 
                 
                 sell_amount = balance_qty*(sell_amount_perc/100)
-                st.text_input(label='Sell Amount / Position Balance', 
-                              value=f'{sell_amount} / {balance_qty}', 
-                              disabled=True
-                              )
+                st.text_input(
+                    label='Sell Amount / Position Balance', 
+                    value=f'{sell_amount} / {balance_qty}', 
+                    disabled=True
+                )
     
                 # sell_expander.write(disable_sell_confirmation1)
                 sell_reason = f"Forced Selling of {sell_amount_perc}%"
@@ -479,8 +498,7 @@ def unrealized_pnl():
                         # dasboard refresh
                         # st.rerun()
 
-                    sell_confirmation2 = sell_expander.button(label="SELL",
-                                                              on_click=sell_click)
+                    sell_confirmation2 = sell_expander.button(label="SELL", on_click=sell_click)
 
 def top_performers():
     with tab_top_perf:
@@ -536,32 +554,97 @@ def blacklist():
 
 def backtesting_results():
     with tab_backtesting_results:
-        st.subheader("Backtesting PnL")
+        st.subheader("Backtesting Results")
 
-        # search by strategy
-        search_strategy = st.multiselect(
-                    'Strategy',
-                    options=list(dict_strategies.keys()),
-                    format_func=format_func_strategies
-                    )
+        col_br1, col_br2, col_br3 = st.columns(3)
+
+        with col_br1:
+            # search by strategy
+            search_strategy = st.multiselect(
+                'Strategy',
+                options=list(dict_strategies.keys()),
+                format_func=format_func_strategies
+            )
         # st.write('You selected:', search_strategy)
 
         df_bt_results = database.get_all_backtesting_results(connection)
 
+        with col_br3:
+            pass
+
+        with col_br2:
+            list_timeframe = ["1d", "4h", "1h"]
+            search_timeframe = st.multiselect(label='Time-Frame',options=list_timeframe)
+
+        
+        
         # search by symbol
         # get distinct symbols
         list_symbols = df_bt_results['Symbol'].unique().tolist()
-        search_symbol = st.multiselect(label='Symbol',
-                                       options=list_symbols
-                                       )
-        # st.write('You selected:', search_symbol)
+            
+        col_br_symbol1, col_br_symbol2 = st.columns([0.66, 0.33])
+        with col_br_symbol2:
+            # add sapce above the checkbox to align with the symbol multiselect
+            st.write('<div style="height: 35px;"></div>', unsafe_allow_html=True)
+
+            default_symbols = None
+            if st.checkbox("Use Top Performers"):
+                df_top_perf = database.get_all_symbols_by_market_phase(connection)
+                top_perf_symbol_list = df_top_perf["Symbol"].to_list()
+                default_symbols = top_perf_symbol_list
+                
+        with col_br_symbol1:
+            search_symbol = st.multiselect(label='Symbol', default=default_symbols, options=list_symbols)
+            # st.write('You selected:', search_symbol)
+            
+        col_br4, col_br5, col_br6 = st.columns(3)
+
+        today = datetime.now()
+        four_years_ago = today.replace(year=today.year - 4)
         
+        with col_br4:
+            col_br41, col_br42 = st.columns(2)
+
+            with col_br41:
+                search_date_ini = st.date_input(
+                    label="Start date",
+                    value=four_years_ago,
+                    min_value=four_years_ago,
+                    max_value=today,
+                    format="DD.MM.YYYY",
+                )
+
+            with col_br42:
+                search_date_end = st.date_input(
+                    label="End date",
+                    value=today,
+                    min_value=search_date_ini,
+                    max_value=today,
+                    format="DD.MM.YYYY",
+                )
+
+        search_return_pct = st.checkbox("Return Percentage > 0", value=True)
+
+        # Convert 'Backtest_Start_Date' and 'Backtest_End_Date' columns to datetime objects
+        df_bt_results['Backtest_Start_Date'] = pd.to_datetime(df_bt_results['Backtest_Start_Date'])
+        df_bt_results['Backtest_End_Date'] = pd.to_datetime(df_bt_results['Backtest_End_Date'])
+
         # if (not search_strategy) and (not search_symbol):
         #     st.dataframe(df_bt_results)
         if search_strategy:
             df_bt_results = df_bt_results[df_bt_results['Strategy_Id'].isin(search_strategy)]
         if search_symbol:
             df_bt_results = df_bt_results[df_bt_results['Symbol'].isin(search_symbol)]
+        if search_timeframe:
+            df_bt_results = df_bt_results[df_bt_results['Time_Frame'].isin(search_timeframe)]
+        if search_return_pct:
+            df_bt_results = df_bt_results[df_bt_results['Return_Perc'] > 0]
+        if search_date_ini and search_date_end:
+            # Convert search_dates tuple to datetime objects
+            start_date = datetime(search_date_ini.year, search_date_ini.month, search_date_ini.day)
+            end_date = datetime(search_date_end.year, search_date_end.month, search_date_end.day)
+            # Now perform the search
+            df_bt_results = df_bt_results[(df_bt_results['Backtest_Start_Date'] >= start_date) & (df_bt_results['Backtest_End_Date'] <= end_date)]
 
         # df_bt_results = database.get_all_backtesting_results(database.conn)
 
@@ -586,39 +669,58 @@ def backtesting_results():
         df_bt_results['Backtest_HTML'] = df_bt_results.apply(lambda row: generate_backtest_link(row, "html"), axis=1)
         df_bt_results['Backtest_CSV'] = df_bt_results.apply(lambda row: generate_backtest_link(row, "csv"), axis=1)
 
-        st.dataframe(df_bt_results,
-                    column_config={
-                        "Strategy_Id": None,
-                        "Backtest_HTML": st.column_config.LinkColumn(
-                            display_text="Open",
-                            help="Backtesting results in HTML",
-                            
-                        ),
-                        "Backtest_CSV": st.column_config.LinkColumn(
-                            display_text="Open",
-                            help="Backtesting results in CSV",
-                            
-                        )
-                    })
+        st.dataframe(
+            df_bt_results,
+            column_config={
+                "Strategy_Id": None,
+                "Backtest_HTML": st.column_config.LinkColumn(
+                    display_text="Open",
+                    help="Backtesting results in HTML",
+                    
+                ),
+                "Backtest_CSV": st.column_config.LinkColumn(
+                    display_text="Open",
+                    help="Backtesting results in CSV",
+                    
+                )
+            }
+        )
         
         st.subheader("Backtesting Trades")
         get_trades = st.button("Get Trades", key="get_trades")
         if get_trades:
             df_bt_trades = database.get_all_backtesting_trades(connection)
 
+            # Convert 'Backtest_Start_Date' and 'Backtest_End_Date' columns to datetime objects
+            df_bt_trades['EntryTime'] = pd.to_datetime(df_bt_trades['EntryTime'])
+            df_bt_trades['ExitTime'] = pd.to_datetime(df_bt_trades['ExitTime'])
+
             if search_strategy:
                 df_bt_trades = df_bt_trades[df_bt_trades['Strategy_Id'].isin(search_strategy)]
             if search_symbol:
                 df_bt_trades = df_bt_trades[df_bt_trades['Symbol'].isin(search_symbol)]
+            if search_timeframe:
+                df_bt_trades = df_bt_trades[df_bt_trades['Time_Frame'].isin(search_timeframe)]
+            # if search_return_pct:
+            #     df_bt_trades = df_bt_trades[df_bt_trades['ReturnPct'] > 0]
+            if search_date_ini and search_date_end:
+                # Convert search_dates tuple to datetime objects
+                start_date = datetime(search_date_ini.year, search_date_ini.month, search_date_ini.day)
+                end_date = datetime(search_date_end.year, search_date_end.month, search_date_end.day)
+                # Now perform the search
+                df_bt_trades = df_bt_trades[(df_bt_trades['EntryTime'] >= start_date) & (df_bt_trades['ExitTime'] <= end_date)]
+
 
             st.dataframe(df_bt_trades)
 
             # Count the number of trades with ReturnPct below 0
-            trades_below_0 = df_bt_trades[df_bt_trades['ReturnPct'] < 0].shape[0]
+            trades_below_minus20 = df_bt_trades[df_bt_trades['ReturnPct'] < 20].shape[0]
 
             # Count the number of trades with ReturnPct above 100
             trades_above_100 = df_bt_trades[df_bt_trades['ReturnPct'] > 100].shape[0]
 
+            trades_minus20_minus10 = df_bt_trades[(df_bt_trades['ReturnPct'] >= -20) & (df_bt_trades['ReturnPct'] < -10)].shape[0]
+            trades_minus10_0 = df_bt_trades[(df_bt_trades['ReturnPct'] >= -10) & (df_bt_trades['ReturnPct'] < 0)].shape[0]
             trades_0_10 = df_bt_trades[(df_bt_trades['ReturnPct'] >= 0) & (df_bt_trades['ReturnPct'] < 10)].shape[0]
             trades_10_20 = df_bt_trades[(df_bt_trades['ReturnPct'] >= 10) & (df_bt_trades['ReturnPct'] < 20)].shape[0]
             trades_20_30 = df_bt_trades[(df_bt_trades['ReturnPct'] >= 20) & (df_bt_trades['ReturnPct'] < 30)].shape[0]
@@ -631,12 +733,13 @@ def backtesting_results():
             trades_90_100 = df_bt_trades[(df_bt_trades['ReturnPct'] >= 90) & (df_bt_trades['ReturnPct'] < 100)].shape[0]
 
             # Trades in % terms
-            trades_total = trades_below_0 + trades_0_10 + trades_10_20 + trades_20_30 + trades_30_40 + trades_40_50 + trades_50_60 + trades_60_70 + trades_70_80 + trades_80_90 + trades_90_100 + trades_above_100
+            trades_total = trades_below_minus20 + trades_minus20_minus10 + trades_minus10_0 + trades_0_10 + trades_10_20 + trades_20_30 + trades_30_40 + trades_40_50 + trades_50_60 + trades_60_70 + trades_70_80 + trades_80_90 + trades_90_100 + trades_above_100
 
             round_num = 2
             if trades_total != 0:
-                trades_below_0_perc = round(trades_below_0/trades_total,round_num)*100
-                trades_above_100_perc = round(trades_above_100/trades_total,round_num)*100
+                trades_below_minus20_perc = round(trades_below_minus20/trades_total,round_num)*100
+                trades_minus20_minus10_perc = round(trades_minus20_minus10/trades_total,round_num)*100
+                trades_minus10_0_perc = round(trades_minus10_0/trades_total,round_num)*100
                 trades_0_10_perc = round(trades_0_10/trades_total,round_num)*100
                 trades_10_20_perc = round(trades_10_20/trades_total,round_num)*100
                 trades_20_30_perc = round(trades_20_30/trades_total,round_num)*100
@@ -647,9 +750,11 @@ def backtesting_results():
                 trades_70_80_perc = round(trades_70_80/trades_total,round_num)*100
                 trades_80_90_perc = round(trades_80_90/trades_total,round_num)*100
                 trades_90_100_perc = round(trades_90_100/trades_total,round_num)*100
+                trades_above_100_perc = round(trades_above_100/trades_total,round_num)*100
             else:
-                trades_below_0_perc = 0
-                trades_above_100_perc = 0
+                trades_below_minus20_perc = 0
+                trades_minus20_minus10_perc = 0
+                trades_minus10_0_perc = 0
                 trades_0_10_perc = 0
                 trades_10_20_perc = 0
                 trades_20_30_perc = 0
@@ -660,14 +765,17 @@ def backtesting_results():
                 trades_70_80_perc = 0
                 trades_80_90_perc = 0
                 trades_90_100_perc = 0
+                trades_above_100_perc = 0
             
             trades_by_Return_perc = {
-                'Category': ['< 0%',  '0-10%', '10-20%', '20-30%', '30-40%', '40-50%', '50-60%', '60-70%', '70-80%', '80-90%', '90-100%', '> 100%'],
-                'Number of Trades': [trades_below_0] + [trades_0_10] + [trades_10_20] + [trades_20_30] + [trades_30_40] + [trades_40_50] + [trades_50_60] + [trades_60_70] + [trades_70_80] + [trades_80_90] + [trades_90_100] + [trades_above_100]
+                'Category': ['< -20%',  '-20-10%','-10-0%','0-10%', '10-20%', '20-30%', '30-40%', '40-50%', '50-60%', '60-70%', '70-80%', '80-90%', '90-100%', '> 100%'],
+                'Number of Trades': [trades_below_minus20] + [trades_minus20_minus10] + [trades_minus10_0] + [trades_0_10] + [trades_10_20] + [trades_20_30] + [trades_30_40] + [trades_40_50] + [trades_50_60] + [trades_60_70] + [trades_70_80] + [trades_80_90] + [trades_90_100] + [trades_above_100]
             }
             df_tbrp = pd.DataFrame(trades_by_Return_perc)
             df_tbrp["Perc of Trades"] = [
-                trades_below_0_perc,
+                trades_below_minus20_perc,
+                trades_minus20_minus10_perc,
+                trades_minus10_0_perc,
                 trades_0_10_perc, 
                 trades_10_20_perc, 
                 trades_20_30_perc, 
@@ -682,7 +790,7 @@ def backtesting_results():
                 ]
 
             # Define the order of categories
-            category_order = ['< 0%', '0-10%', '10-20%', '20-30%', '30-40%', '40-50%', '50-60%', '60-70%', '70-80%', '80-90%', '90-100%', '> 100%']
+            category_order = ['< -20%', '-20-10%', '-10-0%', '0-10%', '10-20%', '20-30%', '30-40%', '40-50%', '50-60%', '60-70%', '70-80%', '80-90%', '90-100%', '> 100%']
 
             # Plotting the cheese chart using Altair
             chart_tbrp = alt.Chart(df_tbrp).mark_bar().encode(
@@ -702,11 +810,6 @@ def backtesting_results():
                 hide_index=True,
                 height=(len(df_tbrp) + 1) * 35 + 3)
             
-            
-
-
-        
-
 def settings():
 
     col1_cfg, col2_cfg = tab_settings.columns(2)    
@@ -720,13 +823,14 @@ def settings():
                 st.session_state.main_strategy = config.get_setting("main_strategy")
             def main_strategy_change():
                 config.set_setting("main_strategy", st.session_state.main_strategy)
-            main_strategy = st.selectbox(label='Main Strategy',
-                                        options=list(dict_strategies_main.keys()),
-                                        key="main_strategy",
-                                        on_change=main_strategy_change,
-                                        format_func=format_func_strategies_main, 
-                                        label_visibility="collapsed"
-                                        )
+            main_strategy = st.selectbox(
+                label='Main Strategy',
+                options=list(dict_strategies_main.keys()),
+                key="main_strategy",
+                on_change=main_strategy_change,
+                format_func=format_func_strategies_main, 
+                label_visibility="collapsed"
+            )
         
         
         container_btc_strategy = st.container(border=True)
@@ -737,22 +841,25 @@ def settings():
                 st.session_state.btc_strategy = config.get_setting("btc_strategy")
             def btc_strategy_change():
                 config.set_setting("btc_strategy", st.session_state.btc_strategy)
-            btc_strategy = st.selectbox(label='BTC Strategy',
-                                        options=list(dict_strategies_btc.keys()),
-                                        key="btc_strategy",
-                                        on_change=btc_strategy_change,
-                                        format_func=format_func_strategies_btc, 
-                                        label_visibility="collapsed"
-                                        )
+            btc_strategy = st.selectbox(
+                label='BTC Strategy',
+                options=list(dict_strategies_btc.keys()),
+                key="btc_strategy",
+                on_change=btc_strategy_change,
+                format_func=format_func_strategies_btc, 
+                label_visibility="collapsed"
+            )
 
             if "trade_against_switch" not in st.session_state:
                 st.session_state.trade_against_switch = config.get_setting("trade_against_switch")
             def trade_against_switch_change():
                 config.set_setting("trade_against_switch", st.session_state.trade_against_switch)
-            trade_against_switch = st.checkbox(label="Auto switch between trade against USDT or BTC",
-                                                key="trade_against_switch",
-                                                on_change=trade_against_switch_change,
-                                                help="""Considering the chosen Bitcoin strategy will decide whether it is a Bull or Bear market. If Bull then will convert USDT to BTC and trade against BTC. If Bear will convert BTC into USDT and trade against USDT.""")
+            trade_against_switch = st.checkbox(
+                label="Auto switch between trade against USDT or BTC",
+                key="trade_against_switch",
+                on_change=trade_against_switch_change,
+                help="""Considering the chosen Bitcoin strategy will decide whether it is a Bull or Bear market. If Bull then will convert USDT to BTC and trade against BTC. If Bear will convert BTC into USDT and trade against USDT."""
+            )
         
         run_backtesting = st.button("Run Backtesting", help="Please be patient, as it could take a few hours to complete.")
         if run_backtesting:
@@ -776,33 +883,41 @@ def settings():
     with col1_cfg:
         container_bots = st.container(border=True)
         with container_bots:
+            
             st.write("**Bots by Time Frame**")
+            
             if "bot_1d" not in st.session_state:
                 st.session_state.bot_1d = config.get_setting("bot_1d")
             def bot_1d_change():
                 config.set_setting("bot_1d", st.session_state.bot_1d)
-            bot_1d = st.checkbox(label='Bot 1D',
-                                    key="bot_1d",
-                                    on_change=bot_1d_change,
-                                    help="""Turn the Bot ON or OFF""")
+            bot_1d = st.checkbox(
+                label='Bot 1D',
+                key="bot_1d",
+                on_change=bot_1d_change,
+                help="""Turn the Bot ON or OFF"""
+            )
             
             if "bot_4h" not in st.session_state:
                 st.session_state.bot_4h = config.get_setting("bot_4h")
             def bot_4h_change():
                 config.set_setting("bot_4h", st.session_state.bot_4h)
-            bot_4h = st.checkbox(label='Bot 4h',
-                                    key="bot_4h",
-                                    on_change=bot_4h_change,
-                                    help="""Turn the Bot ON or OFF""")
+            bot_4h = st.checkbox(
+                label='Bot 4h',
+                key="bot_4h",
+                on_change=bot_4h_change,
+                help="""Turn the Bot ON or OFF"""
+            )
             
             if "bot_1h" not in st.session_state:
                 st.session_state.bot_1h = config.get_setting("bot_1h")
             def bot_1h_change():
                 config.set_setting("bot_1h", st.session_state.bot_1h)
-            bot_1h = st.checkbox(label='Bot 1h',
-                                    key="bot_1h",
-                                    on_change=bot_1h_change,
-                                    help="""Turn the Bot ON or OFF""")
+            bot_1h = st.checkbox(
+                label='Bot 1h',
+                key="bot_1h",
+                on_change=bot_1h_change,
+                help="""Turn the Bot ON or OFF"""
+            )
         
         # try:
         #     prev_stake_amount_type = config.get_setting("stake_amount_type")
@@ -825,26 +940,30 @@ def settings():
             def trade_against_change():
                 config.set_setting("trade_against", st.session_state.trade_against)
                 min_position_size_change()
-            trade_against = st.selectbox(label='Trade Against',
-                                        options=['USDT', 'BTC'], 
-                                        key="trade_against",
-                                        on_change=trade_against_change,
-                                        help="""Trade against USDT or BTC
-                                            """)
+            trade_against = st.selectbox(
+                label='Trade Against',
+                options=['USDT', 'BTC'], 
+                key="trade_against",
+                on_change=trade_against_change,
+                help="""Trade against USDT or BTC
+                    """
+            )
             
             if "max_number_of_open_positions" not in st.session_state:
                 st.session_state.max_number_of_open_positions = config.get_setting("max_number_of_open_positions")
             def max_number_of_open_positions_change():
                 config.set_setting("max_number_of_open_positions", st.session_state.max_number_of_open_positions)
-            max_number_of_open_positions = st.number_input(label="Max Number of Open Positions",
-                                                        min_value=1,
-                                                        max_value=50,
-                                                        step=1,
-                                                        key="max_number_of_open_positions",
-                                                        on_change=max_number_of_open_positions_change,
-                                                        help="""
-                                                        If tradable balance = 1000 and max_number_of_open_positions = 10, the stake_amount = 1000/10 = 100
-                                                                """)
+            max_number_of_open_positions = st.number_input(
+                label="Max Number of Open Positions",
+                min_value=1,
+                max_value=50,
+                step=1,
+                key="max_number_of_open_positions",
+                on_change=max_number_of_open_positions_change,
+                help="""
+                If tradable balance = 1000 and max_number_of_open_positions = 10, the stake_amount = 1000/10 = 100
+                        """
+            )
             
             # calc the position value for the next position
             ta = st.session_state.trade_against
@@ -873,200 +992,228 @@ def settings():
                 Next Trade Position Size = Balance - Total Locked Values / Available Open Positions = **{position_size} {ta}**
                 """, unsafe_allow_html=True)
             
-            # min_position_size 
-            if "min_position_size" not in st.session_state:
-                st.session_state.min_position_size = config.get_setting("min_position_size")
-            MIN_POSITION_SIZE_USD = 20
-            def min_position_size_change():
-                if st.session_state.trade_against in ["USDT"]:
-                    if int(st.session_state.min_position_size) < MIN_POSITION_SIZE_USD:
-                        st.session_state.min_position_size = MIN_POSITION_SIZE_USD
-                elif st.session_state.trade_against == "BTC":
-                    if float(st.session_state.min_position_size) >= MIN_POSITION_SIZE_USD:
-                        st.session_state.min_position_size = 0.0001                    
-                config.set_setting("min_position_size", st.session_state.min_position_size)
+            col1_pos, col2_stop = st.columns(2)
+            
+            with col1_pos:
+                # min_position_size 
+                if "min_position_size" not in st.session_state:
+                    st.session_state.min_position_size = config.get_setting("min_position_size")
+                MIN_POSITION_SIZE_USD = 20
+                def min_position_size_change():
+                    if st.session_state.trade_against in ["USDT"]:
+                        if int(st.session_state.min_position_size) < MIN_POSITION_SIZE_USD:
+                            st.session_state.min_position_size = MIN_POSITION_SIZE_USD
+                    elif st.session_state.trade_against == "BTC":
+                        if float(st.session_state.min_position_size) >= MIN_POSITION_SIZE_USD:
+                            st.session_state.min_position_size = 0.0001                    
+                    config.set_setting("min_position_size", st.session_state.min_position_size)
 
-            if trade_against in ["USDT"]:
-                trade_min_val = MIN_POSITION_SIZE_USD
-                trade_step = 10
-                trade_format = None
-            elif trade_against == "BTC":
-                trade_min_val = 0.0001
-                trade_step = 0.0001
-                trade_format = "%.4f"    
+                if trade_against in ["USDT"]:
+                    trade_min_val = MIN_POSITION_SIZE_USD
+                    trade_step = 10
+                    trade_format = None
+                elif trade_against == "BTC":
+                    trade_min_val = 0.0001
+                    trade_step = 0.0001
+                    trade_format = "%.4f"    
 
-            min_position_size = st.number_input(label='Minimum Position Size', 
-                                                min_value=trade_min_val, 
-                                                step=trade_step,
-                                                format=trade_format,
-                                                key="min_position_size",
-                                                on_change=min_position_size_change,
-                                                help="""If trade_against = USDT => min_position_size = 20
-                                                    \nIf trade_against = BTC => min_position_size = 0.001
-                                                """)      
-            # ---  
+                min_position_size = st.number_input(
+                    label='Minimum Position Size', 
+                    min_value=trade_min_val, 
+                    step=trade_step,
+                    format=trade_format,
+                    key="min_position_size",
+                    on_change=min_position_size_change,
+                    help="""If trade_against = USDT => min_position_size = 20
+                        \nIf trade_against = BTC => min_position_size = 0.001
+                    """
+                )      
+                # ---  
 
-            if "stop_loss" not in st.session_state:
-                st.session_state.stop_loss = config.get_setting("stop_loss")
-            def stop_loss_change():
-                config.set_setting("stop_loss", st.session_state.stop_loss)
-            stop_loss = st.number_input(label='Stop Loss %', 
-                                        min_value=0, 
-                                        step=1,
-                                        key="stop_loss",
-                                        on_change=stop_loss_change,
-                                        help="""Set stop loss to automatically sell if its price falls below a certain percentage.
-                                            \nExamples:
-                                            \n stop_loss = 0 => will not use stop loss.
-                                            \n stop_loss = 10 => 10%.   
-                                        """)
+            with col2_stop:
+                if "stop_loss" not in st.session_state:
+                    st.session_state.stop_loss = config.get_setting("stop_loss")
+                def stop_loss_change():
+                    config.set_setting("stop_loss", st.session_state.stop_loss)
+                stop_loss = st.number_input(
+                    label='Stop Loss %', 
+                    min_value=0, 
+                    step=1,
+                    key="stop_loss",
+                    on_change=stop_loss_change,
+                    help="""Set stop loss to automatically sell if its price falls below a certain percentage.
+                        \nExamples:
+                        \n stop_loss = 0 => will not use stop loss.
+                        \n stop_loss = 10 => 10%.   
+                    """
+                )
 
             if "trade_top_performance" not in st.session_state:
                 st.session_state.trade_top_performance = config.get_setting("trade_top_performance")
             def trade_top_performance_change():
                 config.set_setting("trade_top_performance", st.session_state.trade_top_performance)
-            trade_top_performance = st.slider(label='Trade Top Performance Symbols', 
-                                            min_value=0, 
-                                            max_value=100, 
-                                            step=5,
-                                            key="trade_top_performance",
-                                            on_change=trade_top_performance_change,
-                                            help="""
-                                                    Trade top X performance symbols                                              
-                                                """)
+            trade_top_performance = st.slider(
+                label='Trade Top Performance Symbols', 
+                min_value=0, 
+                max_value=100, 
+                step=5,
+                key="trade_top_performance",
+                on_change=trade_top_performance_change,
+                help="""
+                        Trade top X performance symbols                                              
+                    """
+            )
             
             if "tradable_balance_ratio" not in st.session_state:
                 st.session_state.tradable_balance_ratio = config.get_setting("tradable_balance_ratio")*100
             def tradable_balance_ratio_change():
                 config.set_setting("tradable_balance_ratio", st.session_state.tradable_balance_ratio/100)
-            tradable_balance_ratio = st.slider(label='Tradable Balance Ratio',
-                                            min_value=0, 
-                                            max_value=100,
-                                            step=1, 
-                                            format="%d%%",
-                                            key="tradable_balance_ratio",
-                                            on_change=tradable_balance_ratio_change, 
-                                            help="""Tradable percentage of the balance
-                                                """)   
+            tradable_balance_ratio = st.slider(
+                label='Tradable Balance Ratio',
+                min_value=0, 
+                max_value=100,
+                step=1, 
+                format="%d%%",
+                key="tradable_balance_ratio",
+                on_change=tradable_balance_ratio_change, 
+                help="""Tradable percentage of the balance
+                    """
+            )   
         
         
         st.write("**Take-Profit Levels**")
         container_tp = st.container(border=True)
         with container_tp:
-            if "take_profit_1" not in st.session_state:
-                st.session_state.take_profit_1 = config.get_setting("take_profit_1")
-            def take_profit_1_change():
-                config.set_setting("take_profit_1", st.session_state.take_profit_1)
-                
-            take_profit_1 = st.number_input(
-                label="TP1 (%)", 
-                min_value=0, 
-                step=1,
-                key="take_profit_1",
-                on_change=take_profit_1_change,
-                help="The percentage increase in price at which the system will automatically trigger a sell order to secure profits."
-            )                    
-
-            if "take_profit_1_amount" not in st.session_state:
-                st.session_state.take_profit_1_amount = config.get_setting("take_profit_1_amount")
-            def take_profit_1_amount_change():
-                config.set_setting("take_profit_1_amount", st.session_state.take_profit_1_amount)
-            take_profit_1_amount = st.number_input(
-                label="TP1 Amount (%)", 
-                min_value=5, 
-                max_value=100,
-                step=5,
-                key="take_profit_1_amount",
-                on_change=take_profit_1_amount_change,
-                help="The percentage of the position quantity to be sold when take profits level 1 is achieved."
-            )
+            
+            col1_tp1, col2_tp1 = st.columns(2)
+            
+            with col1_tp1:
+                if "take_profit_1" not in st.session_state:
+                    st.session_state.take_profit_1 = config.get_setting("take_profit_1")
+                def take_profit_1_change():
+                    config.set_setting("take_profit_1", st.session_state.take_profit_1)
+                    
+                take_profit_1 = st.number_input(
+                    label="TP1 (%)", 
+                    min_value=0, 
+                    step=1,
+                    key="take_profit_1",
+                    on_change=take_profit_1_change,
+                    help="The percentage increase in price at which the system will automatically trigger a sell order to secure profits."
+                )                    
+            with col2_tp1:
+                if "take_profit_1_amount" not in st.session_state:
+                    st.session_state.take_profit_1_amount = config.get_setting("take_profit_1_amount")
+                def take_profit_1_amount_change():
+                    config.set_setting("take_profit_1_amount", st.session_state.take_profit_1_amount)
+                take_profit_1_amount = st.number_input(
+                    label="TP1 Amount (%)", 
+                    min_value=5, 
+                    max_value=100,
+                    step=5,
+                    key="take_profit_1_amount",
+                    on_change=take_profit_1_amount_change,
+                    help="The percentage of the position quantity to be sold when take profits level 1 is achieved."
+                )
         
-            if "take_profit_2" not in st.session_state:
-                st.session_state.take_profit_2 = config.get_setting("take_profit_2")
-            def take_profit_2_change():
-                config.set_setting("take_profit_2", st.session_state.take_profit_2)
-
-            take_profit_2 = st.number_input(
-                label="TP2 (%)", 
-                min_value=0, 
-                step=1,
-                key="take_profit_2",
-                on_change=take_profit_2_change,
-                help="The percentage increase in price at which the system will automatically trigger a sell order to secure profits."
-            )
-
-            if "take_profit_2_amount" not in st.session_state:
-                st.session_state.take_profit_2_amount = config.get_setting("take_profit_2_amount")
-            def take_profit_2_amount_change():
-                config.set_setting("take_profit_2_amount", st.session_state.take_profit_2_amount)
-
-            take_profit_2_amount = st.number_input(
-                label="TP2 Amount (%)", 
-                min_value=5, 
-                max_value=100,
-                step=5,
-                key="take_profit_2_amount",
-                on_change=take_profit_2_amount_change,
-                help="The percentage of the position quantity to be sold when take profits level 2 is achieved."
-            )
+            col1_tp2, col2_tp2 = st.columns(2)
             
-            if "take_profit_3" not in st.session_state:
-                st.session_state.take_profit_3 = config.get_setting("take_profit_3")
-            def take_profit_3_change():
-                config.set_setting("take_profit_3", st.session_state.take_profit_3)
+            with col1_tp2:
+                if "take_profit_2" not in st.session_state:
+                    st.session_state.take_profit_2 = config.get_setting("take_profit_2")
+                def take_profit_2_change():
+                    config.set_setting("take_profit_2", st.session_state.take_profit_2)
 
-            take_profit_3 = st.number_input(
-                label="TP3 (%)", 
-                min_value=0, 
-                step=1,
-                key="take_profit_3",
-                on_change=take_profit_3_change,
-                help="The percentage increase in price at which the system will automatically trigger a sell order to secure profits."
-            )
+                take_profit_2 = st.number_input(
+                    label="TP2 (%)", 
+                    min_value=0, 
+                    step=1,
+                    key="take_profit_2",
+                    on_change=take_profit_2_change,
+                    help="The percentage increase in price at which the system will automatically trigger a sell order to secure profits."
+                )
 
-            if "take_profit_3_amount" not in st.session_state:
-                st.session_state.take_profit_3_amount = config.get_setting("take_profit_3_amount")
-            def take_profit_3_amount_change():
-                config.set_setting("take_profit_3_amount", st.session_state.take_profit_3_amount)
+            with col2_tp2:
+                if "take_profit_2_amount" not in st.session_state:
+                    st.session_state.take_profit_2_amount = config.get_setting("take_profit_2_amount")
+                def take_profit_2_amount_change():
+                    config.set_setting("take_profit_2_amount", st.session_state.take_profit_2_amount)
 
-            take_profit_3_amount = st.number_input(
-                label="TP3 Amount (%)", 
-                min_value=5, 
-                max_value=100,
-                step=5,
-                key="take_profit_3_amount",
-                on_change=take_profit_3_amount_change,
-                help="The percentage of the position quantity to be sold when take profits level 3 is achieved."
-            )
+                take_profit_2_amount = st.number_input(
+                    label="TP2 Amount (%)", 
+                    min_value=5, 
+                    max_value=100,
+                    step=5,
+                    key="take_profit_2_amount",
+                    on_change=take_profit_2_amount_change,
+                    help="The percentage of the position quantity to be sold when take profits level 2 is achieved."
+                )
             
-            if "take_profit_4" not in st.session_state:
-                st.session_state.take_profit_4 = config.get_setting("take_profit_4")
-            def take_profit_4_change():
-                config.set_setting("take_profit_4", st.session_state.take_profit_4)
+            col1_tp3, col2_tp3 = st.columns(2)
+            
+            with col1_tp3:
+                if "take_profit_3" not in st.session_state:
+                    st.session_state.take_profit_3 = config.get_setting("take_profit_3")
+                def take_profit_3_change():
+                    config.set_setting("take_profit_3", st.session_state.take_profit_3)
 
-            take_profit_4 = st.number_input(
-                label="TP4 (%)", 
-                min_value=0, 
-                step=1,
-                key="take_profit_4",
-                on_change=take_profit_4_change,
-                help="The percentage increase in price at which the system will automatically trigger a sell order to secure profits."
-            )
+                take_profit_3 = st.number_input(
+                    label="TP3 (%)", 
+                    min_value=0, 
+                    step=1,
+                    key="take_profit_3",
+                    on_change=take_profit_3_change,
+                    help="The percentage increase in price at which the system will automatically trigger a sell order to secure profits."
+                )
+
+            with col2_tp3:
+                if "take_profit_3_amount" not in st.session_state:
+                    st.session_state.take_profit_3_amount = config.get_setting("take_profit_3_amount")
+                def take_profit_3_amount_change():
+                    config.set_setting("take_profit_3_amount", st.session_state.take_profit_3_amount)
+
+                take_profit_3_amount = st.number_input(
+                    label="TP3 Amount (%)", 
+                    min_value=5, 
+                    max_value=100,
+                    step=5,
+                    key="take_profit_3_amount",
+                    on_change=take_profit_3_amount_change,
+                    help="The percentage of the position quantity to be sold when take profits level 3 is achieved."
+                )
+            
+            col1_tp4, col2_tp4 = st.columns(2)
+            
+            with col1_tp4:
+                if "take_profit_4" not in st.session_state:
+                    st.session_state.take_profit_4 = config.get_setting("take_profit_4")
+                def take_profit_4_change():
+                    config.set_setting("take_profit_4", st.session_state.take_profit_4)
+
+                take_profit_4 = st.number_input(
+                    label="TP4 (%)", 
+                    min_value=0, 
+                    step=1,
+                    key="take_profit_4",
+                    on_change=take_profit_4_change,
+                    help="The percentage increase in price at which the system will automatically trigger a sell order to secure profits."
+                )
                 
-            if "take_profit_4_amount" not in st.session_state:
-                st.session_state.take_profit_4_amount = config.get_setting("take_profit_4_amount")
-            def take_profit_4_amount_change():
-                config.set_setting("take_profit_4_amount", st.session_state.take_profit_4_amount)
+            with col2_tp4:
+                if "take_profit_4_amount" not in st.session_state:
+                    st.session_state.take_profit_4_amount = config.get_setting("take_profit_4_amount")
+                def take_profit_4_amount_change():
+                    config.set_setting("take_profit_4_amount", st.session_state.take_profit_4_amount)
 
-            take_profit_4_amount = st.number_input(
-                label="TP4 Amount (%)", 
-                min_value=5, 
-                max_value=100,
-                step=5,
-                key="take_profit_4_amount",
-                on_change=take_profit_4_amount_change,
-                help="The percentage of the position quantity to be sold when take profits level 4 is achieved."
-            )
+                take_profit_4_amount = st.number_input(
+                    label="TP4 Amount (%)", 
+                    min_value=5, 
+                    max_value=100,
+                    step=5,
+                    key="take_profit_4_amount",
+                    on_change=take_profit_4_amount_change,
+                    help="The percentage of the position quantity to be sold when take profits level 4 is achieved."
+                )
             
         st.write("**Locked Values**")
         container_lv = st.container(border=True)
@@ -1080,13 +1227,15 @@ def settings():
                     database.release_all_values(database.conn)
                 config.set_setting("lock_values", st.session_state.lock_values)
 
-            lock_values = st.checkbox(label='Lock Values from partial sales',
-                                    key="lock_values",
-                                    on_change=lock_values_change,
-                                    help="""When **enabled**, means that any amount obtained from partially selling a position will be temporarily locked and cannot be used to purchase another position until the entire position is sold. 
-                                        \nWhen **disabled**, partial sales can be freely reinvested into new positions. It's important to note that this may increase the risk of larger position amounts, as funds from partial sales may be immediately reinvested without reservation.
-                                        \nNote that disabling this option will **release all** locked values.
-                                    """)
+            lock_values = st.checkbox(
+                label='Lock Values from partial sales',
+                key="lock_values",
+                on_change=lock_values_change,
+                help="""When **enabled**, means that any amount obtained from partially selling a position will be temporarily locked and cannot be used to purchase another position until the entire position is sold. 
+                    \nWhen **disabled**, partial sales can be freely reinvested into new positions. It's important to note that this may increase the risk of larger position amounts, as funds from partial sales may be immediately reinvested without reservation.
+                    \nNote that disabling this option will **release all** locked values.
+                """
+            )
             if st.session_state.lock_values:
                 st.caption("Note that disabling this option will **release all** locked values.")
             

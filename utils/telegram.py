@@ -221,7 +221,11 @@ def send_telegram_message(telegram_token, emoji, msg):
             logging.exception(msg)
 
 def send_telegram_alert(telegram_token, telegram_prefix, emoji, date, symbol, timeframe, strategy, ordertype, unitValue, amount, trade_against_value, pnlPerc = '', pnl_trade_against = '', exit_reason = ''):
-    lmsg = telegram_prefix + emoji + " " + str(date) + "\n" + symbol + "\n" + strategy + "\n" + timeframe + "\n" + ordertype + "\n" + "UnitPrice: " + str(unitValue) + "\n" + "Qty: " + str(amount)+ "\n" + trade_against + ": " + str(trade_against_value)
+    
+    # Convert datetime object to string and truncate milliseconds
+    datetime_str = date.strftime('%Y-%m-%d %H:%M:%S')
+
+    lmsg = telegram_prefix + emoji + " " + datetime_str + "\n" + symbol + "\n" + strategy + "\n" + timeframe + "\n" + ordertype + "\n" + "UnitPrice: " + str(unitValue) + "\n" + "Qty: " + str(amount)+ "\n" + trade_against + ": " + str(trade_against_value)
     if pnlPerc != '':
         lmsg = lmsg + "\n"+"PnL%: "+str(round(float(pnlPerc),2)) + "\n"+"PnL "+trade_against+": "+str(float(pnl_trade_against))
     if exit_reason != '':

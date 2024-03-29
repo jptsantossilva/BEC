@@ -326,7 +326,7 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percenta
             order_avg_price = sum([float(f['price']) * (float(f['qty']) / float(order['executedQty'])) for f in fills])
             order_avg_price = round(order_avg_price,8)
 
-            order_sell_date = str(pd.to_datetime(order['transactTime'], unit='ms'))
+            order_sell_date = pd.to_datetime(order['transactTime'], unit='ms')
             order_symbol = order['symbol']
             order_qty = float(order['executedQty'])
             order_side = order['side']
@@ -382,7 +382,7 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percenta
             pnl_value, pnl_perc = database.add_order_sell(database.conn,
                                                           sell_order_id = sell_order_id,
                                                           buy_order_id = buy_order_id,
-                                                          date = order_sell_date,
+                                                          date = str(order_sell_date),
                                                           bot = bot,
                                                           symbol = symbol,
                                                           price = order_avg_price,

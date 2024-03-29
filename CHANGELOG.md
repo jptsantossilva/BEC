@@ -2,6 +2,15 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2024-03-29]
+ 
+### Added
+- Dashboard - Backtesting Results - Filters for start date, end date, use top performance symbols and return percentage > 0.  
+### Changed
+- 
+### Fixed
+- 
+
 ## [2024-03-17]
  
 ### Added
