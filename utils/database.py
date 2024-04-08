@@ -474,6 +474,7 @@ sql_set_backtesting_results_from_positions = """
     WHERE 
         Symbol = ?
         and Bot = ?
+        and Position = 0
 """
 def set_backtesting_results_from_positions(connection, symbol: str, timeframe: str, ema_fast: int, ema_slow: int):
     with connection:
@@ -833,7 +834,6 @@ sql_add_backtesting_trade = """
         ) 
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 """
-
 def add_backtesting_trade(connection, symbol: str, timeframe: str, strategy_id: str, entry_bar: int, exit_bar: int, entry_price: float, exit_price: float, pnl: float, return_pct: float, entry_time: str, exit_time: str, duration: str):
     with connection:
         connection.execute(sql_add_backtesting_trade, (
@@ -850,6 +850,17 @@ def add_backtesting_trade(connection, symbol: str, timeframe: str, strategy_id: 
             str(exit_time),
             str(duration)
         ))
+
+def delete_backtesting_trades_symbol_timeframe_strategy(connection, symbol, timeframe, strategy_id):
+    sql = """
+        DELETE FROM Backtesting_Trades 
+        WHERE 
+            Symbol = ?
+            AND Time_Frame = ?
+            AND Strategy_Id = ?;
+    """
+    with connection:
+        connection.execute(sql, (symbol, timeframe, strategy_id, ))
 
 # SYMBOLS_TO_CALC
 sql_create_symbols_to_calc_table = """

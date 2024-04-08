@@ -426,8 +426,15 @@ def run_backtest(symbol, timeframe, strategy, optimize):
 
     df_trades['ReturnPct'] = df_trades['ReturnPct']*100
     
-    # Save trades to database
-    # df_trades.to_sql('Backtesting_Trades', database.conn, index=False, if_exists='append')
+    # delete existing trades
+    database.delete_backtesting_trades_symbol_timeframe_strategy(
+        database.conn, 
+        symbol=symbol, 
+        timeframe=timeframe, 
+        strategy_id=strategy_name
+    )
+    
+    # Insert new trades to database
     for index, row in df_trades.iterrows():
         database.add_backtesting_trade(
             connection=database.conn,

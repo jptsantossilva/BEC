@@ -180,8 +180,8 @@ def trade_against_auto_switch():
             df_btc['FastEma'] = df_btc['Price'].ewm(span=fast_ema, adjust=False).mean()
             df_btc['SlowEma'] = df_btc['Price'].ewm(span=slow_ema, adjust=False).mean()
 
-            buy_condition = crossover(df_btc.FastEMA, df_btc.SlowEMA)
-            sell_condition = crossover(df_btc.SlowEMA, df_btc.FastEMA)
+            buy_condition = crossover(df_btc.FastEma, df_btc.SlowEma)
+            sell_condition = crossover(df_btc.SlowEma, df_btc.FastEma)
 
         elif btc_strategy_id in ["market_phases"]:
 
@@ -208,16 +208,26 @@ def trade_against_auto_switch():
 
         # convert USDT to BTC
         if config.trade_against == "USDT" and buy_condition:
+            
+            ################
+            # Alert message
+            ################
+            # get current date and time
+            now = datetime.datetime.now()
+            # format the current date and time
+            formatted_now = now.strftime("%Y-%m-%d %H:%M:%S")
+
+            msg = f"Trade Against Auto Switch Triggered!\n{formatted_now}\nWe are in Bull Market {telegram.EMOJI_BULL}\nSelling all positions to USDT\nReleasing locked values\nConverting all USDT balance to BTC."
+            msg = telegram.telegram_prefix_signals_sl + msg
+            telegram.send_telegram_message(telegram.telegram_token_signals, telegram.EMOJI_ENTER_TRADE, msg)
+            ################
+
             # sell all positions to USDT
             for tf in sell_timeframes:
                 df_sell = database.get_positions_by_bot_position(database.conn, bot=tf, position=1)
                 list_to_sell = df_sell.Symbol.tolist()
                 for symbol in list_to_sell:
-                    binance.create_sell_order(symbol=symbol,
-                                              bot=tf,
-                                              reason=f"{sell_message}"
-                                              )  
-
+                    binance.create_sell_order(symbol=symbol, bot=tf,reason=f"{sell_message}")  
             
             # release locked values from the balance
             database.release_all_values(database.conn)
@@ -227,30 +237,41 @@ def trade_against_auto_switch():
                 
             # change trade against to BTC
             config.set_trade_against("BTC")
+            min_position_size = 0.0001
+            config.set_setting("min_position_size", min_position_size)
 
         # convert BTC to USDT
         elif config.trade_against == "BTC" and sell_condition:
+            ################
+            # Alert message
+            ################
+            # get current date and time
+            now = datetime.datetime.now()
+            # format the current date and time
+            formatted_now = now.strftime("%Y-%m-%d %H:%M:%S")
+
+            msg = f"Trade Against Auto Switch Triggered!\n{formatted_now}\nWe are in Bear Market {telegram.EMOJI_BEAR}\nSelling all positions to BTC\nReleasing locked values\nConverting all BTC balance to USDT."
+            msg = telegram.telegram_prefix_signals_sl + msg
+            telegram.send_telegram_message(telegram.telegram_token_signals, telegram.EMOJI_ENTER_TRADE, msg)
+            ################
+
             # sell all positions to BTC
             for tf in sell_timeframes:
                 df_sell = database.get_positions_by_bot_position(database.conn, bot=tf, position=1)
                 list_to_sell = df_sell.Symbol.tolist()
                 for symbol in list_to_sell:
-                    binance.create_sell_order(symbol=symbol,
-                                                bot=tf,
-                                                reason=f"{sell_message}"
-                                                )  
+                    binance.create_sell_order(symbol=symbol, bot=tf, reason=f"{sell_message}")  
                     
             # release locked values from the balance
             database.release_all_values(database.conn)
 
             # convert all BTC to USDT
-            binance.create_sell_order(symbol=btc_pair, 
-                                       bot=btc_timeframe, 
-                                       convert_all_balance=True,
-                                       reason=f"{sell_message}")
+            binance.create_sell_order(symbol=btc_pair, bot=btc_timeframe, convert_all_balance=True, reason=f"{sell_message}")
 
             # change trade against to USDT
             config.set_trade_against("USDT")
+            min_position_size = 20
+            config.set_setting("min_position_size", min_position_size)
 
 def main(time_frame):
     # Calculate program run time

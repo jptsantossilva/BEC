@@ -2,6 +2,18 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2024-04-08]
+ 
+### Added
+- Trading - Telegram - When 'Trade Against Auto Switch' is enabled and a trigger occurs, users will receive a Telegram alert message notifying them that the auto switch has occurred.
+### Changed
+- Backtesting - Previously, in the backtesting process, the Best EMAs results were being updated without distinction for both open positions and symbols waiting for position to be opened. However, this update apply the results exclusively on symbols with no open positions. Through analysis, it was discovered that updating the best EMA values for an open position led to premature position closures, resulting in missed profit opportunities.
+- Dashboard - Enable/disable trading in a time-frame - Previously, disabling the bot on a particular timeframe would result in open positions on that same timeframe becoming stuck, necessitating manual forced closing to close them; otherwise, they would remain open indefinitely. With this update, while the bot on the disabled timeframe will refrain from initiating new positions, it will still actively seek to sell existing positions based on the established sell strategy conditions.
+- Trading - Telegram - The messages indicating 'Sell/Buy condition not fulfilled' now include the pair of EMAs that were used to determine the condition.
+### Fixed
+- Dashboard - Backtesting Trades - Due to the daily occurrence of backtesting, the last trade's end date differed, resulting in duplicated trades and inaccurate data for analysis. To ensure the most up-to-date backtesting trade results, previous data is now replaced with the most recent data. 
+- Trading - Auto Switch - Min position size is now being updated
+
 ## [2024-03-29]
  
 ### Added

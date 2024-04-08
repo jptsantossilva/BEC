@@ -184,7 +184,7 @@ def get_current_pnl(symbol, current_price, time_frame):
 
 def trade(time_frame, run_mode):
     # Make sure we are only trying to buy positions on symbols included on market phases table
-    database.delete_positions_not_top_rank(database.conn)
+    database.delete_positions_not_top_rank(database.conn)   
 
     # list of symbols in position - SELL
     df_sell = database.get_positions_by_bot_position(database.conn, bot=time_frame, position=1)
@@ -194,6 +194,12 @@ def trade(time_frame, run_mode):
     # list of symbols in position - BUY
     df_buy = database.get_positions_by_bot_position(database.conn, bot=time_frame, position=0)
     list_to_buy = df_buy.Symbol.tolist()
+
+    # if trading by time frame is
+    # Enabled: Buy new positions and sell existing ones.
+    # Disabled: Will not buy new positions but will continue to attempt to sell existing positions based on sell strategy conditions.disabled => Will not buy new positions but will continue to attempt to sell existing positions based on sell strategy conditions.
+    if (time_frame == "1h" and not config.bot_1h) or (time_frame == "4h" and not config.bot_4h) or (time_frame == "1d" and not config.bot_1d):
+        list_to_buy = []
     
     # check open positions and SELL if conditions are fulfilled 
     for symbol in list_to_sell:
@@ -364,7 +370,8 @@ def trade(time_frame, run_mode):
                 )                      
         
         else:
-            msg = f'{symbol} - {config.strategy_name} - Sell condition not fulfilled'
+            best_emas = "" if fast_ema == 0 or slow_ema == 0 else f"{fast_ema}/{slow_ema}"
+            msg = f'{symbol} - {best_emas} {config.strategy_name} - Sell condition not fulfilled'
             msg = telegram_prefix_sl + msg
             print(msg)
             telegram.send_telegram_message(telegram_token, "", msg)
@@ -415,7 +422,9 @@ def trade(time_frame, run_mode):
         if buy_condition:
                 binance.create_buy_order(symbol=symbol, bot=time_frame, fast_ema=fast_ema, slow_ema=slow_ema)    
         else:
-            msg = f'{symbol} - {config.strategy_name} - Buy condition not fulfilled'
+            best_emas = "" if fast_ema == 0 or slow_ema == 0 else f"{fast_ema}/{slow_ema}"
+
+            msg = f'{symbol} - {best_emas} {config.strategy_name} - Buy condition not fulfilled'
             msg = telegram_prefix_sl + msg
             print(msg)
             telegram.send_telegram_message(telegram_token, "", msg)
@@ -454,18 +463,18 @@ def positions_summary(time_frame):
 
 def run(time_frame, run_mode):
 
-    if time_frame == "1h" and not config.bot_1h:
-        msg = f"Bot {time_frame} is inactive. Check Dashboard - Settings. Bye"
-        print(msg)
-        return
-    elif time_frame == "4h" and not config.bot_4h:
-        msg = f"Bot {time_frame} is inactive. Check Dashboard - Settings. Bye"
-        print(msg)
-        return
-    elif time_frame == "1d" and not config.bot_1d:
-        msg = f"Bot {time_frame} is inactive. Check Dashboard - Settings. Bye"
-        print(msg)
-        return           
+    # if time_frame == "1h" and not config.bot_1h:
+    #     msg = f"Bot {time_frame} is inactive. Check Dashboard - Settings. Bye"
+    #     print(msg)
+    #     return
+    # elif time_frame == "4h" and not config.bot_4h:
+    #     msg = f"Bot {time_frame} is inactive. Check Dashboard - Settings. Bye"
+    #     print(msg)
+    #     return
+    # elif time_frame == "1d" and not config.bot_1d:
+    #     msg = f"Bot {time_frame} is inactive. Check Dashboard - Settings. Bye"
+    #     print(msg)
+    #     return           
 
     # calculate program run time
     start = timeit.default_timer()

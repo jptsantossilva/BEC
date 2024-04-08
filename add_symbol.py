@@ -28,7 +28,6 @@ def run():
         msg = telegram.telegram_prefix_market_phases_sl +"\n"+ list_not_completed.to_string(index=True, header = False)
         telegram.send_telegram_message(telegram.telegram_token_main, "", msg) 
 
-
     # Dynamically import the entire strategies module
     strategy_module = importlib.import_module('my_backtesting')
         
@@ -55,14 +54,13 @@ def run():
                 # get strategy backtesting results
                 df_strategy_results = database.get_backtesting_results_by_symbol_timeframe_strategy(database.conn, symbol=symbol, time_frame=tf, strategy_id=strategy_id)
 
-                # if return percentage of best ema is < 0 we dont want to trade that coin pair
+                # if return percentage of best ema is < 0 we dont want to trade that symbol pair
                 if not df_strategy_results.empty:
                     backtest_return_percentage = int(df_strategy_results.Return_Perc.values[0])
                     if backtest_return_percentage < 0:
                         continue      
 
-                
-                # if the backtesting strategy is the one we are currently using we want to add the symbol to positions table and update rank
+                # if the backtesting strategy is the one we are currently using, we want to add the symbol to positions table and update rank
                 if strategy_id == config.strategy_id:
                     # initialize vars
                     ema_fast = 0
@@ -75,16 +73,18 @@ def run():
                     # if symbol do not exist in positions table then add it
                     symbol_exist = database.get_all_positions_by_bot_symbol(database.conn, bot=tf, symbol=symbol)
                     if not symbol_exist:
-                        database.insert_position(database.conn, 
-                                                bot=tf, 
-                                                symbol=symbol, 
-                                                ema_fast=ema_fast,
-                                                ema_slow=ema_slow)
+                        database.insert_position(
+                            database.conn, 
+                            bot=tf, 
+                            symbol=symbol, 
+                            ema_fast=ema_fast,
+                            ema_slow=ema_slow
+                        )
                     else:
                         # update rank
                         rank = database.get_rank_from_symbols_by_market_phase_by_symbol(database.conn, symbol)
                         database.set_rank_from_positions(database.conn, symbol=symbol, rank=rank)
-                        # update best ema
+                        # update best ema for those symbols with no positions open
                         if strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
                             database.set_backtesting_results_from_positions(database.conn, symbol=symbol, timeframe=tf, ema_fast=ema_fast, ema_slow=ema_slow)
             

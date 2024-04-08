@@ -884,39 +884,48 @@ def settings():
         container_bots = st.container(border=True)
         with container_bots:
             
-            st.write("**Bots by Time Frame**")
+            st.write("**Trading by Time Frame**")
             
             if "bot_1d" not in st.session_state:
                 st.session_state.bot_1d = config.get_setting("bot_1d")
             def bot_1d_change():
                 config.set_setting("bot_1d", st.session_state.bot_1d)
-            bot_1d = st.checkbox(
-                label='Bot 1D',
+            bot_1d = st.toggle(
+                label='Enable 1d',
                 key="bot_1d",
                 on_change=bot_1d_change,
-                help="""Turn the Bot ON or OFF"""
+                help="""
+                    **:green[Enabled]**: Buy new positions and sell existing ones based on the daily timeframe.  
+                    **:red[Disabled]**: Will not buy new positions but will continue to attempt to sell existing positions based on sell strategy conditions.
+                """
             )
             
             if "bot_4h" not in st.session_state:
                 st.session_state.bot_4h = config.get_setting("bot_4h")
             def bot_4h_change():
                 config.set_setting("bot_4h", st.session_state.bot_4h)
-            bot_4h = st.checkbox(
-                label='Bot 4h',
+            bot_4h = st.toggle(
+                label='Enable 4h',
                 key="bot_4h",
                 on_change=bot_4h_change,
-                help="""Turn the Bot ON or OFF"""
+                help="""
+                    **:green[Enabled]**: Buy new positions and sell existing ones based on the 4h timeframe.  
+                    **:red[Disabled]**: Will not buy new positions but will continue to attempt to sell existing positions based on sell strategy conditions.
+                """
             )
             
             if "bot_1h" not in st.session_state:
                 st.session_state.bot_1h = config.get_setting("bot_1h")
             def bot_1h_change():
                 config.set_setting("bot_1h", st.session_state.bot_1h)
-            bot_1h = st.checkbox(
-                label='Bot 1h',
+            bot_1h = st.toggle(
+                label='Enable 1h',
                 key="bot_1h",
                 on_change=bot_1h_change,
-                help="""Turn the Bot ON or OFF"""
+                help="""
+                    **:green[Enabled]**: Buy new positions and sell existing ones based on the 1h timeframe.  
+                    **:red[Disabled]**: Will not buy new positions but will continue to attempt to sell existing positions based on sell strategy conditions.
+                """
             )
         
         # try:
@@ -1025,7 +1034,7 @@ def settings():
                     key="min_position_size",
                     on_change=min_position_size_change,
                     help="""If trade_against = USDT => min_position_size = 20
-                        \nIf trade_against = BTC => min_position_size = 0.001
+                        \nIf trade_against = BTC => min_position_size = 0.0001
                     """
                 )      
                 # ---  
