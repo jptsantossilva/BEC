@@ -155,14 +155,15 @@ def get_data(symbol, timeframe):
 
     while retry_count < max_retry and not success:
         try:
-            df = pd.DataFrame(client.get_historical_klines(symbol
-                                                            ,timeframe
+            df = pd.DataFrame(client.get_historical_klines(
+                symbol
+                ,timeframe
 
-                                                            # better get all historical data. 
-                                                            # Using a defined start date will affect ema values. 
-                                                            # To get same ema and sma values of tradingview all historical data must be used. 
-                                                            ,startdate
-                                                            ))
+                # better get all historical data. 
+                # Using a defined start date will affect ema values. 
+                # To get same ema and sma values of tradingview all historical data must be used. 
+                ,startdate
+            ))
             success = True
         except Exception as e:
             # avoid error message in telegram if error is related to non-existing trading pair

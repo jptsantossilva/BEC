@@ -2,6 +2,15 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2024-04-09]
+ 
+### Added
+- 
+### Changed
+- 
+### Fixed 
+- Trading - In certain instances, disparities were observed in the EMA values. To address this issue, it was necessary to augment the quantity of historical price data required for accurate EMA calculations.
+
 ## [2024-04-08]
  
 ### Added

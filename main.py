@@ -102,21 +102,18 @@ def get_data(symbol, time_frame):
     #-------------------------------------
     today = date.today() 
     if time_frame == "1h":
-        pastdate = today - relativedelta(hours=200*4)
+        pastdate = today - relativedelta(hours=200*8)
     elif time_frame == "4h":
-        pastdate = today - relativedelta(hours=200*4)
+        pastdate = today - relativedelta(hours=200*8)
     elif time_frame == "1d":
-        pastdate = today - relativedelta(days=200*4)
+        pastdate = today - relativedelta(days=200*8)
     tuple = pastdate.timetuple()
     timestamp = time.mktime(tuple)
     startdate = str(timestamp)
 
     while retry_count < max_retry and not success:
         try:
-            df = pd.DataFrame(binance.client.get_historical_klines(symbol=symbol,
-                                                                   interval=time_frame,     
-                                                                   start_str=startdate
-                                                                   ))
+            df = pd.DataFrame(binance.client.get_historical_klines(symbol=symbol, interval=time_frame, start_str=startdate))
 
             success = True
         except Exception as e:
