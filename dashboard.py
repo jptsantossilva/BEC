@@ -358,6 +358,7 @@ def unrealized_pnl():
         
         event_positions_1d = st.dataframe(
             positions_df_1d.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
+            key="positions_df_1d",
             column_config=col_config,
             hide_index=True,
             on_select="rerun",
@@ -387,6 +388,7 @@ def unrealized_pnl():
         
         event_positions_4h = st.dataframe(
             positions_df_4h.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
+            key="positions_df_4h",
             column_config=col_config,
             hide_index=True,
             on_select="rerun",
@@ -415,6 +417,7 @@ def unrealized_pnl():
 
         event_positions_1h = st.dataframe(
             positions_df_1h.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
+            key="positions_df_1h",
             column_config=col_config,
             hide_index=True,
             on_select="rerun",
