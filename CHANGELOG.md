@@ -3,6 +3,9 @@
 All notable changes to this project will be documented in this file.
 
 ## [2024-09-22]
+
+### IMPORTANT NOTE:
+- Its is mandatory to restart the server after update due to an upgrade on the web framework. 
  
 ### Added
 - 
