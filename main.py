@@ -114,7 +114,6 @@ def get_data(symbol, time_frame):
     while retry_count < max_retry and not success:
         try:
             df = pd.DataFrame(binance.client.get_historical_klines(symbol=symbol, interval=time_frame, start_str=startdate))
-
             success = True
         except Exception as e:
             retry_count += 1
@@ -127,11 +126,20 @@ def get_data(symbol, time_frame):
         msg = telegram_prefix_sl + msg
         print(msg)
         telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
-        df = pd.DataFrame()
-        return df()
-    else:
+        return pd.DataFrame()
+
+    # Check if df is empty
+    if df.empty:
+        msg = f"Received empty data for {symbol} at {time_frame} timeframe."
+        print(msg)
+        telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
+        return pd.DataFrame()  # Return an empty dataframe if no data is retrieved
+
+    # Proceed with processing if df is not empty
+    try:
         df = df[[0,4]]
         df.columns = ['Time','Close']
+
         # using dictionary to convert specific columns
         convert_dict = {'Close': float}
         df = df.astype(convert_dict)
@@ -145,6 +153,11 @@ def get_data(symbol, time_frame):
         df = df.drop(df.index[-1])
 
         return df
+    except Exception as e:
+        msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
+        msg = telegram_prefix_sl + msg
+        print(msg)
+        return pd.DataFrame()  # Return an empty dataframe in case of KeyError
 
 # calculates moving averages 
 def apply_technicals(df, fast_ema=0, slow_ema=0): 
@@ -218,6 +231,10 @@ def trade(time_frame, run_mode):
 
         # get latest price data 
         df = get_data(symbol=symbol, time_frame=time_frame)
+
+        # Check if df is empty
+        if df.empty:
+            continue  # Skip to the next iteration
 
         apply_technicals(df, fast_ema, slow_ema)
 

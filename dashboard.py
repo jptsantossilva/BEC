@@ -312,6 +312,18 @@ def realized_pnl():
 
         # print('\n----------------------------\n')
 
+@st.dialog("Delete Position")
+def delete_position(symbol, timeframe):
+    st.warning("If you delete position the sell price will be set to 0.", icon="⚠️")
+    st.write("As an example, this feature is useful for clearing a position when a symbol is delisted from the exchange and you have no way to sell it.")
+    st.write(f"Are you sure you want to delete **{symbol}** from **{timeframe}** timeframe?")
+    if st.button("Delete", key="delete_position"):
+        binance.delete_position(
+            symbol=symbol,
+            bot=timeframe
+        ) 
+        st.rerun()
+        
 def unrealized_pnl():
     with tab_upnl:
         result_open_positions, positions_df_1d, positions_df_4h, positions_df_1h = calculate_unrealized_pnl()
@@ -326,75 +338,104 @@ def unrealized_pnl():
 
         result_open_positions = result_open_positions.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value'])
         st.dataframe(result_open_positions)
-        
-        # print("Unrealized PnL - Detail")
-        # print(positions_df_1d)
-        # print(positions_df_4h)
-        # print(positions_df_1h)
 
         st.header(f"Unrealized PnL - Detail")
         
         st.subheader("Bot 1d")
-        st.dataframe(
-            positions_df_1d.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
-            column_config = {
-                "PnL_Perc": st.column_config.NumberColumn(format="%.2f"),
-                "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"),
-                "TP1": st.column_config.CheckboxColumn(),
-                "TP2": st.column_config.CheckboxColumn(),
-                "TP3": st.column_config.CheckboxColumn(),
-                "TP4": st.column_config.CheckboxColumn(),
-                "RPQ%": st.column_config.NumberColumn(help="Remaining Position Qty %",
-                                                #    format="%.2f",
-                                                    )
-            }
-        )
+
+        col_config = {
+            "Id": None,
+            "PnL_Perc": st.column_config.NumberColumn(format="%.2f"),
+            "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"),
+            "TP1": st.column_config.CheckboxColumn(),
+            "TP2": st.column_config.CheckboxColumn(),
+            "TP3": st.column_config.CheckboxColumn(),
+            "TP4": st.column_config.CheckboxColumn(),
+            "RPQ%": st.column_config.NumberColumn(help="Remaining Position Qty %",
+                                            #    format="%.2f",
+                                                )
+        }
         
-        st.subheader("Bot 4h")
-        st.dataframe(
-            positions_df_4h.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
-            column_config = {
-                "PnL_Perc": st.column_config.NumberColumn(
-                                                        # "PnL %",
-                                                        # help="The price of the product in USD",
-                                                        # min_value=0,
-                                                        # max_value=1000,
-                                                        # step=1,
-                                                        format="%.2f",
-                                                    ),
-                "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"), 
-                "TP1": st.column_config.CheckboxColumn(),
-                "TP2": st.column_config.CheckboxColumn(),
-                "TP3": st.column_config.CheckboxColumn(),
-                "TP4": st.column_config.CheckboxColumn(),
-                "RPQ%": st.column_config.NumberColumn(help="Remaining Position Qty %",
-                                                #    format="%.2f",
-                                                    )
-            }
+        event_positions_1d = st.dataframe(
+            positions_df_1d.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
+            column_config=col_config,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode=["single-row", "multi-column"],
         )
 
+        # event_positions_1d.selection
+
+        row_1d_selected = len(event_positions_1d.selection.rows) > 0
+
+        # Check if there's a selection
+        if row_1d_selected:
+            selected_row_index = event_positions_1d.selection.rows[0]  # Get the index of the selected row
+            selected_symbol = positions_df_1d.loc[selected_row_index, 'Symbol']
+            selected_bot = positions_df_1d.loc[selected_row_index, 'Bot']  
+
+            # Show the selected Name
+            # st.write(f"Selected Symbol {selected_symbol} and bot {selected_bot}")
+
+            if st.button("Delete", key="delete_1d"):
+                delete_position(symbol=selected_symbol, timeframe=selected_bot)
+        
+        
+        #########################
+
+        st.subheader("Bot 4h")
+        
+        event_positions_4h = st.dataframe(
+            positions_df_4h.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
+            column_config=col_config,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode=["single-row", "multi-column"],
+        )
+
+        # event_positions_1d.selection
+
+        row_4h_selected = len(event_positions_4h.selection.rows) > 0
+
+        # Check if there's a selection
+        if row_4h_selected:
+            selected_row_index = event_positions_4h.selection.rows[0]  # Get the index of the selected row
+            selected_symbol = positions_df_4h.loc[selected_row_index, 'Symbol']
+            selected_bot = positions_df_4h.loc[selected_row_index, 'Bot']  
+
+            # Show the selected Name
+            # st.write(f"Selected Symbol {selected_symbol} and bot {selected_bot}")
+
+            if st.button("Delete", key="delete_4h"):
+                delete_position(symbol=selected_symbol, timeframe=selected_bot)
+
+        #########################
+        
         st.subheader("Bot 1h")
-        st.dataframe(
+
+        event_positions_1h = st.dataframe(
             positions_df_1h.style.applymap(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
-            column_config = {
-                "PnL_Perc": st.column_config.NumberColumn(
-                                                        # "PnL %",
-                                                        # help="The price of the product in USD",
-                                                        # min_value=0,
-                                                        # max_value=1000,
-                                                        # step=1,
-                                                        format="%.2f",
-                                                    ),
-                "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"), 
-                "TP1": st.column_config.CheckboxColumn(),
-                "TP2": st.column_config.CheckboxColumn(),
-                "TP3": st.column_config.CheckboxColumn(),
-                "TP4": st.column_config.CheckboxColumn(),
-                "RPQ%": st.column_config.NumberColumn(help="Remaining Position Qty %",
-                                                #    format="%.2f",
-                                                    )
-            }
-        )        
+            column_config=col_config,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode=["single-row", "multi-column"],
+        )
+
+        # event_positions_1d.selection
+
+        row_1h_selected = len(event_positions_1h.selection.rows) > 0
+
+        # Check if there's a selection
+        if row_1h_selected:
+            selected_row_index = event_positions_1h.selection.rows[0]  # Get the index of the selected row
+            selected_symbol = positions_df_1h.loc[selected_row_index, 'Symbol']
+            selected_bot = positions_df_1h.loc[selected_row_index, 'Bot']  
+
+            # Show the selected Name
+            # st.write(f"Selected Symbol {selected_symbol} and bot {selected_bot}")
+
+            if st.button("Delete", key="delete_1h"):
+                delete_position(symbol=selected_symbol, timeframe=selected_bot)
 
         #----------------------
         # Force Close Position
@@ -1064,7 +1105,7 @@ def settings():
             trade_top_performance = st.slider(
                 label='Trade Top Performance Symbols', 
                 min_value=0, 
-                max_value=100, 
+                max_value=500, 
                 step=5,
                 key="trade_top_performance",
                 on_change=trade_top_performance_change,

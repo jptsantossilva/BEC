@@ -2,6 +2,15 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2024-09-22]
+ 
+### Added
+- 
+### Changed
+- 
+### Fixed 
+- Trading - An error occurred when a symbol, with an open position, was delisted from the exchange, preventing access to its price history. To resolve this issue and allow for future trading opportunities, an option to delete the position has been introduced.
+
 ## [2024-04-09]
  
 ### Added

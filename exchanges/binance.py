@@ -274,6 +274,81 @@ def create_buy_order(symbol: str, bot: str, fast_ema: int = 0, slow_ema: int = 0
         msg = msg + " - " + symbol
         print(msg)
         telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
+
+def delete_position(symbol, bot, symbol_delisted: bool = True):
+
+    telegram_token = telegram.get_telegram_token()
+
+    df_pos = database.get_positions_by_bot_symbol_position(database.conn, bot=bot, symbol=symbol, position=1)
+    
+    # get Buy_Order_Id from positions table
+    if not df_pos.empty:
+        buy_order_id = str(df_pos['Buy_Order_Id'].iloc[0])
+        qty = df_pos['Qty'].iloc[0]
+    else:
+        buy_order_id = str(0)
+        qty = 0
+
+    # update position as closed position
+    database.set_position_sell(database.conn, bot=bot, symbol=symbol)
+    
+    # release all locked values from position
+    if not df_pos.empty:
+        database.release_value(database.conn, df_pos['Id'].iloc[0])
+    
+    # Get the current date and time
+    current_datetime = datetime.now()
+    # Format the date and time as 'YYYY-MM-DD HH:MM:SS'
+    order_sell_date = current_datetime.strftime('%Y-%m-%d %H:%M:%S')
+    
+    if symbol_delisted:
+        reason = "Symbol delisted from exchange"
+
+    fast_ema = 0
+    slow_ema = 0
+
+    # add to orders database table
+    pnl_value, pnl_perc = database.add_order_sell(
+        database.conn,
+        sell_order_id = 0,
+        buy_order_id = buy_order_id,
+        date = str(order_sell_date),
+        bot = bot,
+        symbol = symbol,
+        price = 0,
+        qty = qty,
+        ema_fast = fast_ema,
+        ema_slow = slow_ema,
+        exit_reason = reason
+    )            
+
+    # determine the alert type based on the value of pnl_value
+    if pnl_value > 0:
+        alert_type = telegram.EMOJI_TRADE_WITH_PROFIT
+    else:
+        alert_type = telegram.EMOJI_TRADE_WITH_LOSS    
+        
+    telegram_prefix = telegram.get_telegram_prefix(bot)
+
+    order_side = "SELL"
+    order_avg_price = 0
+
+    # call send_telegram_alert with the appropriate alert type
+    telegram.send_telegram_alert(
+        telegram_token=telegram_token,
+        telegram_prefix=telegram_prefix,
+        emoji=alert_type,
+        date=current_datetime, 
+        symbol=symbol, 
+        timeframe=bot,
+        strategy="",
+        ordertype=order_side,
+        unitValue=order_avg_price,
+        amount=qty,
+        trade_against_value=order_avg_price*qty,
+        pnlPerc=pnl_perc,
+        pnl_trade_against=pnl_value,
+        exit_reason=reason)
         
 def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percentage = 100, take_profit_num = 0, convert_all_balance: bool = False):
 
@@ -335,10 +410,12 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percenta
                 buy_order_id = str(0)
             else:
                 # get Buy_Order_Id from positions table
-                df_pos = database.get_positions_by_bot_symbol_position(connection=database.conn,
-                                                                       bot=bot, 
-                                                                       symbol=symbol, 
-                                                                       position=1)
+                df_pos = database.get_positions_by_bot_symbol_position(
+                    connection=database.conn,
+                    bot=bot, 
+                    symbol=symbol, 
+                    position=1
+                )
                 
                 if not df_pos.empty:
                     buy_order_id = str(df_pos['Buy_Order_Id'].iloc[0])
@@ -372,26 +449,29 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percenta
                         # lock values from parcial sales amounts
                         lock_values = config.get_setting("lock_values")
                         if lock_values:
-                            database.lock_value(database.conn, 
-                                                position_id=df_pos['Id'].iloc[0],
-                                                buy_order_id=buy_order_id,
-                                                amount=order_avg_price*order_qty
-                                                )
+                            database.lock_value(
+                                database.conn, 
+                                position_id=df_pos['Id'].iloc[0],
+                                buy_order_id=buy_order_id,
+                                amount=order_avg_price*order_qty
+                            )
     
             # add to orders database table
-            pnl_value, pnl_perc = database.add_order_sell(database.conn,
-                                                          sell_order_id = sell_order_id,
-                                                          buy_order_id = buy_order_id,
-                                                          date = str(order_sell_date),
-                                                          bot = bot,
-                                                          symbol = symbol,
-                                                          price = order_avg_price,
-                                                          qty = order_qty,
-                                                          ema_fast = fast_ema,
-                                                          ema_slow = slow_ema,
-                                                          exit_reason = reason,
-                                                          sell_percentage = percentage)            
-                
+            pnl_value, pnl_perc = database.add_order_sell(
+                database.conn,
+                sell_order_id = sell_order_id,
+                buy_order_id = buy_order_id,
+                date = str(order_sell_date),
+                bot = bot,
+                symbol = symbol,
+                price = order_avg_price,
+                qty = order_qty,
+                ema_fast = fast_ema,
+                ema_slow = slow_ema,
+                exit_reason = reason,
+                sell_percentage = percentage
+            )            
+
             # determine the alert type based on the value of pnl_value
             if pnl_value > 0:
                 alert_type = telegram.EMOJI_TRADE_WITH_PROFIT
