@@ -78,6 +78,14 @@ def get_data(symbol, time_frame):
         frame.Time = pd.to_datetime(frame.Time, unit='ms')
         frame.index = frame.Time
         frame = frame[['Symbol', 'Price']]
+
+        # Remove the last row
+        # This functionality is valuable because our data collection doesn't always coincide precisely with the closing time of a candle. 
+        # As a result, the last row in our dataset represents the most current price information. 
+        # This becomes significant when applying technical analysis, as it directly influences the accuracy of metrics and indicators. 
+        # The implications extend to the decision-making process for buying or selling, making it essential to account for the real-time nature of the last row in our data.
+        frame = frame.drop(frame.index[-1])
+
         return frame
     
 def read_arguments():    
