@@ -170,7 +170,7 @@ sql_add_order_sell = """
 def add_order_sell(connection, sell_order_id: str, buy_order_id: str, date: str, bot: str, symbol: str, price: float, qty: float, ema_fast: int, ema_slow: int, exit_reason: str, sell_percentage: int = 100):
     # sell_order_id and buy_order_id are the exchange ids from the exchange order
 
-    if buy_order_id == 0:
+    if buy_order_id == "0":
         msg = "No Buy_Order_ID!"
         print(msg)        
 
@@ -181,29 +181,38 @@ def add_order_sell(connection, sell_order_id: str, buy_order_id: str, date: str,
         pnl_value = 0
         
     else:
-        df_buy_order = get_orders_by_exchange_order_id(connection=connection, 
-                                                       order_id=buy_order_id)
-        # buy_order_id = buy_order_id #str(df_last_buy_order.loc[0, 'Id'])
-        buy_price = float(df_buy_order.loc[0, 'Price'])
-        buy_qty = float(df_buy_order.loc[0, 'Qty'])
-        
-        # order_id is the primary key of Orders table
-        order_id = str(df_buy_order.loc[0, 'Id'])
+        df_buy_order = get_orders_by_exchange_order_id(connection=connection, order_id=buy_order_id)
+        if not df_buy_order.empty:
+            # buy_order_id = buy_order_id #str(df_last_buy_order.loc[0, 'Id'])
+            buy_price = float(df_buy_order.loc[0, 'Price'])
+            buy_qty = float(df_buy_order.loc[0, 'Qty'])
+            
+            # order_id is the primary key of Orders table
+            order_id = str(df_buy_order.loc[0, 'Id'])
 
-        sell_price = price
-        sell_qty = qty
+            sell_price = price
+            sell_qty = qty
 
-        pnl_perc = (((sell_price)-(buy_price))/(buy_price))*100
-        pnl_perc = float(round(pnl_perc, 2))
+            pnl_perc = (((sell_price)-(buy_price))/(buy_price))*100
+            pnl_perc = float(round(pnl_perc, 2))
 
-        # 50% = 0.5
-        # percentage = sell_percentage/100
+            # 50% = 0.5
+            # percentage = sell_percentage/100
 
-        # calc the PnL value
-        # since we can make multiple sells, I will use the buy_qty = sell_qty to get the pnl_value for the partial sold position 
-        # pnl_value = (sell_price*sell_qty)-(buy_price*buy_qty)
-        pnl_value = (sell_price*sell_qty)-(buy_price*sell_qty)
-        pnl_value = float(round(pnl_value, config.n_decimals))
+            # calc the PnL value
+            # since we can make multiple sells, I will use the buy_qty = sell_qty to get the pnl_value for the partial sold position 
+            # pnl_value = (sell_price*sell_qty)-(buy_price*buy_qty)
+            pnl_value = (sell_price*sell_qty)-(buy_price*sell_qty)
+            pnl_value = float(round(pnl_value, config.n_decimals))
+        else:
+            msg = "No Buy_Order_ID!"
+            print(msg)        
+
+            order_id = str(0)
+            buy_price = 0
+            buy_qty = 0
+            pnl_perc = 0
+            pnl_value = 0
   
     side = "SELL"
 
@@ -353,7 +362,7 @@ def get_positions_by_bot_position(connection, bot: str, position: int):
     return pd.read_sql(sql_get_positions_by_bot_position, connection, params=(bot, position))
 
 sql_get_unrealized_pnl_by_bot = """
-    SELECT pos.Bot, pos.Symbol, pos.PnL_Perc, pos.PnL_Value, pos.Take_Profit_1 as TP1, pos.Take_Profit_2 as TP2, pos.Take_Profit_3 as TP3, pos.Take_Profit_4 as TP4, ROUND((pos.Qty/ord.Qty)*100,2) as "RPQ%", pos.Qty, pos.Buy_Price, (pos.Qty*pos.Buy_Price) Position_Value, pos.Date, pos.Duration, pos.Ema_Fast, pos.Ema_Slow
+    SELECT pos.Id, pos.Bot, pos.Symbol, pos.PnL_Perc, pos.PnL_Value, pos.Take_Profit_1 as TP1, pos.Take_Profit_2 as TP2, pos.Take_Profit_3 as TP3, pos.Take_Profit_4 as TP4, ROUND((pos.Qty/ord.Qty)*100,2) as "RPQ%", pos.Qty, pos.Buy_Price, (pos.Qty*pos.Buy_Price) Position_Value, pos.Date, pos.Duration, pos.Ema_Fast, pos.Ema_Slow
     FROM Positions pos
     JOIN Orders ord ON pos.Buy_Order_Id = ord.Exchange_Order_Id 
     WHERE 

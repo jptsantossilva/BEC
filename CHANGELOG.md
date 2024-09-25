@@ -2,6 +2,15 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2024-09-25]
+ 
+### Added
+- 
+### Changed
+- 
+### Fixed 
+- Trading - Auto Switch - The auto switch is getting the latest candle data of BTC to make decisions. Previously, was mistakenly including the current real-time price along with daily close data. This has been corrected to only use the previous daily close prices.
+
 ## [2024-09-22]
 
 ### IMPORTANT NOTE:
