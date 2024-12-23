@@ -307,7 +307,7 @@ def main(time_frame):
     binance.create_balance_snapshot(telegram_prefix="")
 
     # run backtesting for all available BTC Strategies 
-    btc_pair = "BTCUSDT"
+    btc_pair = "BTCUSDC"
     df_strategies_btc = database.get_strategies_for_btc(database.conn)
     for index, row in df_strategies_btc.iterrows():    
         # Dynamically import the entire strategies module
