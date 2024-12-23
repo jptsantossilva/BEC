@@ -290,7 +290,7 @@ def run():
     df_symbols = database.get_distinct_symbol_from_positions_where_position1(database.conn)
 
     # Symbols to add - BTC + ETH
-    symbols_to_add = ['BTCUSDT', 'ETHUSDT'] 
+    symbols_to_add = ['BTCUSDC', 'ETHUSDC'] 
     # Check if symbol is not in df_symbols and concatenate
     df_to_add = pd.DataFrame({'Symbol': symbols_to_add})
     df_symbols = pd.concat([df_symbols, df_to_add[~df_to_add['Symbol'].isin(df_symbols['Symbol'].values)]], ignore_index=True)

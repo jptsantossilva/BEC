@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 ## [2024-09-25]
 
 ### Added
+- Trading - added the option to use trade against USDC
+### Changed
+- 
+### Fixed 
+- 
+
+## [2024-09-25]
+
+### Added
 - 
 ### Changed
 - 

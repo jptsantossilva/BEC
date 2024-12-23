@@ -95,7 +95,7 @@ def read_arguments():
     if n < 2:
         print("Argument is missing")
         time_frame = input('Enter timeframe (1d, 8h, 4h):')
-        # trade_against = input('Trade against USDT or BTC:')
+        # trade_against = input('Trade against USDT/USDC or BTC:')
     else:
         # argv[0] in Python is always the name of the script.
         time_frame = sys.argv[1]
@@ -170,7 +170,7 @@ def set_market_phases_to_symbols(symbols, time_frame):
 def trade_against_auto_switch():
 
     if config.trade_against_switch:
-        btc_pair = "BTCUSDT"
+        btc_pair = "BTCUSDC"
         btc_timeframe = "1d"
         sell_timeframes = ["1d", "4h", "1h"]
         sell_message = "Trade against auto switch"
@@ -214,8 +214,8 @@ def trade_against_auto_switch():
             buy_condition = buy_condition_curr and not buy_condition_previous
             sell_condition = buy_condition_previous and not buy_condition_curr
 
-        # convert USDT to BTC
-        if config.trade_against == "USDT" and buy_condition:
+        # convert USDT/USDC to BTC
+        if config.trade_against in ["USDC", "USDT"] and buy_condition:
             
             ################
             # Alert message
@@ -225,12 +225,12 @@ def trade_against_auto_switch():
             # format the current date and time
             formatted_now = now.strftime("%Y-%m-%d %H:%M:%S")
 
-            msg = f"Trade Against Auto Switch Triggered!\n{formatted_now}\nWe are in Bull Market {telegram.EMOJI_BULL}\nSelling all positions to USDT\nReleasing locked values\nConverting all USDT balance to BTC."
+            msg = f"Trade Against Auto Switch Triggered!\n{formatted_now}\nWe are in Bull Market {telegram.EMOJI_BULL}\nSelling all positions to USDT/USDC\nReleasing locked values\nConverting all USDC balance to BTC."
             msg = telegram.telegram_prefix_signals_sl + msg
             telegram.send_telegram_message(telegram.telegram_token_signals, telegram.EMOJI_ENTER_TRADE, msg)
             ################
 
-            # sell all positions to USDT
+            # sell all positions to USDT/USDC
             for tf in sell_timeframes:
                 df_sell = database.get_positions_by_bot_position(database.conn, bot=tf, position=1)
                 list_to_sell = df_sell.Symbol.tolist()
@@ -240,7 +240,7 @@ def trade_against_auto_switch():
             # release locked values from the balance
             database.release_all_values(database.conn)
             
-            # convert all USDT to BTC
+            # convert all USDT/USDC to BTC
             binance.create_buy_order(symbol=btc_pair, bot=btc_timeframe, convert_all_balance=True)
                 
             # change trade against to BTC
@@ -248,7 +248,7 @@ def trade_against_auto_switch():
             min_position_size = 0.0001
             config.set_setting("min_position_size", min_position_size)
 
-        # convert BTC to USDT
+        # convert BTC to USDT/USDC
         elif config.trade_against == "BTC" and sell_condition:
             ################
             # Alert message
@@ -258,7 +258,7 @@ def trade_against_auto_switch():
             # format the current date and time
             formatted_now = now.strftime("%Y-%m-%d %H:%M:%S")
 
-            msg = f"Trade Against Auto Switch Triggered!\n{formatted_now}\nWe are in Bear Market {telegram.EMOJI_BEAR}\nSelling all positions to BTC\nReleasing locked values\nConverting all BTC balance to USDT."
+            msg = f"Trade Against Auto Switch Triggered!\n{formatted_now}\nWe are in Bear Market {telegram.EMOJI_BEAR}\nSelling all positions to BTC\nReleasing locked values\nConverting all BTC balance to USDT/USDC."
             msg = telegram.telegram_prefix_signals_sl + msg
             telegram.send_telegram_message(telegram.telegram_token_signals, telegram.EMOJI_ENTER_TRADE, msg)
             ################
@@ -273,11 +273,11 @@ def trade_against_auto_switch():
             # release locked values from the balance
             database.release_all_values(database.conn)
 
-            # convert all BTC to USDT
+            # convert all BTC to USDT/USDC
             binance.create_sell_order(symbol=btc_pair, bot=btc_timeframe, convert_all_balance=True, reason=f"{sell_message}")
 
             # change trade against to USDT
-            config.set_trade_against("USDT")
+            config.set_trade_against("USDC")
             min_position_size = 20
             config.set_setting("min_position_size", min_position_size)
 

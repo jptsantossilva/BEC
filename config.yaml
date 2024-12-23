@@ -13,6 +13,6 @@ take_profit_1_amount: 5
 take_profit_2: 0
 take_profit_2_amount: 5
 tradable_balance_ratio: 1.0
-trade_against: USDT
+trade_against: USDC
 trade_against_switch: false
 trade_top_performance: 50

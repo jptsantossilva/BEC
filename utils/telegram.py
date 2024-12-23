@@ -10,7 +10,7 @@ logging.basicConfig(filename=log_filename, level=logging.INFO,
                     format='%(asctime)s %(message)s', datefmt='%Y-%m-%d %I:%M:%S %p -')
 
 # get settings from config file
-# get trade_against to know which telegram bots to use (USDT or BTC)
+# get trade_against to know which telegram bots to use (USDT/USDC or BTC)
 try:
     with open("config.yaml", "r") as file:
         config = yaml.safe_load(file)

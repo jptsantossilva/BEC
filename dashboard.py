@@ -487,7 +487,6 @@ def unrealized_pnl():
                     
             # get balance
             if not disable_sell_confirmation1:
-                # sell_symbol = "INJUSDT" # test
                 sell_amount_perc = st.slider(
                     label='Amount', 
                     min_value=10, 
@@ -899,10 +898,10 @@ def settings():
             def trade_against_switch_change():
                 config.set_setting("trade_against_switch", st.session_state.trade_against_switch)
             trade_against_switch = st.checkbox(
-                label="Auto switch between trade against USDT or BTC",
+                label="Auto switch between trade against USDT/USDC or BTC",
                 key="trade_against_switch",
                 on_change=trade_against_switch_change,
-                help="""Considering the chosen Bitcoin strategy will decide whether it is a Bull or Bear market. If Bull then will convert USDT to BTC and trade against BTC. If Bear will convert BTC into USDT and trade against USDT."""
+                help="""Considering the chosen Bitcoin strategy will decide whether it is a Bull or Bear market. If Bull then will convert USDT/USDC to BTC and trade against BTC. If Bear will convert BTC into USDT/USDC and trade against USDT/USDC."""
             )
         
         run_backtesting = st.button("Run Backtesting", help="Please be patient, as it could take a few hours to complete.")
@@ -995,10 +994,10 @@ def settings():
                 min_position_size_change()
             trade_against = st.selectbox(
                 label='Trade Against',
-                options=['USDT', 'BTC'], 
+                options=['USDC','USDT', 'BTC'], 
                 key="trade_against",
                 on_change=trade_against_change,
-                help="""Trade against USDT or BTC
+                help="""Trade against USDT/USDC or BTC
                     """
             )
             
@@ -1053,7 +1052,7 @@ def settings():
                     st.session_state.min_position_size = config.get_setting("min_position_size")
                 MIN_POSITION_SIZE_USD = 20
                 def min_position_size_change():
-                    if st.session_state.trade_against in ["USDT"]:
+                    if st.session_state.trade_against in ["USDC", "USDT"]:
                         if int(st.session_state.min_position_size) < MIN_POSITION_SIZE_USD:
                             st.session_state.min_position_size = MIN_POSITION_SIZE_USD
                     elif st.session_state.trade_against == "BTC":
@@ -1061,7 +1060,7 @@ def settings():
                             st.session_state.min_position_size = 0.0001                    
                     config.set_setting("min_position_size", st.session_state.min_position_size)
 
-                if trade_against in ["USDT"]:
+                if trade_against in ["USDC", "USDT"]:
                     trade_min_val = MIN_POSITION_SIZE_USD
                     trade_step = 10
                     trade_format = None
@@ -1077,7 +1076,7 @@ def settings():
                     format=trade_format,
                     key="min_position_size",
                     on_change=min_position_size_change,
-                    help="""If trade_against = USDT => min_position_size = 20
+                    help="""If trade_against = USDT/USDC => min_position_size = 20
                         \nIf trade_against = BTC => min_position_size = 0.0001
                     """
                 )      

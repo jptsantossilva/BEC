@@ -85,7 +85,7 @@ def separate_symbol_and_trade_against(symbol):
     if symbol.endswith("BTC"):
         symbol_only = symbol[:-3]
         symbol_stable = symbol[-3:]
-    elif symbol.endswith(("BUSD","USDT")):    
+    elif symbol.endswith(("BUSD","USDT","USDC")):    
         symbol_only = symbol[:-4]
         symbol_stable = symbol[-4:]
 
@@ -127,7 +127,7 @@ def calc_stake_amount(symbol, bot):
         
         if symbol == "BTC":
             stake_amount = round(stake_amount, 8)
-        elif symbol in ("BUSD", "USDT"):
+        elif symbol in ("BUSD", "USDT", "USDC"):
             stake_amount = int(stake_amount)
         
         # make sure the size is >= the minimum size
@@ -611,12 +611,12 @@ def create_balance_snapshot(telegram_prefix: str):
 
     # Create a dictionary of tickers and their corresponding prices
     ticker_prices = {ticker['symbol']: float(ticker['price']) for ticker in ticker_info}
-    btc_price = ticker_prices.get('BTCUSDT')
+    btc_price = ticker_prices.get('BTCUSDC')
 
     # Calculate yesterday's date
     date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
 
-    # Calculate the USDT value of each coin in the user’s account
+    # Calculate the USD value of each coin in the user’s account
     symbol_values = []
     for symbol_balance in account_balances:
         # Get the coin symbol and the free and locked balance of each coin
@@ -625,7 +625,7 @@ def create_balance_snapshot(telegram_prefix: str):
         # locked_balance = float(coin_balance['locked'])
     
         # If the coin is USDT and the total balance is greater than 1, add it to the list of coins with their USDT values
-        if symbol == 'USDT' and unlocked_balance > 1:
+        if symbol in ["USDT", "USDC"] and unlocked_balance > 1:
             
             symbol_balance = unlocked_balance
             symbol_usd_price = 1
@@ -638,9 +638,9 @@ def create_balance_snapshot(telegram_prefix: str):
         # Otherwise, check if the coin has a USDT trading pair or a BTC trading pair
         elif unlocked_balance > 0.0:
             # Check if the coin has a USDT trading pair
-            if (any(symbol + 'USDT' in i for i in ticker_prices)):
-                # If it does, calculate its USDT value and add it to the list of coins with their USDT values
-                ticker_symbol = symbol + 'USDT'
+            if (any(symbol + 'USDC' in i for i in ticker_prices)):
+                # If it does, calculate its USDC value and add it to the list of coins with their USDC values
+                ticker_symbol = symbol + 'USDC'
                 # ticker_price = ticker_prices.get(ticker_symbol)
                 # coin_usdt_value = (unlocked_balance) * ticker_price
 

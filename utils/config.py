@@ -273,7 +273,7 @@ def get_all_settings():
     global n_decimals
     if trade_against == "BTC":
         n_decimals = 8
-    elif trade_against in ["USDT"]:    
+    elif trade_against in ["USDT", "USDC"]:    
         n_decimals = 2
 
 get_all_settings()

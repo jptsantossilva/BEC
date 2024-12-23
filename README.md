@@ -16,7 +16,7 @@ Check [here](https://github.com/jptsantossilva/BEC/blob/main/coinpairBestEma%20F
 
 ## Features
 - Runs 1D, 4H and 1H time frames.
-- Trade against stables pairs (USDT) or against BTC.
+- Trade against stables pairs (USDT/USDC) or against BTC.
 - Automatically chooses, on a daily basis, symbols that are in accumulation phase (price close>DSMA200>DSMA50) or bullish phase (price close>DSMA50>DSMA200).
 - For those symbols in accumulation and bullish phases, calculates EMA cross combination (with [backtesting python library](https://kernc.github.io/backtesting.py)) with highest returns for 1D, 4H and 1H time frames. 4-years of historicals prices are used in backtesting. 
 - Each symbol will be traded with its best EMA cross on each timeframe. 

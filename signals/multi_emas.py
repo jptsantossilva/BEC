@@ -238,7 +238,7 @@ def run():
         database.conn = database.connect()
 
     # trade_against = config.trade_against
-    trade_against = "USDT"
+    trade_against = "USDC"
     symbols = get_symbols(trade_against=trade_against)
 
     # test
