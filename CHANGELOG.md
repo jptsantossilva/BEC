@@ -2,7 +2,7 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
-## [2024-09-25]
+## [2024-12-26]
 
 ### Added
 - Trading - added the option to use trade against USDC
