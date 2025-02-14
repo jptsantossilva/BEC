@@ -170,7 +170,8 @@ def set_market_phases_to_symbols(symbols, time_frame):
 def trade_against_auto_switch():
 
     if config.trade_against_switch:
-        btc_pair = "BTCUSDC"
+        stablecoin = config.trade_against_switch_stablecoin #config.get_setting("trade_against_switch_stablecoin")
+        btc_pair = f"BTC{stablecoin}"
         btc_timeframe = "1d"
         sell_timeframes = ["1d", "4h", "1h"]
         sell_message = "Trade against auto switch"
@@ -241,7 +242,8 @@ def trade_against_auto_switch():
             database.release_all_values(database.conn)
             
             # convert all USDT/USDC to BTC
-            binance.create_buy_order(symbol=btc_pair, bot=btc_timeframe, convert_all_balance=True)
+            btc_pair_to_buy = f"BTC{config.trade_against}"
+            binance.create_buy_order(symbol=btc_pair_to_buy, bot=btc_timeframe, convert_all_balance=True)
                 
             # change trade against to BTC
             config.set_trade_against("BTC")
@@ -273,11 +275,12 @@ def trade_against_auto_switch():
             # release locked values from the balance
             database.release_all_values(database.conn)
 
-            # convert all BTC to USDT/USDC
-            binance.create_sell_order(symbol=btc_pair, bot=btc_timeframe, convert_all_balance=True, reason=f"{sell_message}")
+            # convert all BTC to Stablecoin
+            btc_pair_to_sell = f"BTC{config.trade_against_switch_stablecoin}"
+            binance.create_sell_order(symbol=btc_pair_to_sell, bot=btc_timeframe, convert_all_balance=True, reason=f"{sell_message}")
 
-            # change trade against to USDT
-            config.set_trade_against("USDC")
+            # change trade against to stablecoin
+            config.set_trade_against(config.trade_against_switch_stablecoin)
             min_position_size = 20
             config.set_setting("min_position_size", min_position_size)
 
@@ -307,7 +310,8 @@ def main(time_frame):
     binance.create_balance_snapshot(telegram_prefix="")
 
     # run backtesting for all available BTC Strategies 
-    btc_pair = "BTCUSDC"
+    stablecoin = config.get_setting("trade_against_switch_stablecoin")
+    btc_pair = f"BTC{stablecoin}"
     df_strategies_btc = database.get_strategies_for_btc(database.conn)
     for index, row in df_strategies_btc.iterrows():    
         # Dynamically import the entire strategies module

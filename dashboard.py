@@ -584,16 +584,45 @@ def signals():
         df_s = database.get_all_signals_log(connection, num_rows=100)
         st.dataframe(df_s)
 
+@st.fragment
 def blacklist():
-    with tab_blacklist:
-        st.subheader("Blacklist")
-        df_blacklist = database.get_symbol_blacklist(connection)
-        edited_blacklist = st.data_editor(df_blacklist, num_rows="dynamic")
-        blacklist_apply_changes = st.button("Save")
 
-        if blacklist_apply_changes:
-            edited_blacklist.to_sql(name='Blacklist',con=connection, index=True, if_exists="replace")
-            st.success("Blacklist changes saved")
+    st.subheader("Blacklist")
+
+    st.caption("""
+        The blacklist allows you to exclude specific symbol tickers from trading.<br>
+        When adding a ticker, enter only the base symbol (e.g., ETH, SOL, LTC) instead of the full trading pair (e.g., ETHUSDT, SOLUSDC, LTCBTC).""",
+        unsafe_allow_html=True)
+
+    df_blacklist = database.get_symbol_blacklist(connection)
+
+    # Hide 'Id' but keep it for internal tracking
+    df_blacklist_display = df_blacklist[["Symbol"]]  # Only show 'Symbol' column
+
+    # Allow user to edit the blacklist without showing 'Id'
+    edited_blacklist_display = st.data_editor(df_blacklist_display, num_rows="dynamic")
+
+    # Detect deleted rows (Symbols that were in df_blacklist but are missing in edited_blacklist_display)
+    deleted_symbols = df_blacklist[~df_blacklist["Symbol"].isin(edited_blacklist_display["Symbol"])]
+
+    # Merge back to retain Ids and capture new symbols
+    edited_blacklist = df_blacklist.merge(
+        edited_blacklist_display, on="Symbol", how="right"
+    )
+
+    # Ensure Ids for existing rows remain the same
+    edited_blacklist["Id"] = edited_blacklist["Id"].apply(lambda x: None if pd.isna(x) else int(x))
+    
+    # Save button
+    if st.button("Save", key="save_blacklist"):
+        # Update the database (Insert/Update)
+        database.update_blacklist(connection, edited_blacklist)
+
+            # Remove deleted rows
+        if not deleted_symbols.empty:
+            database.delete_from_blacklist(connection, deleted_symbols)
+
+        st.rerun(scope="fragment")
 
 def backtesting_results():
     with tab_backtesting_results:
@@ -686,9 +715,11 @@ def backtesting_results():
             # Convert search_dates tuple to datetime objects
             start_date = datetime(search_date_ini.year, search_date_ini.month, search_date_ini.day)
             end_date = datetime(search_date_end.year, search_date_end.month, search_date_end.day)
-            # Now perform the search
-            df_bt_results = df_bt_results[(df_bt_results['Backtest_Start_Date'] >= start_date) & (df_bt_results['Backtest_End_Date'] <= end_date)]
-
+            # Find overlapping periods
+            df_bt_results = df_bt_results[
+                (df_bt_results['Backtest_Start_Date'] <= end_date) & 
+                (df_bt_results['Backtest_End_Date'] >= start_date)
+            ]
         # df_bt_results = database.get_all_backtesting_results(database.conn)
 
         # add backtest link
@@ -751,13 +782,17 @@ def backtesting_results():
                 start_date = datetime(search_date_ini.year, search_date_ini.month, search_date_ini.day)
                 end_date = datetime(search_date_end.year, search_date_end.month, search_date_end.day)
                 # Now perform the search
-                df_bt_trades = df_bt_trades[(df_bt_trades['EntryTime'] >= start_date) & (df_bt_trades['ExitTime'] <= end_date)]
-
+                # df_bt_trades = df_bt_trades[(df_bt_trades['EntryTime'] >= start_date) & (df_bt_trades['ExitTime'] <= end_date)]
+                # Find overlapping periods
+                df_bt_trades = df_bt_trades[
+                    (df_bt_trades['EntryTime'] <= end_date) & 
+                    (df_bt_trades['ExitTime'] >= start_date)
+                ]
 
             st.dataframe(df_bt_trades)
 
-            # Count the number of trades with ReturnPct below 0
-            trades_below_minus20 = df_bt_trades[df_bt_trades['ReturnPct'] < 20].shape[0]
+            # Count the number of trades with ReturnPct below -20
+            trades_below_minus20 = df_bt_trades[df_bt_trades['ReturnPct'] < -20].shape[0]
 
             # Count the number of trades with ReturnPct above 100
             trades_above_100 = df_bt_trades[df_bt_trades['ReturnPct'] > 100].shape[0]
@@ -878,7 +913,7 @@ def settings():
         
         container_btc_strategy = st.container(border=True)
         with container_btc_strategy:
-            st.write("**BTC Strategy**")
+            st.write("**Bitcoin Strategy**")
 
             if "btc_strategy" not in st.session_state:
                 st.session_state.btc_strategy = config.get_setting("btc_strategy")
@@ -898,17 +933,28 @@ def settings():
             def trade_against_switch_change():
                 config.set_setting("trade_against_switch", st.session_state.trade_against_switch)
             trade_against_switch = st.checkbox(
-                label="Auto switch between trade against USDT/USDC or BTC",
+                label="Automatically switch between trading against Stablecoins (USDT, USDC) or Bitcoin (BTC)",
                 key="trade_against_switch",
                 on_change=trade_against_switch_change,
-                help="""Considering the chosen Bitcoin strategy will decide whether it is a Bull or Bear market. If Bull then will convert USDT/USDC to BTC and trade against BTC. If Bear will convert BTC into USDT/USDC and trade against USDT/USDC."""
+                help="""Considering the chosen Bitcoin strategy will decide whether it is a Bull or Bear market. If Bull then will convert stablecoin to BTC and trade against BTC. If Bear will convert BTC into stablecoin and trade against stablecoin."""
+            )
+
+            if "trade_against_switch_stablecoin" not in st.session_state:
+                st.session_state.trade_against_switch_stablecoin = config.get_setting("trade_against_switch_stablecoin")
+            def trade_against_switch_stablecoin_change():
+                config.set_setting("trade_against_switch_stablecoin", st.session_state.trade_against_switch_stablecoin)
+            trade_against_switch_stablecoin = st.selectbox(
+                label='Stablecoin for auto-switching',
+                options=['USDC','USDT'], 
+                key="trade_against_switch_stablecoin",
+                on_change=trade_against_switch_stablecoin_change,
             )
         
-        run_backtesting = st.button("Run Backtesting", help="Please be patient, as it could take a few hours to complete.")
-        if run_backtesting:
-            with st.spinner('This task is taking a leisurely stroll through the digital landscape (+/- 1h). Why not do the same? Stretch those legs, grab a snack, or contemplate the meaning of life.'):
-                trade_against = config.get_setting("trade_against") 
-                force_run_backtest(time_frame="1d")
+        # run_backtesting = st.button("Run Backtesting", help="Please be patient, as it could take a few hours to complete.")
+        # if run_backtesting:
+        #     with st.spinner('This task is taking a leisurely stroll through the digital landscape (+/- 1h). Why not do the same? Stretch those legs, grab a snack, or contemplate the meaning of life.'):
+        #         trade_against = config.get_setting("trade_against") 
+        #         force_run_backtest(time_frame="1d")
 
         container_bot_prefix = st.container(border=True)
         with container_bot_prefix:
@@ -997,7 +1043,7 @@ def settings():
                 options=['USDC','USDT', 'BTC'], 
                 key="trade_against",
                 on_change=trade_against_change,
-                help="""Trade against USDT/USDC or BTC
+                help="""Trade against USDC, USDT or BTC
                     """
             )
             
@@ -1008,7 +1054,7 @@ def settings():
             max_number_of_open_positions = st.number_input(
                 label="Max Number of Open Positions",
                 min_value=1,
-                max_value=50,
+                # max_value=50,
                 step=1,
                 key="max_number_of_open_positions",
                 on_change=max_number_of_open_positions_change,
@@ -1026,7 +1072,8 @@ def settings():
             available_balance = current_balance - total_locked_values
             available_balance = round(available_balance, num_decimals)
             num_open_positions = database.get_num_open_positions(database.conn)
-            remaining_positions = config.get_setting("max_number_of_open_positions")-num_open_positions
+            max_number_of_open_positions = config.get_setting("max_number_of_open_positions")
+            remaining_positions = max_number_of_open_positions-num_open_positions
             if remaining_positions <= 0:
                 remaining_positions = 0
                 position_size = 0
@@ -1034,15 +1081,33 @@ def settings():
                 position_size = available_balance/remaining_positions
                 position_size = round(position_size, num_decimals)
 
+            # st.caption(f"""
+            #     Balance: {current_balance} {ta}
+            #     <br>
+            #     Total Locked Values: {total_locked_values} {ta}
+            #     <br>
+            #     Available Open Positions: {remaining_positions}
+            #     <br>
+            #     Next Trade Position Size = Balance - Total Locked Values / Available Open Positions = **{position_size} {ta}**
+            #     """,
+            #     help="Next Trade Position Size = (Balance - Total Locked Values) ÷ Available Open Positions",
+            #     unsafe_allow_html=True)
+
             st.caption(f"""
-                Balance: {current_balance} {ta}
-                <br>
-                Total Locked Values: {total_locked_values} {ta}
-                <br>
-                Available Open Positions: {remaining_positions}
-                <br>
-                Next Trade Position Size = Balance - Total Locked Values / Available Open Positions = **{position_size} {ta}**
-                """, unsafe_allow_html=True)
+                Balance: {current_balance} {ta}<br>
+                Total Locked Values: {total_locked_values} {ta}<br>
+                Available Open Positions: {remaining_positions}<br>
+                Next Trade Position Size: **{position_size} {ta}**<br>
+                """,
+                help="Next Trade Position Size = (Balance - Total Locked Values) ÷ Available Open Positions",
+                unsafe_allow_html=True)
+
+            # st.latex(r"""
+            # \text{Next Trade Position Size} = 
+            # \frac{\text{Balance} - \text{Total Locked Values}}{\text{Available Open Positions}}
+            # """)
+
+            # st.caption(f"Next Trade Position Size: {position_size} {ta}", help="Next Trade Position Size = (Balance - Total Locked Values) ÷ Available Open Positions")
             
             col1_pos, col2_stop = st.columns(2)
             
@@ -1118,8 +1183,12 @@ def settings():
             
             if "tradable_balance_ratio" not in st.session_state:
                 st.session_state.tradable_balance_ratio = config.get_setting("tradable_balance_ratio")*100
+            
+            # st.session_state.tradable_balance_ratio
+
             def tradable_balance_ratio_change():
                 config.set_setting("tradable_balance_ratio", st.session_state.tradable_balance_ratio/100)
+
             tradable_balance_ratio = st.slider(
                 label='Tradable Balance Ratio',
                 min_value=0, 
@@ -1379,7 +1448,10 @@ def show_main_page():
     unrealized_pnl()
     signals()
     top_performers()
-    blacklist()
+
+    with tab_blacklist:
+        blacklist()
+    
     backtesting_results()
     settings()
 

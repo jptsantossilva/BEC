@@ -1,10 +1,15 @@
 import sqlite3
 import os
 import math
+import time
 from datetime import datetime
 import pandas as pd
+import yaml
+import shutil
 
 import streamlit_authenticator as stauth
+
+import streamlit as st
 
 from utils import config
 from utils import general
@@ -18,6 +23,10 @@ def connect(path: str = ""):
 
         # create tables if not exist
         create_tables(conn)
+
+        # migrate config file to database
+        migrate_config_to_db(conn)
+        
     except sqlite3.Error as e:
         print(e)
 
@@ -51,6 +60,152 @@ def get_users_credentials(connection):
         formatted_credentials['usernames'][username] = user_info
 
     return formatted_credentials
+
+
+# SETTINGS
+def get_setting(connection, setting_name):
+    """Fetches setting from database. If missing, initializes it with a default."""
+
+    # Default values for settings
+    default_values = {
+        "bot_1d": True,
+        "bot_4h": True,
+        "bot_1h": True,
+        "main_strategy": "ema_cross_with_market_phases",
+        "btc_strategy": "market_phases",
+        "trade_against_switch": False,
+        "take_profit_1": 0,
+        "take_profit_1_amount": 5,
+        "take_profit_2": 0,
+        "take_profit_2_amount": 5,
+        "take_profit_3": 0,
+        "take_profit_3_amount": 5,
+        "take_profit_4": 0,
+        "take_profit_4_amount": 5,
+        "run_mode": "prod",
+        "lock_values": True,
+        "bot_prefix": "BEC",
+        "max_number_of_open_positions": 20,
+        "tradable_balance_ratio": 1.0,
+        "min_position_size": 20,
+        "trade_against": "USDC",
+        "stop_loss": 10,
+        "trade_top_performance": 500,
+        "stake_amount_type": "unlimited",
+        "trade_against_switch_stablecoin": "USDC",
+    }
+
+    # Corresponding comments for each setting
+    setting_comments = {
+        "bot_1d": "Enable 1-day bot trading (True/False).",
+        "bot_4h": "Enable 4-hour bot trading (True/False).",
+        "bot_1h": "Enable 1-hour bot trading (True/False).",
+        "main_strategy": "Primary strategy used for trading.",
+        "btc_strategy": "Strategy for trading BTC.",
+        "trade_against_switch": "Toggle trading against BTC or USDT/USDC (True/False).",
+        "take_profit_1": "First take profit percentage.",
+        "take_profit_1_amount": "Amount percentage for first take profit.",
+        "take_profit_2": "Second take profit percentage.",
+        "take_profit_2_amount": "Amount percentage for second take profit.",
+        "take_profit_3": "Third take profit percentage.",
+        "take_profit_3_amount": "Amount percentage for third take profit.",
+        "take_profit_4": "Fourth take profit percentage.",
+        "take_profit_4_amount": "Amount percentage for fourth take profit.",
+        "run_mode": "Trading mode ('prod' for production, 'test' for testing).",
+        "lock_values": "Any amount obtained from partially selling a position will be temporarily locked and cannot be used to purchase another position until the entire position is sold. (True/False).",
+        "bot_prefix": "Prefix used for bot-related identifiers.",
+        "max_number_of_open_positions": "Maximum number of open trades at a time.",
+        "tradable_balance_ratio": "Fraction of balance allowed for trading (0.0-1.0).",
+        "min_position_size": "Minimum trade size.",
+        "trade_against": "The asset to trade against ('BTC', 'USDC', 'USDT').",
+        "stop_loss": "Stop-loss percentage.",
+        "trade_top_performance": "Top assets considered for trading.",
+        "stake_amount_type": "Determines staking limits ('unlimited' or other values).",
+        "trade_against_switch_stablecoin": "Choose the stablecoin for auto-switching.",
+    }
+    
+    try:
+        cursor = connection.cursor()
+
+        # Try fetching setting from the database
+        cursor.execute("SELECT value FROM Settings WHERE name = ?", (setting_name,))
+        row = cursor.fetchone()
+
+        if row:
+            value = row[0]  # Return the value from the database
+        
+            # Convert back to the correct data type
+            if setting_name in default_values:
+                default_type = type(default_values[setting_name])
+
+                try:
+                    if default_type == bool:
+                        return value.lower() in ("true", "1")  # Convert 'true'/'1' to boolean
+                    elif default_type == int:
+                        return int(value)
+                    elif default_type == float:
+                        return float(value)
+                    return value  # Return as string if it's not numeric or boolean
+                except ValueError:
+                    print(f"Warning: Could not convert {setting_name} value '{value}' to {default_type}. Returning as string.")
+                    pass  # If conversion fails, return as string
+        
+            return value  # Return raw value if no default type is found
+
+        # Setting not found, use default
+        if setting_name in default_values:
+            setting_value = default_values[setting_name]
+            setting_comment = setting_comments.get(setting_name, "No description available.")
+        
+            # Insert default value into the database
+            cursor.execute(
+                "INSERT OR IGNORE INTO Settings (name, value, comment) VALUES (?, ?, ?)", 
+                (setting_name, str(setting_value), setting_comment)
+            )
+            connection.commit()
+
+            return setting_value  # Return the default value
+
+        raise ValueError(f"Setting '{setting_name}' not found and no default available.")    
+    
+    except sqlite3.Error as e:
+        print(f"Database error: {e}")
+        raise
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        raise
+
+def set_trade_against(connection, value):
+    """Sets the trade_against variable in the database."""
+    try:
+        cursor = connection.cursor()
+
+        # Use UPSERT (INSERT or UPDATE)
+        cursor.execute(
+            "INSERT INTO Settings (name, value) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET value = ?",
+            ("trade_against", str(value), str(value))
+        )
+        connection.commit()
+
+    except sqlite3.Error as e:
+        print(f"Database error: {e}")
+        raise
+
+def set_setting(connection, name, value):
+    """Sets a setting in the database."""
+    try:
+        cursor = connection.cursor()
+
+        # Use UPSERT (INSERT or UPDATE)
+        cursor.execute(
+            "INSERT INTO Settings (name, value) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET value = ?",
+            (name, str(value), str(value))
+        )
+        connection.commit()
+
+    except sqlite3.Error as e:
+        print(f"Database error: {e}")
+        raise
 
 # ORDERS
 create_orders_table = """
@@ -681,9 +836,9 @@ sql_create_blacklist_table = """
     );
 """
 
-sql_get_symbol_blacklist = "SELECT * FROM Blacklist;"
 def get_symbol_blacklist(connection):
-    return pd.read_sql(sql_get_symbol_blacklist, connection, index_col="Id") 
+    sql_get_symbol_blacklist = "SELECT * FROM Blacklist;"
+    return pd.read_sql(sql_get_symbol_blacklist, connection) 
 
 sql_delete_all_blacklist = "DELETE FROM Blacklist;"
 def delete_all_blacklist(connection):
@@ -699,6 +854,81 @@ sql_add_blacklist = "INSERT OR REPLACE INTO Blacklist (Symbol) VALUES (?);"
 def add_blacklist(connection, symbols: list):
     with connection:
         connection.executemany(sql_add_blacklist, [(symbol,) for symbol in symbols])
+
+# def update_blacklist(connection, df_blacklist):
+#     """Update the Blacklist table without replacing it entirely."""
+#     cursor = connection.cursor()
+    
+#     for _, row in df_blacklist.iterrows():
+#         cursor.execute(
+#             """
+#             INSERT INTO Blacklist (Id, Symbol)
+#             VALUES (?, ?)
+#             ON CONFLICT(Id) DO UPDATE SET Symbol = excluded.Symbol;
+#             """,
+#             (row.name, row["Symbol"])
+#         )
+
+#     connection.commit()
+
+def update_blacklist(connection, df_blacklist):
+    """Efficiently update the Blacklist table without replacing it entirely."""
+    cursor = connection.cursor()
+
+    # Ensure 'Id' exists in the DataFrame, or use None to allow auto-increment
+    df_blacklist = df_blacklist.reset_index()  # Ensure 'Id' is a column, not index
+
+    # Convert Symbol to string, strip spaces, and ensure None/empty values are removed
+    df_blacklist["Symbol"] = df_blacklist["Symbol"].astype(str).str.strip()
+    
+    # Explicitly replace invalid values with None
+    df_blacklist["Symbol"] = df_blacklist["Symbol"].apply(
+        lambda x: None if x in ["", "None", "nan", "NaN"] else x
+    )
+    
+    # Drop rows where Symbol is still None or NaN
+    df_blacklist = df_blacklist.dropna(subset=["Symbol"])
+
+    # Convert NaN Ids to None (SQLite will auto-generate them)
+    df_blacklist["Id"] = df_blacklist["Id"].apply(lambda x: None if pd.isna(x) else int(x))
+
+    # Prepare data for batch execution
+    data = list(df_blacklist[["Id", "Symbol"]].itertuples(index=False, name=None))
+
+    if not data:  # Ensure there's valid data to insert
+        st.warning("No valid symbols to save.")
+        return
+
+    try: 
+        # Use `executemany()` for efficiency
+        cursor.executemany(
+            """
+            INSERT INTO Blacklist (Id, Symbol)
+            VALUES (?, ?)
+            ON CONFLICT(Id) DO UPDATE SET Symbol = excluded.Symbol;
+            """,
+            data
+        )
+
+        connection.commit()
+
+        st.success("Blacklist changes saved")
+        time.sleep(2)
+
+    except sqlite3.IntegrityError:
+        st.error("Symbol already exists!")
+
+def delete_from_blacklist(connection, df_blacklist):
+    """Delete symbols from the Blacklist table."""
+    cursor = connection.cursor()
+
+    # Delete rows based on the Symbol column
+    cursor.executemany(
+        "DELETE FROM Blacklist WHERE Symbol = ?",
+        [(symbol,) for symbol in df_blacklist["Symbol"]]
+    )
+
+    connection.commit()
     
 # STRATEGIES
 sql_create_strategies_table = """
@@ -1320,6 +1550,15 @@ def get_all_locked_values(connection):
     """
 
     return pd.read_sql(sql, connection)
+
+# Locked_Values
+sql_create_settings_table = """
+    CREATE TABLE IF NOT EXISTS Settings (
+        name TEXT PRIMARY KEY,
+        value TEXT,
+        comment TEXT
+    );
+"""
         
 # PRAGMA
 sql_get_pragma_user_version = """
@@ -1337,6 +1576,60 @@ def set_pragma_user_version(connection, version):
     with connection:
         query = sql_set_pragma_user_version.format(version)
         connection.execute(query)
+
+# migrate config file to database
+def migrate_config_to_db(connection):
+    """Migrates settings from config.yaml to SQLite"""
+    
+    cursor = connection.cursor()
+
+    # Check if the settings table already has data
+    cursor.execute("SELECT COUNT(*) FROM Settings")
+    count = cursor.fetchone()[0]
+
+    if count > 0:
+        # print("Settings already exist in database. Skipping migration.")
+        return
+    
+    try:
+        config_file = "config.yaml"
+
+        if os.path.exists(config_file):
+            with open(config_file, "r") as file:
+                try:
+                    config = yaml.safe_load(file) or {}
+                except yaml.YAMLError as e:
+                    print(f"YAML parsing error: {e}")
+                    return  # Exit if YAML file is corrupt
+
+            if config:
+                for key, value in config.items():
+                    # Ensure safe storage of non-string values
+                    cursor.execute(
+                        "INSERT OR IGNORE INTO Settings (name, value) VALUES (?, ?)", 
+                        (key, str(value))
+                    )
+
+                connection.commit()
+                print(f"Settings migrated from {config_file} to SQLite.")
+
+                # Create a timestamped backup file
+                backup_filename = f"config_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.yaml"
+                shutil.copy(config_file, backup_filename)
+                print(f"Backup created: {backup_filename}")
+
+                # Delete the original config.yaml
+                os.remove(config_file)
+                print(f"Original {config_file} deleted after successful migration.")
+
+            else:
+                print(f"{config_file} not found, skipping migration.")
+
+    except sqlite3.Error as db_error:
+        print(f"Database error: {db_error}")
+
+    except Exception as e:
+        print(f"Error during migration: {e}")
 
 # create tables
 def create_tables(connection):
@@ -1380,6 +1673,8 @@ def create_tables(connection):
         connection.execute(sql_create_signals_log_table)
         # locked values
         connection.execute(sql_create_locked_values_table)
+        # settings
+        connection.execute(sql_create_settings_table)
 
         # update version on db
         # commented because the db user version must be in the end of database script to make sure everything was ok with the script

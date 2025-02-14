@@ -1,4 +1,5 @@
 import sys
+import os
 import logging
 import pandas as pd
 from datetime import datetime, date, timedelta
@@ -14,9 +15,26 @@ import utils.database as database
 
 client: Client = None
 
+# environment variables
+def get_env_var(var_name):
+    try:
+        # Binance
+        # api_key = os.environ.get('binance_api')
+        # api_secret = os.environ.get('binance_secret')
+
+        var_value = os.environ.get(var_name)
+        return var_value
+    
+    except KeyError as e: 
+        msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
+        print(msg)
+        # logging.exception(msg)
+        telegram.send_telegram_message(telegram.telegramToken_errors, telegram.EMOJI_WARNING, msg)
+        sys.exit(msg) 
+
 def connect():
-    api_key = config.get_env_var('binance_api')
-    api_secret = config.get_env_var('binance_secret')
+    api_key = get_env_var('binance_api')
+    api_secret = get_env_var('binance_secret')
 
     # Binance Client
     try:

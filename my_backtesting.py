@@ -353,7 +353,7 @@ def run_backtest(symbol, timeframe, strategy, optimize):
         return # exit function
     
     commission_value = float(0.005)
-    cash_value = float(100000)
+    cash_value = float(500000)
 
     # Checking the value of strategy
     bt = Backtest(df, strategy=strategy, cash=cash_value, commission=commission_value)

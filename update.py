@@ -17,19 +17,23 @@ def create_backup():
     backup_folder = os.path.join(os.path.dirname(current_folder), "BEC_backups")
 
     # Create the backup folder if it doesn't exist
-    if not os.path.exists(backup_folder):
-        os.makedirs(backup_folder)
+    os.makedirs(backup_folder, exist_ok=True)
 
-    # Create a zip file for the backup
+    # Define backup file path
     backup_file_name = os.path.join(backup_folder, f"{current_date}_{folder_name}.zip")
-    with zipfile.ZipFile(backup_file_name, "w") as backup_zip:
+
+    with zipfile.ZipFile(backup_file_name, "w", zipfile.ZIP_DEFLATED) as backup_zip:
         # Add all files from the current folder to the zip file
-        for root, _, files in os.walk(current_folder):
+        for root, dirs, files in os.walk(current_folder):
+
+            # Skip the "static" folder
+            if "static" in dirs:
+                dirs.remove("static")  # Prevents os.walk from entering the folder
+
             for file in files:
                 file_path = os.path.join(root, file)
-                # Exclude the backup file itself
+                # Ensure we don't include the backup file itself
                 if file_path != backup_file_name:
-                    # Add the file to the zip file
                     backup_zip.write(file_path, os.path.relpath(file_path, current_folder))
 
     msg = "Backup created successfully."

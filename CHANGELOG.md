@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 ## [2024-12-26]
 
 ### Added
+- General - Moved settings from the config.yaml file to the Settings table in the database. This change prevents rare cases where the YAML file could lose its configurations.
+- Dashboard - Auto Switch - Previously, when using auto-switch and trading against BTC, the system would automatically convert BTC to USDC upon triggering the auto-switch sell event. A new option - Stablecoin for Auto-Switching - now allows users to select their preferred stablecoin (USDT or USDC) for conversion.
+### Changed
+- Dashboard - Run Backtesting - Removed the Run Backtesting button as it no longer serves a functional purpose. It was only used for testing.
+- Dashboard - The maximum number of open positions is no longer limited to 50.
+- Dashboard - Next Trade Position Size – Improved the display format to enhance readability.
+- Update - The update process no longer saves backtesting files in the backup folder, as they can take up several gigabytes of storage. Increased the compression ratio of backup files to reduce their size further.
+### Fixed 
+- Dashboard - Blacklist - Resolved issues where blacklist items were not being correctly stored or deleted.
+- Dashboard - Backtesting Results - Fixed an issue where the start and end date filters were not applied correctly. Previously, if a backtest did not fully fall within the selected date range, no results were shown. Now, results are displayed when the backtest period overlaps with the selected date range.
+- Dashboard - Backtesting Results - Corrected the trade counter for positions with a return < -20% to ensure accurate tracking. 
+
+## [2024-12-26]
+
+### Added
 - Trading - added the option to use trade against USDC
 ### Changed
 - 

@@ -2,38 +2,22 @@ import requests
 import os
 import sys
 import logging
-import yaml
+
+import utils.database as database
+# from utils.database import get_setting
 
 # log file to store error messages
 log_filename = "main.log"
 logging.basicConfig(filename=log_filename, level=logging.INFO,
                     format='%(asctime)s %(message)s', datefmt='%Y-%m-%d %I:%M:%S %p -')
 
-# get settings from config file
+# get settings
 # get trade_against to know which telegram bots to use (USDT/USDC or BTC)
-try:
-    with open("config.yaml", "r") as file:
-        config = yaml.safe_load(file)
+# trade_against = get_setting("trade_against")
+trade_against = database.get_setting(database.conn, "trade_against")
     
-    trade_against = config.get("trade_against")
-    
-    # Check if bot_prefix exists in config, otherwise assign default value
-    DEFAULT_BOT_PREFIX = "BEC"
-    bot_prefix = config.get("bot_prefix", DEFAULT_BOT_PREFIX)
-
-except FileNotFoundError as e:
-    msg = "Error: The file config.yaml could not be found."
-    msg = msg + " " + sys._getframe(  ).f_code.co_name+" - "+repr(e)
-    print(msg)
-    logging.exception(msg)
-    sys.exit(msg) 
-
-except yaml.YAMLError as e:
-    msg = "Error: There was an issue with the YAML file."
-    msg = msg + " " + sys._getframe(  ).f_code.co_name+" - "+repr(e)
-    print(msg)
-    logging.exception(msg)
-    sys.exit(msg) 
+# Check if bot_prefix exists in config, otherwise assign default value
+bot_prefix = database.get_setting(database.conn, "bot_prefix")
 
 # emoji
 EMOJI_START = u'\U000025B6'
@@ -45,7 +29,7 @@ EMOJI_TRADE_WITH_PROFIT = u'\U0001F44D' # thumbs up
 EMOJI_TRADE_WITH_LOSS = u'\U0001F44E' # thumbs down
 EMOJI_INFORMATION = u'\U00002139'
 EMOJI_BULL = u'\U0001F402' # bull market
-EMOJI_BEAR = u'\U0001F43B' # bull market
+EMOJI_BEAR = u'\U0001F43B' # bear market
 
 telegram_chat_id = ""
 telegram_token_closed_position = ""

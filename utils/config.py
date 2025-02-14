@@ -1,6 +1,4 @@
 import sys
-import yaml
-import os
 import importlib
 
 import pandas as pd
@@ -9,8 +7,6 @@ import pandas as pd
 # from utils import database
 import utils.telegram as telegram
 import utils.database as database
-
-
 
 # sets the output display precision in terms of decimal places to 8.
 # this is helpful when trading against BTC. The value in the dataframe has the precision 8 but when we display it 
@@ -39,136 +35,17 @@ bot_prefix = None
 
 n_decimals = None
 
-# get settings from config file
 def get_setting(setting_name):
-    try:
-        with open("config.yaml", "r") as file:
-            config = yaml.safe_load(file)
+    """Fetch a setting from the database using the global connection."""
+    return database.get_setting(database.conn, setting_name)
 
-        # Check if a variable exists in the dictionary
-        if setting_name in config:
-            setting_value = config[setting_name]
-        else:
-            # if variable not exists add it to the dictionary
-            if setting_name in ["bot_1d","bot_4h","bot_1h"]:
-                setting_value = True
-                config[setting_name] = setting_value
-
-            if setting_name in ["main_strategy"]:
-                setting_value = "ema_cross_with_market_phases"
-                config[setting_name] = setting_value
-            
-            if setting_name in ["btc_strategy"]:
-                setting_value = "market_phases"
-                config[setting_name] = setting_value
-
-            if setting_name in ["trade_against_switch"]:
-                setting_value = False
-                config[setting_name] = setting_value       
-
-            if setting_name in ["take_profit_1"]:
-                setting_value = 0
-                config[setting_name] = setting_value       
-            
-            if setting_name in ["take_profit_1_amount"]:
-                setting_value = 5
-                config[setting_name] = setting_value
-                  
-            if setting_name in ["take_profit_2"]:
-                setting_value = 0
-                config[setting_name] = setting_value 
-
-            if setting_name in ["take_profit_2_amount"]:
-                setting_value = 5
-                config[setting_name] = setting_value
-
-            if setting_name in ["take_profit_3"]:
-                setting_value = 0
-                config[setting_name] = setting_value 
-
-            if setting_name in ["take_profit_3_amount"]:
-                setting_value = 5
-                config[setting_name] = setting_value
-
-            if setting_name in ["take_profit_4"]:
-                setting_value = 0
-                config[setting_name] = setting_value 
-
-            if setting_name in ["take_profit_4_amount"]:
-                setting_value = 5
-                config[setting_name] = setting_value
-
-            if setting_name in ["run_mode"]:
-                setting_value = "prod"
-                config[setting_name] = setting_value 
-
-            if setting_name in ["lock_values"]:
-                setting_value = True
-                config[setting_name] = setting_value  
-
-            if setting_name in ["bot_prefix"]:
-                setting_value = "BEC"
-                config[setting_name] = setting_value  
-
-            # write config file
-            with open("config.yaml", "w") as f:
-                yaml.dump(config, f)
-
-        return setting_value
-
-    except FileNotFoundError as e:
-        msg = "Error: The file config.yaml could not be found."
-        msg = msg + " " + sys._getframe(  ).f_code.co_name+" - "+repr(e)
-        print(msg)
-        # logging.exception(msg)
-        telegram.send_telegram_message(telegram.telegramToken_errors, telegram.EMOJI_WARNING, msg)
-        # sys.exit(msg) 
-
-    except yaml.YAMLError as e:
-        msg = "Error: There was an issue with the YAML file."
-        msg = msg + " " + sys._getframe(  ).f_code.co_name+" - "+repr(e)
-        print(msg)
-        # logging.exception(msg)
-        telegram.send_telegram_message(telegram.telegramToken_errors, telegram.EMOJI_WARNING, msg)
-        sys.exit(msg)
-
-# Function to set the trade_against variable in the config file
 def set_trade_against(value):
-    try:
-        with open("config.yaml", "r") as file:
-            config = yaml.safe_load(file)
+    """Calls database function to set trade_against."""
+    return database.set_trade_against(database.conn, value)
 
-        # Set the trade_against variable
-        config["trade_against"] = value
-
-        # Write config file
-        with open("config.yaml", "w") as f:
-            yaml.dump(config, f)
-
-    except FileNotFoundError as e:
-        handle_error(e, "The file config.yaml could not be found.")
-
-    except yaml.YAMLError as e:
-        handle_error(e, "There was an issue with the YAML file.")
-
-# Function to set the trade_against variable in the config file
 def set_setting(name, value):
-    try:
-        with open("config.yaml", "r") as file:
-            config = yaml.safe_load(file)
-
-        # Set the trade_against variable
-        config[name] = value
-
-        # Write config file
-        with open("config.yaml", "w") as f:
-            yaml.dump(config, f)
-
-    except FileNotFoundError as e:
-        handle_error(e, "The file config.yaml could not be found.")
-
-    except yaml.YAMLError as e:
-        handle_error(e, "There was an issue with the YAML file.")
+    """Calls database function to set a setting."""
+    return database.set_setting(database.conn, name, value)
 
 # Function to handle errors (common code for error handling)
 def handle_error(error, message):
@@ -177,23 +54,6 @@ def handle_error(error, message):
     # logging.exception(msg)
     telegram.send_telegram_message(telegram.telegramToken_errors, telegram.EMOJI_WARNING, msg)
     sys.exit(msg)
-
-# environment variables
-def get_env_var(var_name):
-    try:
-        # Binance
-        # api_key = os.environ.get('binance_api')
-        # api_secret = os.environ.get('binance_secret')
-
-        var_value = os.environ.get(var_name)
-        return var_value
-    
-    except KeyError as e: 
-        msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
-        print(msg)
-        # logging.exception(msg)
-        telegram.send_telegram_message(telegram.telegramToken_errors, telegram.EMOJI_WARNING, msg)
-        sys.exit(msg) 
 
 def get_all_settings():
         
@@ -234,6 +94,7 @@ def get_all_settings():
     run_mode                     = get_setting("run_mode")
     lock_values                  = get_setting("lock_values")
     bot_prefix                   = get_setting("bot_prefix")
+    trade_against_switch_stablecoin = get_setting("trade_against_switch_stablecoin")
 
     # Check if connection is already established
     if database.is_connection_open(database.conn):
@@ -260,9 +121,10 @@ def get_all_settings():
     #     strategy_id = btc_strategy
     #     strategy_name = btc_strategy_name
     #     strategy_backtest_optimize = btc_strategy_backtest_optimize
-        strategy_id = main_strategy
-        strategy_name = main_strategy_name
-        strategy_backtest_optimize = main_strategy_backtest_optimize
+
+    strategy_id = main_strategy
+    strategy_name = main_strategy_name
+    strategy_backtest_optimize = main_strategy_backtest_optimize
 
     # Dynamically import the entire strategies module
     strategy_module = importlib.import_module('my_backtesting')
