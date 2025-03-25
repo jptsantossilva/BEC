@@ -1137,7 +1137,7 @@ def settings():
                 min_position_size = st.number_input(
                     label='Minimum Position Size', 
                     min_value=float(trade_min_val), 
-                    step=trade_step,
+                    step=float(trade_step),
                     format=trade_format,
                     key="min_position_size",
                     on_change=min_position_size_change,
