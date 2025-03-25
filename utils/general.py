@@ -1,6 +1,7 @@
 # This module contains general functions
 
 import requests
+import os
 import re
 
 def separate_symbol_and_trade_against(symbol):
@@ -29,7 +30,10 @@ def extract_date_from_github_changelog():
         return None
     
 def extract_date_from_local_changelog():
-    file_path = "CHANGELOG.md"
+    # Go one level up from the current file (utils/)
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    file_path = os.path.join(base_dir, "CHANGELOG.md")
+
     with open(file_path, 'r') as file:
         content = file.read()
         match = re.search(r'##\s*\[(.*?)\]', content)

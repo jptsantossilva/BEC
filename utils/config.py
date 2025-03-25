@@ -32,6 +32,7 @@ strategy_name = None
 trade_against_switch = None
 run_mode = None
 bot_prefix = None
+delisting_start_date = None
 
 n_decimals = None
 
@@ -68,6 +69,8 @@ def get_all_settings():
     global run_mode
     global lock_values
     global bot_prefix
+    global trade_against_switch_stablecoin
+    global delisting_start_date
 
     # get settings from config file
     stake_amount_type            = get_setting("stake_amount_type")
@@ -95,6 +98,7 @@ def get_all_settings():
     lock_values                  = get_setting("lock_values")
     bot_prefix                   = get_setting("bot_prefix")
     trade_against_switch_stablecoin = get_setting("trade_against_switch_stablecoin")
+    delisting_start_date = get_setting("delisting_start_date")
 
     # Check if connection is already established
     if database.is_connection_open(database.conn):

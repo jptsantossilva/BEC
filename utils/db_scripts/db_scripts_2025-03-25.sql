@@ -29,4 +29,4 @@ ALTER TABLE Blacklist_New RENAME TO Blacklist;
 PRAGMA foreign_keys = ON;
 
 -- Update database version
-PRAGMA user_version = 20241226;
+PRAGMA user_version = 20250325;

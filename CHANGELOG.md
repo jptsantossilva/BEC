@@ -2,9 +2,10 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
-## [2024-12-26]
+## [2025-03-25]
 
 ### Added
+- General - Added an automated script to detect new Binance delisting announcements and sends alerts via Telegram if new delistings are detected.
 - General - Moved settings from the config.yaml file to the Settings table in the database. This change prevents rare cases where the YAML file could lose its configurations.
 - Dashboard - Auto Switch - Previously, when using auto-switch and trading against BTC, the system would automatically convert BTC to USDC upon triggering the auto-switch sell event. A new option - Stablecoin for Auto-Switching - now allows users to select their preferred stablecoin (USDT or USDC) for conversion.
 ### Changed

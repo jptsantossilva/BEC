@@ -93,6 +93,7 @@ def get_setting(connection, setting_name):
         "trade_top_performance": 500,
         "stake_amount_type": "unlimited",
         "trade_against_switch_stablecoin": "USDC",
+        "delisting_start_date": datetime.now().isoformat()
     }
 
     # Corresponding comments for each setting
@@ -122,6 +123,7 @@ def get_setting(connection, setting_name):
         "trade_top_performance": "Top assets considered for trading.",
         "stake_amount_type": "Determines staking limits ('unlimited' or other values).",
         "trade_against_switch_stablecoin": "Choose the stablecoin for auto-switching.",
+        "delisting_start_date": "Defines the starting point for monitoring Binance delisting announcements."
     }
     
     try:
