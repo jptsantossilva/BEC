@@ -5,7 +5,7 @@ PRAGMA foreign_keys = OFF;
 CREATE TABLE IF NOT EXISTS Settings (
     name TEXT PRIMARY KEY,
     value TEXT,
-    comments TEXT
+    comment TEXT
 );
 
 -- Blacklist Table Migration
