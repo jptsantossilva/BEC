@@ -87,7 +87,7 @@ def get_setting(connection, setting_name):
         "bot_prefix": "BEC",
         "max_number_of_open_positions": 20,
         "tradable_balance_ratio": 1.0,
-        "min_position_size": 20,
+        "min_position_size": 20.0,
         "trade_against": "USDC",
         "stop_loss": 10,
         "trade_top_performance": 500,
