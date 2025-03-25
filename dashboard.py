@@ -1114,7 +1114,7 @@ def settings():
             with col1_pos:
                 # min_position_size 
                 if "min_position_size" not in st.session_state:
-                    st.session_state.min_position_size = config.get_setting("min_position_size")
+                    st.session_state.min_position_size = float(config.get_setting("min_position_size"))
                 MIN_POSITION_SIZE_USD = 20
                 def min_position_size_change():
                     if st.session_state.trade_against in ["USDC", "USDT"]:
