@@ -2,6 +2,10 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2025-03-27]
+### Fixed 
+- Trading - Fixed an issue where some crypto assets were not showing up correctly in the balance snapshot. This also affected the calculation of top-performing assets, which could prevent the list of symbols to trade from updating as expected. Backtesting results were also impacted by this issue.
+
 ## [2025-03-25]
 
 ### Added

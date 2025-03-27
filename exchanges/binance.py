@@ -653,10 +653,12 @@ def create_balance_snapshot(telegram_prefix: str):
             new_row = [date, symbol, symbol_balance, symbol_usd_price, btc_price, symbol_balance_usd, symbol_balance_btc]
             symbol_values.append(new_row)
 
-        # Otherwise, check if the coin has a USDT trading pair or a BTC trading pair
+        # Otherwise, check if the coin has a USD trading pair or a BTC trading pair
         elif unlocked_balance > 0.0:
-            # Check if the coin has a USDT trading pair
-            if (any(symbol + 'USDC' in i for i in ticker_prices)):
+            # Check if the coin has a USD trading pair
+            # if (any(symbol + 'USDC' in i for i in ticker_prices)):
+            if symbol + 'USDC' in ticker_prices:
+
                 # If it does, calculate its USDC value and add it to the list of coins with their USDC values
                 ticker_symbol = symbol + 'USDC'
                 # ticker_price = ticker_prices.get(ticker_symbol)
@@ -664,27 +666,36 @@ def create_balance_snapshot(telegram_prefix: str):
 
                 symbol_balance = unlocked_balance
                 symbol_usd_price = ticker_prices.get(ticker_symbol)
-                symbol_balance_usd = symbol_balance*symbol_usd_price
-                symbol_balance_btc = symbol_balance*(symbol_usd_price/btc_price)
 
-                if symbol_balance_usd > 1:   
-                    new_row = [date, symbol, symbol_balance, symbol_usd_price, btc_price, symbol_balance_usd, symbol_balance_btc]
-                    symbol_values.append(new_row)
+                if symbol_usd_price is not None:
+                    symbol_balance_usd = symbol_balance * symbol_usd_price
+                    symbol_balance_btc = symbol_balance * (symbol_usd_price/btc_price)
+
+                    if symbol_balance_usd > 1:   
+                        new_row = [date, symbol, symbol_balance, symbol_usd_price, btc_price, symbol_balance_usd, symbol_balance_btc]
+                        symbol_values.append(new_row)
+                else:
+                    print(f"Price not found for ticker {ticker_symbol}")
             
-            # If the coin does not have a USDT trading pair, check if it has a BTC trading pair
-            elif (any(symbol + 'BTC' in i for i in ticker_prices)):
-                # If it does, calculate its USDT value and add it to the list of coins with their USDT values
+            # If the coin does not have a USD trading pair, check if it has a BTC trading pair
+            # elif (any(symbol + 'BTC' in i for i in ticker_prices)):
+            elif symbol + 'BTC' in ticker_prices:
+
+                # If it does, calculate its USD value and add it to the list of coins with their USD values
                 ticker_symbol = symbol + 'BTC'
                 symbol_btc_price = ticker_prices.get(ticker_symbol)
-                
-                symbol_balance = unlocked_balance
-                symbol_usd_value = symbol_btc_price*btc_price
-                symbol_balance_usd = symbol_balance*symbol_usd_price
-                symbol_balance_btc = symbol_balance*symbol_btc_price
-                
-                if symbol_balance_usd > 1:
-                    new_row = [date, symbol, symbol_balance, symbol_usd_price, btc_price, symbol_balance_usd, symbol_balance_btc]
-                    symbol_values.append(new_row)
+
+                if symbol_btc_price is not None:                
+                    symbol_balance = unlocked_balance
+                    symbol_usd_price = symbol_btc_price * btc_price
+                    symbol_balance_usd = symbol_balance * symbol_usd_price
+                    symbol_balance_btc = symbol_balance * symbol_btc_price
+                    
+                    if symbol_balance_usd > 1:
+                        new_row = [date, symbol, symbol_balance, symbol_usd_price, btc_price, symbol_balance_usd, symbol_balance_btc]
+                        symbol_values.append(new_row)
+                else:
+                    print(f"Price not found for ticker {ticker_symbol}")
         
     # Define column names
     columns = ['Date', 'Asset', 'Balance', 'USD_Price', 'BTC_Price', 'Balance_USD', 'Balance_BTC']
@@ -700,148 +711,6 @@ def create_balance_snapshot(telegram_prefix: str):
 
     # Sort the DataFrame by 'Balance_USD' in descending order
     df_balance.sort_values(by='Balance_USD', ascending=False, inplace=True)
-
-    # df_new = pd.DataFrame({
-    #     'Date': [snapshot_date],
-    #     'Asset': [asset],
-    #     'Balance': [daily_balance],
-    #     'USD_Price': [unit_price_usd],
-    #     'BTC_Price': [btc_value],
-    #     'Balance_USD': [balance_usd],
-    #     'Balance_BTC': [balance_btc],
-    #     'Total_Balance_BTC': [totalAssetOfBtc]
-    #     })
-
-
-    # last_date = database.get_last_date_from_balances(database.conn)
-    # if last_date == '0':
-    #      today = datetime.now()
-    #      start_date = today - timedelta(days=30)
-    # else:
-    #      start_date = datetime.strptime(last_date, '%Y-%m-%d')    
-
-    # start_date = datetime.now()    
-
-    # snapshots = client.get_account_snapshot(type="SPOT",
-    #                                         startTime=int(start_date.timestamp()*1000), 
-    #                                         # endTime=int(end_date.timestamp()*1000)
-    #                                         limit=30 #max                                        
-    #                                         )
-
-    # code = snapshots['code']
-    # msg = snapshots['msg']
-
-    # get list of available symbols. 
-    # This is usefull to avoid getting price from symbol that do not trade against stable
-    # exchange_info = get_exchange_info()
-    # symbols = set()
-    # trade_against = "USDT"
-    # for s in exchange_info['symbols']:
-    #     if (s['symbol'].endswith(trade_against)
-    #         and s['status'] == 'TRADING'):
-    #             symbols.add(s['symbol']) 
-
-    # Create a Pandas DataFrame to store the daily balances for each asset
-    # df_balance = pd.DataFrame()
-
-
-    # ignore if balance = 0
-    # if daily_balance == 0.0:
-    #     continue
-
-    # symbol_with_trade_against = asset+trade_against
-
-    # # convert snapshot_date from date to datetime
-    # date = datetime.combine(snapshot_date, datetime.min.time())
-    # btc_value = get_price_close_by_symbol_and_date("BTCUSDT", date)
-
-    # if asset in [trade_against]:
-    #     balance_usd = daily_balance
-    #     unit_price_usd = 1
-    #     unit_price_btc = unit_price_usd/btc_value
-    #     balance_btc = unit_price_btc * daily_balance
-    # elif symbol_with_trade_against not in symbols:
-    #         print(f"{asset} not in available symbols")
-    #         balance_usd = 0
-    #         balance_btc = 0
-    #         unit_price_usd = 0
-    # else:
-    #     # convert snapshot_date from date to datetime
-    #     date = datetime.combine(snapshot_date, datetime.min.time())
-    #     # get unit USDT price
-    #     unit_price_usd = get_price_close_by_symbol_and_date(symbol_with_trade_against, date)
-    #     balance_usd = unit_price_usd * daily_balance
-    #     unit_price_btc = unit_price_usd/btc_value
-    #     balance_btc = unit_price_btc * daily_balance
-
-    # df_new = pd.DataFrame({
-    #     'Date': [snapshot_date],
-    #     'Asset': [asset],
-    #     'Balance': [daily_balance],
-    #     'USD_Price': [unit_price_usd],
-    #     'BTC_Price': [btc_value],
-    #     'Balance_USD': [balance_usd],
-    #     'Balance_BTC': [balance_btc],
-    #     'Total_Balance_BTC': [totalAssetOfBtc]
-    #     })
-    # # add to total
-    # df_balance = pd.concat([df_balance, df_new], ignore_index=True)
-
-    # # Iterate through the snapshots and get the daily balance for each asset
-    # for snapshot in snapshots['snapshotVos']:
-    #     if snapshot['type'] == 'spot' and snapshot['data'] is not None:
-    #         snapshot_date = datetime.fromtimestamp(snapshot['updateTime']/1000).date()
-    #         totalAssetOfBtc = snapshot['data']['totalAssetOfBtc']
-    #         for balance in snapshot['data']['balances']:
-    #             asset = balance['asset']
-    #             daily_balance = float(balance['free'])
-
-    #             print(f"{snapshot_date}-{asset}")
-                
-    #             # ignore if balance = 0
-    #             if daily_balance == 0.0:
-    #                 continue
-
-    #             symbol_with_trade_against = asset+trade_against
-
-    #             # convert snapshot_date from date to datetime
-    #             date = datetime.combine(snapshot_date, datetime.min.time())
-    #             btc_value = get_price_close_by_symbol_and_date("BTCUSDT", date)
-
-    #             if asset in [trade_against]:
-    #                 balance_usd = daily_balance
-    #                 unit_price_usd = 1
-    #                 unit_price_btc = unit_price_usd/btc_value
-    #                 balance_btc = unit_price_btc * daily_balance
-    #             elif symbol_with_trade_against not in symbols:
-    #                  print(f"{asset} not in available symbols")
-    #                  balance_usd = 0
-    #                  balance_btc = 0
-    #                  unit_price_usd = 0
-    #             else:
-    #                 # convert snapshot_date from date to datetime
-    #                 date = datetime.combine(snapshot_date, datetime.min.time())
-    #                 # get unit USDT price
-    #                 unit_price_usd = get_price_close_by_symbol_and_date(symbol_with_trade_against, date)
-    #                 balance_usd = unit_price_usd * daily_balance
-    #                 unit_price_btc = unit_price_usd/btc_value
-    #                 balance_btc = unit_price_btc * daily_balance
-
-    #             df_new = pd.DataFrame({
-    #                 'Date': [snapshot_date],
-    #                 'Asset': [asset],
-    #                 'Balance': [daily_balance],
-    #                 'USD_Price': [unit_price_usd],
-    #                 'BTC_Price': [btc_value],
-    #                 'Balance_USD': [balance_usd],
-    #                 'Balance_BTC': [balance_btc],
-    #                 'Total_Balance_BTC': [totalAssetOfBtc]
-    #                 })
-    #             # add to total
-    #             df_balance = pd.concat([df_balance, df_new], ignore_index=True)
-
-    # Print the daily balances for each asset
-    # print(df_balance)
 
     # add data to table Balance
     database.add_balances(database.conn, df_balance)

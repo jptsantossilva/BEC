@@ -153,13 +153,6 @@ def install_packages_from_requirements():
     else:
         msg = "'requirements.txt' file not found. Skipping installation."
 
-    # Install Playwright browser binaries regardless
-    try:
-        subprocess.check_call(["python3", "-m", "playwright", "install"])
-        msg = "✅ Playwright browsers installed."
-    except subprocess.CalledProcessError:
-        msg = "⚠️ Failed to install Playwright browsers."
-
     print(msg)
     return msg
 
