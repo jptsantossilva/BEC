@@ -2,7 +2,12 @@
 *.csv
 *.log
 data.db
-price_activity.py
+*.db
+*.sqlite
+*.sqlite3
+persist/
+config_old.yaml
+config_backup_*.yaml
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -115,6 +120,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.vscode/
 
 # Spyder project settings
 .spyderproject
@@ -140,3 +146,4 @@ tests2.ipynb
 utils/db_scripts/db_scripts_2023-09-15_20230919154650.sql
 
 Top_performers_USDT.txt
+/static/backtest_results

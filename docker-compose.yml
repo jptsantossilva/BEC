@@ -1,0 +1,39 @@
+services:
+  dashboard:
+    image: ghcr.io/jptsantossilva/bec:latest
+    container_name: bec-dashboard
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+    volumes:
+      - bec_persist:/app/persist
+    command: ["streamlit", "run", "dashboard.py", "--server.address=0.0.0.0", "--server.port=8080"]
+
+  jobs_runner:
+    image: ghcr.io/jptsantossilva/bec:latest
+    container_name: bec-jobs-runner
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      - dashboard
+    volumes:
+      - bec_persist:/app/persist
+    command: ["python", "jobs_runner.py"]
+
+  sqlite_web:
+    image: coleifer/sqlite-web:latest
+    container_name: bec-sqlite-web
+    restart: unless-stopped
+    depends_on:
+      - dashboard
+    ports:
+      - "8081:8081"
+    volumes:
+      - bec_persist:/data
+    command: ["sqlite_web", "/data/data.db", "--host", "0.0.0.0", "--port", "8081"]
+
+volumes:
+  bec_persist:

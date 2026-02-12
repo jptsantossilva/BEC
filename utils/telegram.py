@@ -2,6 +2,7 @@ import requests
 import os
 import sys
 import logging
+from html import escape as _html_escape
 
 import utils.database as database
 # from utils.database import get_setting
@@ -14,10 +15,10 @@ logging.basicConfig(filename=log_filename, level=logging.INFO,
 # get settings
 # get trade_against to know which telegram bots to use (USDT/USDC or BTC)
 # trade_against = get_setting("trade_against")
-trade_against = database.get_setting(database.conn, "trade_against")
+trade_against = database.get_setting( "trade_against")
     
 # Check if bot_prefix exists in config, otherwise assign default value
-bot_prefix = database.get_setting(database.conn, "bot_prefix")
+bot_prefix = database.get_setting( "bot_prefix")
 
 # emoji
 EMOJI_START = u'\U000025B6'
@@ -31,6 +32,7 @@ EMOJI_TRADE_WITH_LOSS = u'\U0001F44E' # thumbs down
 EMOJI_INFORMATION = u'\U0001F4E2'
 EMOJI_BULL = u'\U0001F402' # bull market
 EMOJI_BEAR = u'\U0001F43B' # bear market
+EMOJI_PASSWORD_RESET = u'\U0001F511' # key
 
 telegram_chat_id = ""
 telegram_token_closed_position = ""
@@ -111,18 +113,48 @@ def get_telegram_prefix(bot, multi_line=False):
     
     return result
 
-def send_telegram_message(telegram_token, emoji, msg):
+def send_telegram_message(
+    telegram_token,
+    emoji,
+    msg,
+    *,
+    include_prefix: bool = True,
+    sanitize: bool = True,
+    parse_mode: str | None = "HTML"
+):
+    """
+    Send a message to a Telegram chat.
 
-    msg = remove_chars_exceptions(msg)
+    Args:
+        telegram_token (str): The bot token to use for sending the message.
+        emoji (str|None): Emoji prefix for the message (e.g., warning or info icon).
+        msg (str): The message body.
+        include_prefix (bool): If True, prepend bot_prefix to the message.
+                               If False, send the message exactly as provided.
+        sanitize (bool): If True, apply remove_chars_exceptions() to sanitize the text.
+                         If False, send raw text (important for passwords).
+        parse_mode (str|None): Telegram parse mode (e.g., "HTML", "Markdown").
+                               If None, sends plain text without formatting.
+
+    Behavior:
+        - If the message exceeds Telegram’s 4096 char limit, it is split into parts.
+        - By default, messages are wrapped in <pre> tags for monospace formatting.
+        - Prefix and sanitization can be disabled for sensitive content like passwords.
+    """
+
+    if sanitize:
+        msg = remove_chars_exceptions(msg)
+
+    prefix_str = (bot_prefix + " - ") if include_prefix else ""
+
+    if emoji:
+        msg = emoji + " - " + msg
 
     max_limit = 4096
     if emoji:
-        additional_characters = f"{EMOJI_WARNING} {bot_prefix} <pre> </pre>Part [10/99]"
+        additional_characters = f"{EMOJI_WARNING} {prefix_str} <pre> </pre>Part [10/99]"
     else:
-        additional_characters = f"{bot_prefix} <pre> </pre>Part [10/99]"
-
-    if emoji:
-        msg = emoji+" - "+msg
+        additional_characters = f"{prefix_str} <pre> </pre>Part [10/99]"
 
     num_additional_characters = len(additional_characters)
     max_limit = 4096 - num_additional_characters 
@@ -134,7 +166,7 @@ def send_telegram_message(telegram_token, emoji, msg):
         for i, part in enumerate(message_parts):
             # print(f"Part [{i+1}/{n_parts}]\n{part}")
         
-            lmsg = "<pre>"+bot_prefix+" - "+"Part ["+str(i+1)+"/"+str(n_parts)+"]\n"+part+"</pre>"
+            lmsg = "<pre>"+prefix_str+" - "+"Part ["+str(i+1)+"/"+str(n_parts)+"]\n"+part+"</pre>"
             
             params = {
             "chat_id": telegram_chat_id,
@@ -170,24 +202,31 @@ def send_telegram_message(telegram_token, emoji, msg):
                 logging.exception(msg) 
             
     else: # message size < max size 4096
+        # Short message fits in one send
+        lmsg_plain = (prefix_str + msg) if include_prefix else msg
+        lmsg = f"<pre>{lmsg_plain}</pre>" if parse_mode == "HTML" else lmsg_plain
 
-        # To fix the issues with dataframes alignments, the message is sent as HTML and wraped with <pre> tag
-        # Text in a <pre> element is displayed in a fixed-width font, and the text preserves both spaces and line breaks
-        lmsg = "<pre>"+bot_prefix+" - "+msg+"</pre>"
+        params = {"chat_id": telegram_chat_id, "text": lmsg}
+        if parse_mode:
+            params["parse_mode"] = parse_mode
 
-        params = {
-        "chat_id": telegram_chat_id,
-        "text": lmsg,
-        "parse_mode": "HTML",
-        }
-        
         try:            
             # if message is a warning, send message also to the errors telegram chat bot 
             if emoji == EMOJI_WARNING:
-                resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegram_token_errors), params=params, timeout=telegram_timeout)
+                resp = requests.post(
+                    # "https://api.telegram.org/bot{}/sendMessage".format(telegram_token_errors), 
+                    f"https://api.telegram.org/bot{telegram_token_errors}/sendMessage",
+                    params=params, 
+                    timeout=telegram_timeout
+                )
                 resp.raise_for_status()
 
-            resp = requests.post("https://api.telegram.org/bot{}/sendMessage".format(telegram_token), params=params, timeout=telegram_timeout)
+            resp = requests.post(
+                # "https://api.telegram.org/bot{}/sendMessage".format(telegram_token), 
+                f"https://api.telegram.org/bot{telegram_token}/sendMessage",
+                params=params, 
+                timeout=telegram_timeout
+            )
             resp.raise_for_status()
 
         except requests.exceptions.HTTPError as errh:
@@ -206,6 +245,33 @@ def send_telegram_message(telegram_token, emoji, msg):
             msg = sys._getframe(  ).f_code.co_name+" - An Unknown Error occurred" + repr(err)
             print(msg)
             logging.exception(msg)
+
+def send_password_only(telegram_token: str, password: str):
+    """
+    Send a password-only message to Telegram.
+
+    This helper ensures:
+      - No bot prefix, no emoji
+      - No sanitization (password is sent exactly as generated)
+      - No formatting (<pre>, HTML, etc.)
+      - User receives a clean message that can be copy-pasted directly
+
+    Args:
+        telegram_token (str): The bot token used to send the message.
+        password (str): The password to send.
+    """
+
+    # Escape only for HTML safety;
+    pw_html = _html_escape(password)
+
+    send_telegram_message(
+        telegram_token,
+        emoji=None,
+        msg=pw_html,
+        include_prefix=False,
+        sanitize=False,
+        parse_mode="HTML"
+    )
 
 def send_telegram_alert(telegram_token, telegram_prefix, emoji, date, symbol, timeframe, strategy, ordertype, unitValue, amount, trade_against_value, pnlPerc = '', pnl_trade_against = '', exit_reason = ''):
     

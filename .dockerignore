@@ -1,23 +1,20 @@
 .git
 .gitignore
-Dockerfile
-Dockerfile.armhf
-.dockerignore
-docker/
-.coveragerc
-.eggs
-.github
-.pylintrc
-.travis.yml
-CONTRIBUTING.md
-MANIFEST.in
-README.md
-
-config.json*
-*.sqlite
-user_data
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
 *.log
-
 .vscode
-.mypy_cache
-.ipynb_checkpoints
+.idea
+
+# local runtime artifacts
+persist/
+data.db
+main.log
+marketdata.db
+
+# optional docs and heavy outputs not required to run the app
+static/backtest_results (Copy)
+*.zip

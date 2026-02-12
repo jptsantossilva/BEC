@@ -9,6 +9,13 @@ send alerts when:
 """
 
 import sys
+import os
+
+# Allow running this file directly from the signals/ folder.
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
+
 import pandas as pd
 import datetime
 from datetime import date
@@ -28,38 +35,27 @@ def get_data(symbol, time_frame, start_date):
     print(f"{symbol} - getting data...")
     # makes 3 attempts to get historical data
     max_retry = 3
-    retry_count = 1
-    success = False
+    df = binance.get_ohlcv(
+        symbol=symbol,
+        interval=time_frame,
+        start_date=start_date,
+        max_retries=max_retry,
+        drop_last=False,
+        drop_incomplete=False,
+        include_symbol=False,
+        set_index=True,
+        keep_time_col=True,
+    )
 
-    while retry_count < max_retry and not success:
-        try:
-            df = pd.DataFrame(binance.client.get_historical_klines(symbol,
-                                                                    time_frame,
-                                                                    start_date
-                                                                    ))
-            success = True
-        except Exception as e:
-            retry_count += 1
-            msg = sys._getframe(  ).f_code.co_name+" - "+symbol+" - "+repr(e)
-            print(msg)
-
-    if not success:
+    if df.empty:
         msg = f"Failed after {max_retry} tries to get historical data. Unable to retrieve data. "
         msg = msg + sys._getframe(  ).f_code.co_name+" - "+symbol
         msg = telegram.telegram_prefix_signals_sl + msg
         print(msg)
         telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_WARNING, msg)
-        frame = pd.DataFrame()
-        return frame
-    else:
-        df = df.iloc[:,:6] # use the first 5 columns
-        df.columns = ['Time','Open','High','Low','Close','Volume'] #rename columns
-        df[['Open','High','Low','Close','Volume']] = df[['Open','High','Low','Close','Volume']].astype(float) #cast to float
-        df['Date'] = df['Time'].astype(str) 
-        # set the 'date' column as the DataFrame index
-        df.set_index(pd.to_datetime(df['Date'], unit='ms'), inplace=True) # make human readable timestamp)
-        df = df.drop(['Date'], axis=1)
-        return df
+        return pd.DataFrame()
+
+    return df
 
 
 def EMA(values, n):
@@ -78,7 +74,7 @@ def apply_technicals(df):
 
 def main(symbol):
     # 1D timeframe
-    time_frame = binance.client.KLINE_INTERVAL_1DAY
+    time_frame = binance.get_client().KLINE_INTERVAL_1DAY
 
     # get start date
     # get max data as possible to make sure the slowest emas 200 and 300 get the same values as tradingview 
@@ -195,7 +191,7 @@ def main(symbol):
         or buy_crossover_ema300
         or sell_crossunder_ema13
         or sell_crossunder_ema300):
-        database.add_signal_log(database.conn, date=now, signal="Multi-EMAs", signal_message=signal_message, symbol=symbol, notes=add_note)
+        database.add_signal_log( date=now, signal="Multi-EMAs", signal_message=signal_message, symbol=symbol, notes=add_note)
 
     return return_value
 
@@ -229,13 +225,6 @@ def get_symbols(trade_against):
     return symbols
 
 def run():
-    
-    # Check if connection is already established
-    if database.is_connection_open(database.conn):
-        print("Database connection is already established.")
-    else:
-        # Create a new connection
-        database.conn = database.connect()
 
     # trade_against = config.trade_against
     trade_against = "USDC"

@@ -1,13 +1,17 @@
-FROM python:3.10.6 as base
+FROM python:3.12-slim
 
-# set working directory
-WORKDIR /BEC
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
 
-# install dependencies
-COPY ./requirements.txt /BEC
-RUN pip install --no-cache-dir -r requirements.txt
+WORKDIR /app
 
-# copy files to the folder
-COPY . /BEC
+COPY requirements.txt /app/requirements.txt
+RUN pip install --upgrade pip && pip install -r /app/requirements.txt
 
-CMD ["python3","main.py","1h","test"]
+COPY . /app
+
+RUN mkdir -p /app/persist /app/docker \
+    && chmod +x /app/docker/entrypoint.sh
+
+ENTRYPOINT ["/app/docker/entrypoint.sh"]

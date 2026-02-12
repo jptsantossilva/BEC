@@ -9,7 +9,7 @@ import time
 from enum import Enum
 import ta
 
-from exchanges.binance import client
+import exchanges.binance as binance
 
 from backtesting import Backtest, Strategy 
 from backtesting.lib import crossover
@@ -81,46 +81,27 @@ def RSI(array, n):
 def get_data(symbol, time_frame, start_date):
     # makes 3 attempts to get historical data
     max_retry = 3
-    retry_count = 1
-    success = False
+    frame = binance.get_ohlcv(
+        symbol=symbol,
+        interval=time_frame,
+        start_date=start_date,
+        max_retries=max_retry,
+        drop_last=False,
+        drop_incomplete=False,
+        include_symbol=True,
+        set_index=True,
+        keep_time_col=True,
+    )
 
-    while retry_count < max_retry and not success:
-        try:
-            frame = pd.DataFrame(client.get_historical_klines(
-                symbol, 
-                time_frame,                                                           
-                # better get all historical data. 
-                # Using a defined start date will affect ema values. 
-                # To get same ema and sma values of tradingview default historical data must be used.
-                start_date
-                ))
-            success = True
-        except Exception as e:
-            retry_count += 1
-            msg = sys._getframe(  ).f_code.co_name+" - "+symbol+" - "+repr(e)
-            print(msg)
-
-    if not success:
+    if frame.empty:
         msg = f"Failed after {max_retry} tries to get historical data. Unable to retrieve data. "
         msg = msg + sys._getframe(  ).f_code.co_name+" - "+symbol
         # msg = telegram.telegram_prefix_market_phases_sl + msg
         print(msg)
         # telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_WARNING, msg)
-        frame = pd.DataFrame()
-        return frame()
-    else:
-        frame = frame.iloc[:,:6] # use the first 5 columns
-        frame.columns = ['Time','Open','High','Low','Close','Volume'] #rename columns
-        frame[['Open','High','Low','Close','Volume']] = frame[['Open','High','Low','Close','Volume']].astype(float) #cast to float
-        frame.Time = pd.to_datetime(frame.Time, unit='ms') #make human readable timestamp
-        # frame.index = [dt.datetime.fromtimestamp(x/1000.0) for x in frame.Time]
-        
-        frame['Symbol'] = symbol
-        # frame.index = [datetime.fromtimestamp(x / 1000.0) for x in frame.Time]
-        frame.Time = pd.to_datetime(frame.Time, unit='ms')
-        frame.index = frame.Time
-        # frame = frame[['Symbol', 'Price']]
-        return frame
+        return pd.DataFrame()
+
+    return frame
 
 class Breakout(Strategy):
     # BTC
@@ -620,7 +601,7 @@ def run_backtest(symbol, timeframe, strategy, start_date):
     print("Buy & Hold Return [%] = ",round(BuyHoldReturnPerc,2))
     print("Backtest start date =", BacktestStartDate)
 
-    # database.add_best_ema(database.conn,
+    # database.add_best_ema(
     #                       timeframe=timeframe,
     #                       symbol=symbol,
     #                       ema_fast=n1,
@@ -658,5 +639,3 @@ for symbol in symbols:
     print(f"time-frame: {time_frame}")
     run_backtest(symbol, time_frame, strategy, start_date)
     
-
-

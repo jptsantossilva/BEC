@@ -12,22 +12,22 @@ if res != "yes":
   sys.exit(msg)
 
 # delete orders
-database.delete_all_orders(database.conn)
+database.delete_all_orders()
 
 # positions
-database.delete_all_positions(database.conn)
+database.delete_all_positions()
 
 # market phase
-database.delete_all_symbols_by_market_phase(database.conn)
+database.delete_all_symbols_by_market_phase()
 
 # symbols_To_Calc
-database.delete_all_symbols_to_calc(database.conn)
+database.delete_all_symbols_to_calc()
 
 # Backtesting Results
-database.delete_all_backtesting_results(database.conn)
+database.delete_all_backtesting_results()
 
 # blacklist - symbols not to trade
-database.delete_all_blacklist(database.conn)
+database.delete_all_blacklist()
 
 # clean log files
 filename = "main.log"

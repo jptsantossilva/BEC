@@ -47,7 +47,7 @@ def delete_files():
     folders_to_keep = ["static"]
 
     # Files to keep
-    files_to_keep = ["config.yaml", "data.db", "update.py"]
+    files_to_keep = ["config.yaml", "data.db", "update.py", "update_new.py"]
 
     for root, dirs, files in os.walk(current_folder, topdown=True):
         # Exclude specific folders and their contents from deletion
@@ -108,6 +108,8 @@ def download_files_from_github():
             destination_path = os.path.join(current_folder, item)
             if item != "static":  # Skip the "static" folder
                 if os.path.isfile(item_path):
+                    if item == "update.py":
+                        destination_path = os.path.join(current_folder, "update_new.py")
                     shutil.move(item_path, destination_path)
                 elif os.path.isdir(item_path):
                     shutil.move(item_path, destination_path)
@@ -119,6 +121,20 @@ def download_files_from_github():
         msg = "New app version downloaded successfully."
     else:
         msg = "Failed to download files from GitHub."
+
+    print(msg)
+    return msg
+
+def replace_update_script():
+    current_folder = os.getcwd()
+    new_update = os.path.join(current_folder, "update_new.py")
+    update_path = os.path.join(current_folder, "update.py")
+
+    if os.path.exists(new_update):
+        os.replace(new_update, update_path)
+        msg = "Update script replaced."
+    else:
+        msg = "No new update script found. Keeping current update.py."
 
     print(msg)
     return msg
@@ -156,19 +172,44 @@ def install_packages_from_requirements():
     print(msg)
     return msg
 
+def restart_jobs_runner():
+    try:
+        subprocess.check_call(["systemctl", "--user", "restart", "jobs_runner.service"])
+        msg = "Jobs runner restarted."
+    except subprocess.CalledProcessError:
+        msg = "Failed to restart jobs_runner.service."
+    except Exception as e:
+        msg = f"Jobs runner restart skipped: {e}"
+    print(msg)
+    return msg
+
+def stop_jobs_runner():
+    try:
+        subprocess.check_call(["systemctl", "--user", "stop", "jobs_runner.service"])
+        msg = "Jobs runner stopped."
+    except subprocess.CalledProcessError:
+        msg = "Failed to stop jobs_runner.service."
+    except Exception as e:
+        msg = f"Jobs runner stop skipped: {e}"
+    print(msg)
+    return msg
+
 def main():
+    msg0 = stop_jobs_runner()
     msg1 = create_backup()
     msg2 = delete_files()
     msg3 = rename_config_file()
     msg4 = download_files_from_github()
     msg5 = copy_contents_to_config()
-    msg6 = install_packages_from_requirements()
+    msg6 = replace_update_script()
+    msg7 = install_packages_from_requirements()
+    msg8 = restart_jobs_runner()
 
-    msg7 = "Update finished! Yeahhh 🎉"
+    msg9 = "Update finished! Yeahhh 🎉"
 
     # List of messages to combine
     messages = [
-        msg1, msg2, msg3, msg4, msg5, msg6, msg7
+        msg0, msg1, msg2, msg3, msg4, msg5, msg6, msg7, msg8, msg9
     ]
 
     # Combine all messages into a single message with newline separators

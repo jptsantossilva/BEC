@@ -2,7 +2,25 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-02-12]
+
+### Added
+- Docker - Local deployment via docker-compose (dashboard, jobs runner, sqlite-web).
+- Admin - Default admin password set to "not-financial-advice" on fresh installs.
+- Jobs runner - Corrected schedule path for `super_rsi` signal script.
+- Dashboard - Forgot Password - Users can now reset their password directly from the login screen. A new random password will be generated and sent securely. When resetting a password, users now receive the new password via Telegram as a single message, making it easy to copy and paste during login.
+- Dashboard - Settings - Take-Profit Levels now include the Remaining Position Size (%) to show the remaining position size compared to the initial position. 
+- Backtesting - Settings - Added per‑strategy optimization controls and approval rules; backtest results are now filtered by rule thresholds to accept or reject symbols for trading.
+
+### Changed
+- Docker - Ports aligned for dashboard (80) and sqlite-web (8080).
+- README - Updated installation instructions to prefer Docker/GHCR and curl-based setup.
+
+### Fixed
+- Dashboard - Realized and Unrealized PnL - PnL_Perc now uses position-size weighting (Sell_Position_Value / Position_Value) so percentages reflect true portfolio impact.
+
 ## [2025-03-27]
+
 ### Fixed 
 - Trading - Fixed an issue where some crypto assets were not showing up correctly in the balance snapshot. This also affected the calculation of top-performing assets, which could prevent the list of symbols to trade from updating as expected. Backtesting results were also impacted by this issue.
 
@@ -191,7 +209,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - Dashboard - Settings - Visual components adjustments
 - Telegram - When closing position, partial or full, more info was added to related telegram messages.
-- Dashboard - RPQ% - Remaining Position Qty column - moved in the grid for easier reading in mobiles
+- Dashboard - RPS% - Remaining Position Size column - moved in the grid for easier reading on mobile
 ### Fixed
 - Dashboard - Settings - Sometimes settings changes were not being saved 
 

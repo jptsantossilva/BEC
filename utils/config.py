@@ -8,6 +8,9 @@ import pandas as pd
 import utils.telegram as telegram
 import utils.database as database
 
+import importlib
+_settings_cache = None
+
 # sets the output display precision in terms of decimal places to 8.
 # this is helpful when trading against BTC. The value in the dataframe has the precision 8 but when we display it 
 # by printing or sending to telegram only shows precision 6
@@ -21,9 +24,6 @@ min_position_size = None
 trade_against = None
 stop_loss = None
 trade_top_performance = None
-bot_1d = None
-bot_4h = None
-bot_1h = None
 main_strategy = None
 main_strategy_name = None
 btc_strategy = None
@@ -38,15 +38,15 @@ n_decimals = None
 
 def get_setting(setting_name):
     """Fetch a setting from the database using the global connection."""
-    return database.get_setting(database.conn, setting_name)
+    return database.get_setting( setting_name)
 
 def set_trade_against(value):
     """Calls database function to set trade_against."""
-    return database.set_trade_against(database.conn, value)
+    return database.set_trade_against( value)
 
 def set_setting(name, value):
     """Calls database function to set a setting."""
-    return database.set_setting(database.conn, name, value)
+    return database.set_setting( name, value)
 
 # Function to handle errors (common code for error handling)
 def handle_error(error, message):
@@ -57,10 +57,13 @@ def handle_error(error, message):
     sys.exit(msg)
 
 def get_all_settings():
+    """Build settings lazily to avoid circular imports."""
+    global _settings_cache
+    if _settings_cache is not None:
+        return _settings_cache
         
     global stake_amount_type, max_number_of_open_positions, tradable_balance_ratio, min_position_size 
     global trade_against, stop_loss, trade_top_performance
-    global bot_1d, bot_4h, bot_1h
     global main_strategy, main_strategy_name 
     global btc_strategy, btc_strategy_name, btc_strategy_backtest_optimize
     global trade_against_switch
@@ -80,9 +83,6 @@ def get_all_settings():
     trade_against                = get_setting("trade_against")
     stop_loss                    = get_setting("stop_loss")
     trade_top_performance        = get_setting("trade_top_performance")
-    bot_1d                       = get_setting("bot_1d")
-    bot_4h                       = get_setting("bot_4h")
-    bot_1h                       = get_setting("bot_1h")
     main_strategy                = get_setting("main_strategy")
     btc_strategy                 = get_setting("btc_strategy")
     trade_against_switch         = get_setting("trade_against_switch")
@@ -100,19 +100,12 @@ def get_all_settings():
     trade_against_switch_stablecoin = get_setting("trade_against_switch_stablecoin")
     delisting_start_date = get_setting("delisting_start_date")
 
-    # Check if connection is already established
-    if database.is_connection_open(database.conn):
-        print("Database connection is already established.")
-    else:
-        # Create a new connection
-        database.conn = database.connect()
-
-    df_main_strategy = database.get_strategy_by_id(database.conn, main_strategy)
+    df_main_strategy = database.get_strategy_by_id( main_strategy)
     if not df_main_strategy.empty:
         main_strategy_name = str(df_main_strategy.Name.values[0])
         main_strategy_backtest_optimize = bool(df_main_strategy.Backtest_Optimize.values[0])
 
-    df_btc_strategy = database.get_strategy_by_id(database.conn, btc_strategy)
+    df_btc_strategy = database.get_strategy_by_id( btc_strategy)
     if not df_btc_strategy.empty:
         btc_strategy_name = str(df_btc_strategy.Name.values[0])
         btc_strategy_backtest_optimize = bool(df_btc_strategy.Backtest_Optimize.values[0])

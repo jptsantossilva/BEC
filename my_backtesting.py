@@ -8,12 +8,13 @@ import logging
 import timeit
 
 from backtesting import Backtest, Strategy
+from backtesting.lib import FractionalBacktest
 from backtesting.lib import crossover
 
 import utils.telegram as telegram
 import utils.database as database
 # import utils.config as config
-from exchanges.binance import client
+import exchanges.binance as binance
 
 
 # sets the output display precision in terms of decimal places to 8.
@@ -67,7 +68,7 @@ def SMA(values, n):
 #-------------------------------------
 class market_phases(Strategy):
     nFastSMA = 50
-    nSlowSMA = 200    
+    nSlowSMA = 200
     
     def init(self):
         self.sma50 = self.I(SMA, self.data.Close, self.nFastSMA)
@@ -83,8 +84,7 @@ class market_phases(Strategy):
 
         
         if not self.position:
-            if (accumulationPhase or bullishPhase): 
-            # if crossover(fastEMA, slowEMA):
+            if (accumulationPhase or bullishPhase):
                 self.buy()
         
         else: 
@@ -98,7 +98,7 @@ class market_phases(Strategy):
 #-------------------------------------
 class ema_cross(Strategy):
     n1 = 2
-    n2 = 14 
+    n2 = 14
     
     def init(self):
         self.emaFast = self.I(EMA, self.data.Close, self.n1)
@@ -120,7 +120,7 @@ class ema_cross_with_market_phases(Strategy):
     n1 = 7
     n2 = 8
     nFastSMA = 50
-    nSlowSMA = 200    
+    nSlowSMA = 200
     
     def init(self):
         self.emaFast = self.I(EMA, self.data.Close, self.n1)
@@ -140,7 +140,6 @@ class ema_cross_with_market_phases(Strategy):
 
         if not self.position:
             if (accumulationPhase or bullishPhase) and crossover(fastEMA, slowEMA):
-            # if crossover(fastEMA, slowEMA):
                 self.buy()
         
         else: 
@@ -148,62 +147,21 @@ class ema_cross_with_market_phases(Strategy):
                 self.position.close()
             
 def get_data(symbol, timeframe):
-    # makes 3 attempts to get historical data
-    max_retry = 3
-    retry_count = 1
-    success = False
+    df = binance.get_ohlcv(
+        symbol=symbol,
+        interval=timeframe,
+    )
 
-    while retry_count < max_retry and not success:
-        try:
-            df = pd.DataFrame(client.get_historical_klines(
-                symbol
-                ,timeframe
-
-                # better get all historical data. 
-                # Using a defined start date will affect ema values. 
-                # To get same ema and sma values of tradingview all historical data must be used. 
-                ,startdate
-            ))
-            success = True
-        except Exception as e:
-            # avoid error message in telegram if error is related to non-existing trading pair
-            # example: CREAMUSDT - BinanceAPIException(Response [400], 400, code:-1121,msg:Invalid symbol.)
-            msg = repr(e)
-            print(msg)
-            invalid_symbol_error = '"code":-1121,"msg":"Invalid symbol.'
-            if invalid_symbol_error in msg:             
-                df = pd.DataFrame()
-                return df 
-
-            retry_count += 1
-            msg = sys._getframe(  ).f_code.co_name+" - "+symbol+" - "+repr(e)
-            print(msg)
-
-    if not success:
-        msg = f"Failed after {max_retry} tries to get historical data. Unable to retrieve data. "
+    if df.empty:
+        msg = f"Failed after max tries to get historical data for {symbol} ({timeframe}). "
         msg = msg + sys._getframe(  ).f_code.co_name+" - "+symbol
         msg = telegram.telegram_prefix_market_phases_sl + msg
         print(msg)
 
         telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_WARNING, msg)
-        df = pd.DataFrame()
-        return df
-    else:            
-        df = df.iloc[:,:6] # use the first 5 columns
-        df.columns = ['Time','Open','High','Low','Close','Volume'] #rename columns
-        df[['Open','High','Low','Close','Volume']] = df[['Open','High','Low','Close','Volume']].astype(float) #cast to float
-        df.Time = pd.to_datetime(df.Time, unit='ms') #make human readable timestamp
-        df = df.set_index(pd.DatetimeIndex(df['Time']))
-        df = df.drop(['Time'], axis=1)
+        return pd.DataFrame()
 
-        # Remove the last row
-        # This functionality is valuable because our data collection doesn't always coincide precisely with the closing time of a candle. 
-        # As a result, the last row in our dataset represents the most current price information. 
-        # This becomes significant when applying technical analysis, as it directly influences the accuracy of metrics and indicators. 
-        # The implications extend to the decision-making process for buying or selling, making it essential to account for the real-time nature of the last row in our data.
-        df = df.drop(df.index[-1])
-
-        return df
+    return df
     
 def get_strategy_name(strategy):
     # get strategy name from strategy class
@@ -352,11 +310,13 @@ def run_backtest(symbol, timeframe, strategy, optimize):
     if df.empty:
         return # exit function
     
-    commission_value = float(0.005)
-    cash_value = float(500000)
+    bt_settings = database.get_backtesting_settings()
+    commission_value = float(bt_settings["Commission_Value"])
+    cash_value = float(bt_settings["Cash_Value"])
 
     # Checking the value of strategy
-    bt = Backtest(df, strategy=strategy, cash=cash_value, commission=commission_value)
+    # bt = Backtest(df, strategy=strategy, cash=cash_value, commission=commission_value, finalize_trades=True, exclusive_orders=True)
+    bt = FractionalBacktest(df, strategy=strategy, cash=cash_value, commission=commission_value, finalize_trades=True, exclusive_orders=True)
     
     stats = bt.run()
     # print(stats)
@@ -367,7 +327,7 @@ def run_backtest(symbol, timeframe, strategy, optimize):
             n1=range(10, 100, 10),
             n2=range(20, 200, 10),
             constraint=lambda param: param.n1 < param.n2,
-            maximize='Equity Final [$]',
+            maximize=bt_settings["Maximize"],
             return_heatmap=True
         )   
 
@@ -376,10 +336,29 @@ def run_backtest(symbol, timeframe, strategy, optimize):
         n2 = dfbema.index.get_level_values(1)[0]
     
     
-    return_perc = round(stats['Return [%]'],2)
-    buy_hold_return_Perc = round(stats['Buy & Hold Return [%]'],2)
+    def _num(value, digits=2):
+        try:
+            return round(float(value), digits)
+        except Exception:
+            return None
+
+    return_perc = _num(stats['Return [%]'], 2)
+    buy_hold_return_Perc = _num(stats['Buy & Hold Return [%]'], 2)
     backtest_start_date = str(df.index[0])
     backtest_end_date = str(df.index[-1])
+
+    max_drawdown_perc = _num(stats['Max. Drawdown [%]'], 8)
+    trades = _num(stats['# Trades'], 0)
+    win_rate_perc = _num(stats['Win Rate [%]'], 8)
+    best_trade_perc = _num(stats['Best Trade [%]'], 8)
+    worst_trade_perc = _num(stats['Worst Trade [%]'], 8)
+    avg_trade_perc = _num(stats['Avg. Trade [%]'], 8)
+    max_trade_duration = str(stats['Max. Trade Duration'])
+    avg_trade_duration = str(stats['Avg. Trade Duration'])
+    profit_factor = _num(stats['Profit Factor'], 8)
+    expectancy_perc = _num(stats['Expectancy [%]'], 8)
+    sqn = _num(stats['SQN'], 8)
+    kelly_criterion = _num(stats['Kelly Criterion'], 8)
 
     # get strategy name from strategy class
     strategy_name = get_strategy_name(strategy)
@@ -391,16 +370,28 @@ def run_backtest(symbol, timeframe, strategy, optimize):
         print("n1 = ",n1)
         print("n2 = ",n2)
     
-    print("Return [%] = ",return_perc)
-    print("Buy & Hold Return [%] = ",buy_hold_return_Perc)
     print("Backtest start date = ", backtest_start_date)
     print("Backtest end date =" , backtest_end_date)
+    print("Return [%] = ", return_perc)
+    print("Buy & Hold Return [%] = ", buy_hold_return_Perc)
+    print("Max. Drawdown [%] = ", max_drawdown_perc)
+    print("# Trades = ", trades)
+    print("Win Rate [%] = ", win_rate_perc)
+    print("Best Trade [%] = ", best_trade_perc)
+    print("Worst Trade [%] = ", worst_trade_perc)
+    print("Avg. Trade [%] = ", avg_trade_perc)
+    print("Max. Trade Duration = ", max_trade_duration)
+    print("Avg. Trade Duration = ", avg_trade_duration)
+    print("Profit Factor = ", profit_factor)
+    print("Expectancy [%] = ", expectancy_perc)
+    print("SQN = ", sqn)
+    print("Kelly Criterion = ", kelly_criterion)
 
     
     # save results as html file
     save_backtesting_to_html(bt, stats, strategy, timeframe, symbol)
 
-    database.add_backtesting_results(database.conn,
+    database.add_backtesting_results(
                                     timeframe=timeframe,
                                     symbol=symbol,
                                     ema_fast=n1,
@@ -409,6 +400,18 @@ def run_backtest(symbol, timeframe, strategy, optimize):
                                     buy_hold_return_perc=buy_hold_return_Perc,
                                     backtest_start_date=backtest_start_date,
                                     backtest_end_date=backtest_end_date,
+                                    max_drawdown_perc=max_drawdown_perc,
+                                    trades=trades,
+                                    win_rate_perc=win_rate_perc,
+                                    best_trade_perc=best_trade_perc,
+                                    worst_trade_perc=worst_trade_perc,
+                                    avg_trade_perc=avg_trade_perc,
+                                    max_trade_duration=max_trade_duration,
+                                    avg_trade_duration=avg_trade_duration,
+                                    profit_factor=profit_factor,
+                                    expectancy_perc=expectancy_perc,
+                                    sqn=sqn,
+                                    kelly_criterion=kelly_criterion,
                                     strategy_Id=strategy_name
                                     )
     
@@ -429,16 +432,14 @@ def run_backtest(symbol, timeframe, strategy, optimize):
     
     # delete existing trades
     database.delete_backtesting_trades_symbol_timeframe_strategy(
-        database.conn, 
-        symbol=symbol, 
-        timeframe=timeframe, 
+        symbol=symbol,
+        timeframe=timeframe,
         strategy_id=strategy_name
     )
     
     # Insert new trades to database
     for index, row in df_trades.iterrows():
         database.add_backtesting_trade(
-            connection=database.conn,
             symbol=row['Symbol'],
             timeframe=row['Time_Frame'],
             strategy_id=row['Strategy_Id'],
@@ -456,10 +457,11 @@ def run_backtest(symbol, timeframe, strategy, optimize):
 def get_backtesting_results(strategy_id, symbol, time_frame):
     
     # get best ema
-    df = database.get_backtesting_results_by_symbol_timeframe_strategy(connection=database.conn, 
-                                                                        symbol=symbol, 
-                                                                        time_frame=time_frame, 
-                                                                        strategy_id=strategy_id)
+    df = database.get_backtesting_results_by_symbol_timeframe_strategy(
+        symbol=symbol,
+        time_frame=time_frame,
+        strategy_id=strategy_id
+    )
 
     if not df.empty:
         fast_ema = int(df.Ema_Fast.values[0])
@@ -474,7 +476,7 @@ def get_backtesting_results(strategy_id, symbol, time_frame):
         
     return fast_ema, slow_ema
 
-def calc_backtesting(symbol, timeframe, strategy, optimize):
+def calc_backtesting(symbol, time_frame, strategy, optimize):
 
     result = False
 
@@ -485,11 +487,11 @@ def calc_backtesting(symbol, timeframe, strategy, optimize):
         print("")
         # get strategy name from strategy class
         strategy_name = get_strategy_name(strategy)
-        print(f"Backtest strategy {strategy_name} - {symbol} - {timeframe} - Start")
+        print(f"Backtest strategy {strategy_name} - {symbol} - {time_frame} - Start")
         
-        run_backtest(symbol, timeframe, strategy, optimize)
+        run_backtest(symbol, time_frame, strategy, optimize)
 
-        print(f"Backtest strategy {strategy_name} - {symbol} - {timeframe} - End")
+        print(f"Backtest strategy {strategy_name} - {symbol} - {time_frame} - End")
         
         stop = timeit.default_timer()
         total_seconds = stop - start
@@ -509,6 +511,3 @@ def calc_backtesting(symbol, timeframe, strategy, optimize):
         
         return False
     
-
-
-

@@ -9,6 +9,13 @@ send alerts when:
 """
 
 import sys
+import os
+
+# Allow running this file directly from the signals/ folder.
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
+
 import pandas as pd
 import datetime
 from datetime import date
@@ -26,24 +33,22 @@ import exchanges.binance as binance
 
 def get_data(symbol, time_frame, start_date):
     print(f"{symbol} - getting data...")
-    # makes 3 attempts to get historical data
-    max_retry = 3
-    retry_count = 1
-    success = False
+    # makes multiple attempts to get historical data with backoff for rate limits
+    max_retry = 4
+    df = binance.get_ohlcv(
+        symbol=symbol,
+        interval=time_frame,
+        start_date=start_date,
+        max_retries=max_retry,
+        backoff_sec=2.0,
+        drop_last=False,
+        drop_incomplete=False,
+        include_symbol=False,
+        set_index=True,
+        keep_time_col=True,
+    )
 
-    while retry_count < max_retry and not success:
-        try:
-            df = pd.DataFrame(binance.client.get_historical_klines(symbol,
-                                                                    time_frame,
-                                                                    start_date
-                                                                    ))
-            success = True
-        except Exception as e:
-            retry_count += 1
-            msg = sys._getframe(  ).f_code.co_name+" - "+symbol+" - "+repr(e)
-            print(msg)
-
-    if not success:
+    if df.empty:
         msg = f"Failed after {max_retry} tries to get historical data. Unable to retrieve data. "
         msg = msg + sys._getframe(  ).f_code.co_name+" - "+symbol
         msg = telegram.telegram_prefix_signals_sl + msg
@@ -51,15 +56,7 @@ def get_data(symbol, time_frame, start_date):
         telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_WARNING, msg)
         frame = pd.DataFrame()
         return frame
-    else:
-        df = df.iloc[:,:6] # use the first 5 columns
-        df.columns = ['Time','Open','High','Low','Close','Volume'] #rename columns
-        df[['Open','High','Low','Close','Volume']] = df[['Open','High','Low','Close','Volume']].astype(float) #cast to float
-        df['Date'] = df['Time'].astype(str) 
-        # set the 'date' column as the DataFrame index
-        df.set_index(pd.to_datetime(df['Date'], unit='ms'), inplace=True) # make human readable timestamp)
-        df = df.drop(['Date'], axis=1)
-        return df
+    return df
 
 #-----------------------------------------------------------------------
 # calculate RSI 
@@ -75,7 +72,7 @@ def apply_technicals(df, rsi_length):
 
 def super_rsi(symbol):
     # 15min timeframe
-    time_frame = binance.client.KLINE_INTERVAL_15MINUTE
+    time_frame = binance.get_client().KLINE_INTERVAL_15MINUTE
     rsi_lookback_periods = 14 # 14 days
 
     # get start date
@@ -158,7 +155,7 @@ def super_rsi(symbol):
             return  # Exit the function
         
     if result_low or result_high:
-        df_1h = df_15m.resample('1H').last()
+        df_1h = df_15m.resample('1h').last()
         apply_technicals(df_1h, rsi_1h)
         
         value = round(df_1h['rsi'].iloc[-2],1)
@@ -185,7 +182,7 @@ def super_rsi(symbol):
             return  # Exit the function
     
     if result_low or result_high:
-        df_4h = df_15m.resample('4H').last()
+        df_4h = df_15m.resample('4h').last()
         apply_technicals(df_4h, rsi_4h)
         
         value = round(df_4h['rsi'].iloc[-2],1)
@@ -270,7 +267,7 @@ def super_rsi(symbol):
                 signal_message = f"RSI(14) 4h,1h,30m,15m > {rsi_high}"
 
         # add signal to database
-        database.add_signal_log(database.conn, date=now, signal="Super-RSI", signal_message=signal_message, symbol=symbol, notes=add_note)
+        database.add_signal_log( date=now, signal="Super-RSI", signal_message=signal_message, symbol=symbol, notes=add_note)
 
 def run():
     # msg = 'SUPER-RSI - Start'
@@ -280,14 +277,7 @@ def run():
     # local_time = datetime.datetime.now()
     # print(f"Run Super-RSI: {local_time}")
 
-    # Check if connection is already established
-    if database.is_connection_open(database.conn):
-        print("Database connection is already established.")
-    else:
-        # Create a new connection
-        database.conn = database.connect()
-
-    df_symbols = database.get_distinct_symbol_from_positions_where_position1(database.conn)
+    df_symbols = database.get_distinct_symbol_from_positions_where_position1()
 
     # Symbols to add - BTC + ETH
     symbols_to_add = ['BTCUSDC', 'ETHUSDC'] 

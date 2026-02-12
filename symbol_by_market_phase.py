@@ -14,21 +14,23 @@ import utils.database as database
 import exchanges.binance as binance
 import utils.telegram as telegram
 import add_symbol
-from my_backtesting import calc_backtesting, get_data, get_backtesting_results
+from my_backtesting import calc_backtesting, get_backtesting_results
 
 def get_blacklist():
+    """Return set of blacklisted symbols with trade-against suffix applied."""
     # Read symbols from blacklist to not trade
-    df_blacklist = database.get_symbol_blacklist(database.conn)
+    df_blacklist = database.get_symbol_blacklist()
     blacklist = set()
     if not df_blacklist.empty:
-        trade_against = config.trade_against
-        df_blacklist['Symbol'] = df_blacklist['Symbol'].astype(str) + trade_against
+        trade_against_suffix = config.trade_against
+        df_blacklist['Symbol'] = df_blacklist['Symbol'].astype(str) + trade_against_suffix
         # Convert blacklist to set
         blacklist = set(df_blacklist["Symbol"].unique())
     return blacklist
 
 
 def apply_technicals(df):
+    """Add market phase technical indicators to the dataframe."""
     if df.empty:
         return
     
@@ -37,75 +39,26 @@ def apply_technicals(df):
 
     df['Perc_Above_DSMA50'] = ((df['Price'] - df['DSMA50']) / df['DSMA50']) * 100
     df['Perc_Above_DSMA200'] = ((df['Price'] - df['DSMA200']) / df['DSMA200']) * 100
-
-
-def get_data(symbol, time_frame):
-    # makes 3 attempts to get historical data
-    max_retry = 3
-    retry_count = 1
-    success = False
-
-    while retry_count < max_retry and not success:
-        try:
-            frame = pd.DataFrame(binance.client.get_historical_klines(symbol, time_frame,                                                           
-                                                            # better get all historical data. 
-                                                            # Using a defined start date will affect ema values. 
-                                                            # To get same ema and sma values of tradingview default historical data must be used.
-                                                            ))
-            success = True
-        except Exception as e:
-            retry_count += 1
-            msg = sys._getframe(  ).f_code.co_name+" - "+symbol+" - "+repr(e)
-            print(msg)
-
-    if not success:
-        msg = f"Failed after {max_retry} tries to get historical data. Unable to retrieve data. "
-        msg = msg + sys._getframe(  ).f_code.co_name+" - "+symbol
-        msg = telegram.telegram_prefix_market_phases_sl + msg
-        print(msg)
-        telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_WARNING, msg)
-        frame = pd.DataFrame()
-        return frame()
-    else:
-        frame = frame.iloc[:, [0, 4]]  # Column selection
-        frame.columns = ['Time', 'Price']  # Rename columns
-        
-        # using dictionary to convert specific columns
-        convert_dict = {'Price': float} # Cast to float
-        frame = frame.astype(convert_dict)
-
-        frame['Symbol'] = symbol
-        frame.Time = pd.to_datetime(frame.Time, unit='ms')
-        frame.index = frame.Time
-        frame = frame[['Symbol', 'Price']]
-
-        # Remove the last row
-        # This functionality is valuable because our data collection doesn't always coincide precisely with the closing time of a candle. 
-        # As a result, the last row in our dataset represents the most current price information. 
-        # This becomes significant when applying technical analysis, as it directly influences the accuracy of metrics and indicators. 
-        # The implications extend to the decision-making process for buying or selling, making it essential to account for the real-time nature of the last row in our data.
-        frame = frame.drop(frame.index[-1])
-
-        return frame
     
 def read_arguments():    
+    """Read CLI args for timeframe and trade-against settings."""
     # Arguments
     n = len(sys.argv)
 
+    # Optional CLI arg: timeframe (1d, 4h, 1h). Defaults to 1d.
     if n < 2:
-        print("Argument is missing")
-        time_frame = input('Enter timeframe (1d, 8h, 4h):')
-        # trade_against = input('Trade against USDT/USDC or BTC:')
+        time_frame = "1d"
     else:
         # argv[0] in Python is always the name of the script.
         time_frame = sys.argv[1]
         # trade_against = sys.argv[2]
 
-    trade_against = config.trade_against
+    trade_against_value = config.trade_against
 
-    return time_frame, trade_against
+    return time_frame, trade_against_value
 
 def get_symbols(trade_against):    
+    """Return tradable symbols for the given quote asset."""
     # Get blacklist
     blacklist = get_blacklist()
 
@@ -132,25 +85,39 @@ def get_symbols(trade_against):
     symbols = sorted(symbols)
     return symbols
 
-def set_market_phases_to_symbols(symbols, time_frame):
+def set_market_phases_to_symbols(symbols, timeframe):
+    """Compute market phase labels for a list of symbols."""
     # Empty dataframe
     df_result = pd.DataFrame()
 
     for symbol in symbols:
         print("Calculating " + symbol)
-        df = get_data(symbol, time_frame)
+        df = binance.get_close_df(
+            symbol=symbol,
+            interval=timeframe,
+            include_symbol=True,
+            price_col="Price",            
+        )
 
         if df.empty:
+            msg = f"Failed after max tries to get historical data for {symbol} ({timeframe}). "
+            msg = msg + sys._getframe().f_code.co_name + " - " + symbol
+            msg = telegram.telegram_prefix_market_phases_sl + msg
+            print(msg)
+            telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_WARNING, msg)
             continue
         
         apply_technicals(df)
-        # Last one is the one with 200dsma value
+        # Last one is the one with 200DSMA value
         df = df.tail(1)
 
         if df_result.empty:
             df_result = df
         else:
             df_result = pd.concat([df_result, df])
+
+    if df_result.empty:
+        return df_result
 
     # Market phases conditions
     conditions = [
@@ -163,11 +130,12 @@ def set_market_phases_to_symbols(symbols, time_frame):
     ]
     # Set market phase for each symbol
     values = ['recovery', 'accumulation', 'bullish', 'warning', 'distribution', 'bearish']
-    df_result['Market_Phase'] = np.select(conditions, values)
+    df_result['Market_Phase'] = np.select(conditions, values, default="unknown")
 
     return df_result
 
 def trade_against_auto_switch():
+    """Auto-switch trading quote asset between stablecoin and BTC based on market regime."""
 
     if config.trade_against_switch:
         stablecoin = config.trade_against_switch_stablecoin #config.get_setting("trade_against_switch_stablecoin")
@@ -176,11 +144,29 @@ def trade_against_auto_switch():
         sell_timeframes = ["1d", "4h", "1h"]
         sell_message = "Trade against auto switch"
 
-        df_btc = get_data(btc_pair, btc_timeframe)
+        df_btc = binance.get_close_df(
+            symbol=btc_pair,
+            interval=btc_timeframe,
+            include_symbol=True,
+            price_col="Price",
+        )
+
+        if df_btc.empty:
+            msg = f"Failed after max tries to get historical data for {btc_pair} ({btc_timeframe}). "
+            msg = telegram.telegram_prefix_market_phases_sl + msg
+            print(msg)
+            telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_WARNING, msg)
+            return pd.DataFrame()
+        
+
+        if df_btc.empty or len(df_btc) < 2:
+            return
 
         btc_strategy_id = config.get_setting("btc_strategy")
 
         # get buy and sell conditions
+        buy_condition = False
+        sell_condition = False
         if btc_strategy_id in ['ema_cross']:
 
             fast_ema, slow_ema = get_backtesting_results(strategy_id=btc_strategy_id, symbol=btc_pair, time_frame=btc_timeframe)
@@ -233,13 +219,13 @@ def trade_against_auto_switch():
 
             # sell all positions to USDT/USDC
             for tf in sell_timeframes:
-                df_sell = database.get_positions_by_bot_position(database.conn, bot=tf, position=1)
+                df_sell = database.get_positions_by_bot_position( bot=tf, position=1)
                 list_to_sell = df_sell.Symbol.tolist()
                 for symbol in list_to_sell:
                     binance.create_sell_order(symbol=symbol, bot=tf,reason=f"{sell_message}")  
             
             # release locked values from the balance
-            database.release_all_values(database.conn)
+            database.release_all_values()
             
             # convert all USDT/USDC to BTC
             btc_pair_to_buy = f"BTC{config.trade_against}"
@@ -267,13 +253,13 @@ def trade_against_auto_switch():
 
             # sell all positions to BTC
             for tf in sell_timeframes:
-                df_sell = database.get_positions_by_bot_position(database.conn, bot=tf, position=1)
+                df_sell = database.get_positions_by_bot_position( bot=tf, position=1)
                 list_to_sell = df_sell.Symbol.tolist()
                 for symbol in list_to_sell:
                     binance.create_sell_order(symbol=symbol, bot=tf, reason=f"{sell_message}")  
                     
             # release locked values from the balance
-            database.release_all_values(database.conn)
+            database.release_all_values()
 
             # convert all BTC to Stablecoin
             btc_pair_to_sell = f"BTC{config.trade_against_switch_stablecoin}"
@@ -284,7 +270,8 @@ def trade_against_auto_switch():
             min_position_size = 20
             config.set_setting("min_position_size", min_position_size)
 
-def main(time_frame):
+def main(timeframe):
+    """Run market phase scan, reporting, and updates."""
     # Calculate program run time
     start = timeit.default_timer()
 
@@ -299,20 +286,13 @@ def main(time_frame):
     logging.basicConfig(filename=log_filename, level=logging.INFO,
                         format='%(asctime)s %(message)s', datefmt='%Y-%m-%d %I:%M:%S %p -')
 
-    # Check if connection is already established
-    if database.is_connection_open(database.conn):
-        print("Database connection is already established.")
-    else:
-        # Create a new connection
-        database.conn = database.connect()
-
     # create daily balance snapshot
     binance.create_balance_snapshot(telegram_prefix="")
 
     # run backtesting for all available BTC Strategies 
     stablecoin = config.get_setting("trade_against_switch_stablecoin")
     btc_pair = f"BTC{stablecoin}"
-    df_strategies_btc = database.get_strategies_for_btc(database.conn)
+    df_strategies_btc = database.get_strategies_for_btc()
     for index, row in df_strategies_btc.iterrows():    
         # Dynamically import the entire strategies module
         strategy_module = importlib.import_module('my_backtesting')
@@ -321,10 +301,12 @@ def main(time_frame):
         btc_strategy = getattr(strategy_module, btc_strategy_id)
 
         # run backtesting
-        calc_backtesting(symbol=btc_pair, timeframe=time_frame,
-                         strategy=btc_strategy,
-                         optimize=bool(row['Backtest_Optimize'])
-                         )
+        calc_backtesting(
+            symbol=btc_pair, 
+            time_frame=timeframe,
+            strategy=btc_strategy,
+            optimize=bool(row['Backtest_Optimize'])
+        )
     
     # Automatically switch trade against
     trade_against_auto_switch()
@@ -337,24 +319,23 @@ def main(time_frame):
     print(msg)
     telegram.send_telegram_message(telegram.telegram_token_main, "", msg)
 
-    df_result = set_market_phases_to_symbols(symbols, time_frame)
+    df_result = set_market_phases_to_symbols(symbols, timeframe)
 
     # Keep those in accumulation or bullish phases
-    dfUnion = df_result.query("Market_Phase in ['bullish', 'accumulation']")
+    df_union = df_result.query("Market_Phase in ['bullish', 'accumulation']")
 
-    df_top = dfUnion.sort_values(by=['Perc_Above_DSMA200'], ascending=False)
+    df_top = df_union.sort_values(by=['Perc_Above_DSMA200'], ascending=False)
     df_top = df_top.head(config.trade_top_performance)
 
     # Set rank for highest strength
     df_top['Rank'] = np.arange(len(df_top)) + 1
 
     # Delete existing data
-    database.delete_all_symbols_by_market_phase(database.conn)
+    database.delete_all_symbols_by_market_phase()
 
     # Insert new symbols
     for index, row in df_top.iterrows():
         database.insert_symbols_by_market_phase(
-            database.conn,
             row['Symbol'],
             row['Price'],
             row['DSMA50'],
@@ -367,7 +348,7 @@ def main(time_frame):
 
     utc_time = datetime.datetime.now(pytz.timezone('UTC'))
     formatted_date = utc_time.strftime('%Y-%m-%d')
-    database.insert_symbols_by_market_phase_historical(database.conn, formatted_date)
+    database.insert_symbols_by_market_phase_historical(formatted_date)
 
     selected_columns = df_top[["Symbol", "Price", "Market_Phase"]]
     df_top_print = selected_columns.copy()
@@ -386,7 +367,7 @@ def main(time_frame):
     telegram.send_telegram_message(telegram.telegram_token_main, "", msg)
 
     # Create file to import to TradingView with the list of top performers and symbols in position
-    df_tv_list = database.get_distinct_symbol_by_market_phase_and_positions(database.conn)
+    df_tv_list = database.get_distinct_symbol_by_market_phase_and_positions()
     df_top = df_tv_list
     df_tv_list['symbol'] = "BINANCE:" + df_tv_list['symbol']
     # Write DataFrame to CSV file
@@ -399,26 +380,26 @@ def main(time_frame):
 
     if not df_top.empty:
         # Remove symbols from positions table that are not top performers in accumulation or bullish phase
-        database.delete_positions_not_top_rank(database.conn)
+        database.delete_positions_not_top_rank()
 
         # Add top rank symbols with positive returns to positions files
-        database.add_top_rank_to_positions(database.conn, strategy_id=config.strategy_id)
+        database.add_top_rank_to_positions(strategy_id=config.strategy_id)
 
         # Delete rows with calc completed and keep only symbols with calc not completed
-        database.delete_symbols_to_calc_completed(database.conn)
+        database.delete_symbols_to_calc_completed()
 
         # Add the symbols with open positions to calc
-        database.add_symbols_with_open_positions_to_calc(database.conn)
+        database.add_symbols_with_open_positions_to_calc()
 
         # Add the symbols in top rank to calc
-        database.add_symbols_top_rank_to_calc(database.conn)
+        database.add_symbols_top_rank_to_calc()
 
         # Calc best ema for each symbol on 1d, 4h and 1h time frame and save on positions table
         add_symbol.run()
 
     else:
         # if there are no symbols in accumulation or bullish phase remove all not open from positions
-        database.delete_all_positions_not_open(database.conn)
+        database.delete_all_positions_not_open()
 
     # Close the database connection
     database.conn.close()
@@ -438,9 +419,6 @@ def main(time_frame):
     print(msg)
     telegram.send_telegram_message(telegram.telegram_token_main, "", msg)
 
-def scheduled_run(time_frame, trade_against):
-    main(time_frame=time_frame, trade_against=trade_against)
-
 if __name__ == "__main__":
-    time_frame, trade_against = read_arguments()
-    main(time_frame=time_frame)
+    time_frame, trade_against_value = read_arguments()
+    main(timeframe=time_frame)
