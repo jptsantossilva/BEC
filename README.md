@@ -33,8 +33,8 @@ telegram_token_main=
 telegram_token_signals=
 ```
 ```bash
-docker compose pull
-docker compose up -d
+sudo docker compose pull
+sudo docker compose up -d
 ```
 
 What you get:
