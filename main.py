@@ -173,7 +173,10 @@ def get_current_pnl(symbol, current_price, timeframe):
         telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
 
 
-def trade(timeframe, run_mode):
+def trade(timeframe, run_mode, settings=None):
+    if settings is None:
+        settings = config.load_settings(refresh=True)
+
     # Make sure we are only trying to buy positions on symbols included on market phases table
     database.delete_positions_not_top_rank()
 
@@ -199,13 +202,13 @@ def trade(timeframe, run_mode):
         slow_ema = 0
 
         # get best backtesting results for the strategy
-        if config.strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
+        if settings.strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
             fast_ema, slow_ema = get_backtesting_results(
-                strategy_id=config.strategy_id, symbol=symbol, time_frame=timeframe
+                strategy_id=settings.strategy_id, symbol=symbol, time_frame=timeframe
             )
 
             if fast_ema == 0 or slow_ema == 0:
-                msg = f"{symbol} - {config.strategy_name} - Best EMA values missing"
+                msg = f"{symbol} - {settings.strategy_name} - Best EMA values missing"
                 msg = telegram_prefix_sl + msg
                 print(msg)
                 telegram.send_telegram_message(
@@ -233,12 +236,12 @@ def trade(timeframe, run_mode):
 
         # if using stop loss
         sell_stop_loss = False
-        if config.stop_loss > 0:
-            sell_stop_loss = current_pnl <= -config.stop_loss
+        if settings.stop_loss > 0:
+            sell_stop_loss = current_pnl <= -settings.stop_loss
 
         # if using take profit 1
         sell_tp_1 = False
-        if config.take_profit_1_pnl_perc > 0:
+        if settings.take_profit_1 > 0:
             # check if tp1 occurred already
             # Filter
             df_tp1 = df_sell.loc[df_sell["Symbol"] == symbol, "Take_Profit_1"]
@@ -246,11 +249,11 @@ def trade(timeframe, run_mode):
             tp1_occurred = df_tp1.values[0]
             # if not occurred
             if tp1_occurred == 0:
-                sell_tp_1 = current_pnl >= config.take_profit_1_pnl_perc
+                sell_tp_1 = current_pnl >= settings.take_profit_1
 
         # if using take profit 2
         sell_tp_2 = False
-        if config.take_profit_2_pnl_perc > 0:
+        if settings.take_profit_2 > 0:
             # check if tp2 occurred already
             # Filter
             df_tp2 = df_sell.loc[df_sell["Symbol"] == symbol, "Take_Profit_2"]
@@ -258,11 +261,11 @@ def trade(timeframe, run_mode):
             tp2_occurred = df_tp2.values[0]
             # if not occurred
             if tp2_occurred == 0:
-                sell_tp_2 = current_pnl >= config.take_profit_2_pnl_perc
+                sell_tp_2 = current_pnl >= settings.take_profit_2
 
         # if using take profit 3
         sell_tp_3 = False
-        if config.take_profit_3_pnl_perc > 0:
+        if settings.take_profit_3 > 0:
             # check if tp3 occurred already
             # Filter
             df_tp3 = df_sell.loc[df_sell["Symbol"] == symbol, "Take_Profit_3"]
@@ -270,11 +273,11 @@ def trade(timeframe, run_mode):
             tp3_occurred = df_tp3.values[0]
             # if not occurred
             if tp3_occurred == 0:
-                sell_tp_3 = current_pnl >= config.take_profit_3_pnl_perc
+                sell_tp_3 = current_pnl >= settings.take_profit_3
 
         # if using take profit 3
         sell_tp_4 = False
-        if config.take_profit_4_pnl_perc > 0:
+        if settings.take_profit_4 > 0:
             # check if tp4 occurred already
             # Filter
             df_tp4 = df_sell.loc[df_sell["Symbol"] == symbol, "Take_Profit_4"]
@@ -282,14 +285,14 @@ def trade(timeframe, run_mode):
             tp4_occurred = df_tp4.values[0]
             # if not occurred
             if tp4_occurred == 0:
-                sell_tp_4 = current_pnl >= config.take_profit_4_pnl_perc
+                sell_tp_4 = current_pnl >= settings.take_profit_4
 
         # check sell condition for the strategy
         sell_condition = False
-        if config.strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
+        if settings.strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
             condition_crossover = lastrow.SlowEMA > lastrow.FastEMA
             sell_condition = condition_crossover
-        elif config.strategy_id in ["market_phases"]:
+        elif settings.strategy_id in ["market_phases"]:
             sell_condition = (lastrow.Close < lastrow.SMA50) or (
                 lastrow.Close < lastrow.SMA200
             )
@@ -317,7 +320,7 @@ def trade(timeframe, run_mode):
                     bot=timeframe,
                     fast_ema=fast_ema,
                     slow_ema=slow_ema,
-                    reason=f"Stop loss {config.stop_loss}%",
+                    reason=f"Stop loss {settings.stop_loss}%",
                 )
                 continue
 
@@ -338,26 +341,26 @@ def trade(timeframe, run_mode):
                 (
                     1,
                     sell_tp_1,
-                    getattr(config, "take_profit_1_pnl_perc", None),
-                    float(getattr(config, "take_profit_1_amount_perc", 0)),
+                    settings.take_profit_1,
+                    float(settings.take_profit_1_amount),
                 ),
                 (
                     2,
                     sell_tp_2,
-                    getattr(config, "take_profit_2_pnl_perc", None),
-                    float(getattr(config, "take_profit_2_amount_perc", 0)),
+                    settings.take_profit_2,
+                    float(settings.take_profit_2_amount),
                 ),
                 (
                     3,
                     sell_tp_3,
-                    getattr(config, "take_profit_3_pnl_perc", None),
-                    float(getattr(config, "take_profit_3_amount_perc", 0)),
+                    settings.take_profit_3,
+                    float(settings.take_profit_3_amount),
                 ),
                 (
                     4,
                     sell_tp_4,
-                    getattr(config, "take_profit_4_pnl_perc", None),
-                    float(getattr(config, "take_profit_4_amount_perc", 0)),
+                    settings.take_profit_4,
+                    float(settings.take_profit_4_amount),
                 ),
             ]
 
@@ -391,7 +394,7 @@ def trade(timeframe, run_mode):
             best_emas = (
                 "" if fast_ema == 0 or slow_ema == 0 else f"{fast_ema}/{slow_ema}"
             )
-            msg = f"{symbol} - {best_emas} {config.strategy_name} - Sell condition not fulfilled"
+            msg = f"{symbol} - {best_emas} {settings.strategy_name} - Sell condition not fulfilled"
             msg = telegram_prefix_sl + msg
             print(msg)
             telegram.send_telegram_message(telegram_token, "", msg)
@@ -404,13 +407,13 @@ def trade(timeframe, run_mode):
         slow_ema = 0
 
         # get best backtesting results for the strategy
-        if config.strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
+        if settings.strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
             fast_ema, slow_ema = get_backtesting_results(
-                strategy_id=config.strategy_id, symbol=symbol, time_frame=timeframe
+                strategy_id=settings.strategy_id, symbol=symbol, time_frame=timeframe
             )
 
             if fast_ema == 0 or slow_ema == 0:
-                msg = f"{symbol} - {config.strategy_name} - Best EMA values missing"
+                msg = f"{symbol} - {settings.strategy_name} - Best EMA values missing"
                 msg = telegram_prefix_sl + msg
                 print(msg)
                 telegram.send_telegram_message(
@@ -422,7 +425,7 @@ def trade(timeframe, run_mode):
 
         # skip if no data
         if df.empty:
-            msg = f"{symbol} - {config.strategy_name} - Empty dataframe on BUY loop"
+            msg = f"{symbol} - {settings.strategy_name} - Empty dataframe on BUY loop"
             msg = telegram_prefix_sl + msg
             print(msg)
             telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
@@ -434,7 +437,7 @@ def trade(timeframe, run_mode):
         lastrow = df.iloc[-1]
 
         # check buy condition for the strategy
-        if config.strategy_id in ["ema_cross_with_market_phases"]:
+        if settings.strategy_id in ["ema_cross_with_market_phases"]:
 
             accumulation_phase = (
                 (lastrow.Close > lastrow.SMA50)
@@ -451,7 +454,7 @@ def trade(timeframe, run_mode):
             condition_crossover = crossover(df.FastEMA, df.SlowEMA)
             buy_condition = condition_phase and condition_crossover
 
-        elif config.strategy_id in ["market_phases"]:
+        elif settings.strategy_id in ["market_phases"]:
 
             accumulation_phase = (
                 (lastrow.Close > lastrow.SMA50)
@@ -466,7 +469,7 @@ def trade(timeframe, run_mode):
 
             buy_condition = accumulation_phase or bullish_phase
 
-        elif config.strategy_id in ["ema_cross"]:
+        elif settings.strategy_id in ["ema_cross"]:
             buy_condition = crossover(df.FastEMA, df.SlowEMA)
 
         if buy_condition:
@@ -478,13 +481,16 @@ def trade(timeframe, run_mode):
                 "" if fast_ema == 0 or slow_ema == 0 else f"{fast_ema}/{slow_ema}"
             )
 
-            msg = f"{symbol} - {best_emas} {config.strategy_name} - Buy condition not fulfilled"
+            msg = f"{symbol} - {best_emas} {settings.strategy_name} - Buy condition not fulfilled"
             msg = telegram_prefix_sl + msg
             print(msg)
             telegram.send_telegram_message(telegram_token, "", msg)
 
 
-def positions_summary(timeframe):
+def positions_summary(timeframe, settings=None):
+    if settings is None:
+        settings = config.load_settings(refresh=True)
+
     df_summary = database.get_positions_by_bot_position(bot=timeframe, position=1)
 
     # remove unwanted columns
@@ -521,15 +527,16 @@ def positions_summary(timeframe):
         print(msg)
         telegram.send_telegram_message(telegram_token, "", msg)
 
-    if config.stake_amount_type == "unlimited":
+    if settings.stake_amount_type == "unlimited":
         num_open_positions = database.get_num_open_positions()
-        msg = f"{str(num_open_positions)}/{str(config.max_number_of_open_positions)} positions occupied"
+        msg = f"{str(num_open_positions)}/{str(settings.max_number_of_open_positions)} positions occupied"
         msg = telegram_prefix_sl + msg
         print(msg)
         telegram.send_telegram_message(telegram_token, "", msg)
 
 
 def run(timeframe, run_mode):
+    settings = config.load_settings(refresh=True)
 
     # if timeframe == "1h" and not config.bot_1h:
     #     msg = f"Bot {timeframe} is inactive. Check Dashboard - Settings. Bye"
@@ -552,9 +559,9 @@ def run(timeframe, run_mode):
     msg = telegram_prefix_sl + msg
     telegram.send_telegram_message(telegram_token, telegram.EMOJI_START, msg)
 
-    trade(timeframe, run_mode)
+    trade(timeframe, run_mode, settings=settings)
 
-    positions_summary(timeframe)
+    positions_summary(timeframe, settings=settings)
 
     # exchange.create_balance_snapshot(telegram_prefix="")
 
@@ -580,7 +587,7 @@ def run(timeframe, run_mode):
 
 if __name__ == "__main__":
     time_frame = read_arguments()
-    run_mode = config.get_setting("run_mode")
+    run_mode = config.load_settings(refresh=True).run_mode
 
     try:
         # Validate timeframe and prefixes first

@@ -228,8 +228,10 @@ def show_main_page():
 
     # st.session_state
 
+    settings = config.load_settings()
+
     global trade_against
-    trade_against = config.get_setting("trade_against")
+    trade_against = settings.trade_against
 
     global num_decimals
     num_decimals = 8 if trade_against == "BTC" else 2

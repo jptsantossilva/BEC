@@ -16,13 +16,16 @@ import utils.telegram as telegram
 import add_symbol
 from my_backtesting import calc_backtesting, get_backtesting_results
 
-def get_blacklist():
+def get_blacklist(settings=None):
     """Return set of blacklisted symbols with trade-against suffix applied."""
+    if settings is None:
+        settings = config.load_settings()
+
     # Read symbols from blacklist to not trade
     df_blacklist = database.get_symbol_blacklist()
     blacklist = set()
     if not df_blacklist.empty:
-        trade_against_suffix = config.trade_against
+        trade_against_suffix = settings.trade_against
         df_blacklist['Symbol'] = df_blacklist['Symbol'].astype(str) + trade_against_suffix
         # Convert blacklist to set
         blacklist = set(df_blacklist["Symbol"].unique())
@@ -40,8 +43,11 @@ def apply_technicals(df):
     df['Perc_Above_DSMA50'] = ((df['Price'] - df['DSMA50']) / df['DSMA50']) * 100
     df['Perc_Above_DSMA200'] = ((df['Price'] - df['DSMA200']) / df['DSMA200']) * 100
     
-def read_arguments():    
+def read_arguments(settings=None):    
     """Read CLI args for timeframe and trade-against settings."""
+    if settings is None:
+        settings = config.load_settings()
+
     # Arguments
     n = len(sys.argv)
 
@@ -53,14 +59,17 @@ def read_arguments():
         time_frame = sys.argv[1]
         # trade_against = sys.argv[2]
 
-    trade_against_value = config.trade_against
+    trade_against_value = settings.trade_against
 
     return time_frame, trade_against_value
 
-def get_symbols(trade_against):    
+def get_symbols(trade_against, settings=None):
     """Return tradable symbols for the given quote asset."""
+    if settings is None:
+        settings = config.load_settings()
+
     # Get blacklist
-    blacklist = get_blacklist()
+    blacklist = get_blacklist(settings=settings)
 
     exchange_info = binance.get_exchange_info()
 
@@ -134,11 +143,13 @@ def set_market_phases_to_symbols(symbols, timeframe):
 
     return df_result
 
-def trade_against_auto_switch():
+def trade_against_auto_switch(settings=None):
     """Auto-switch trading quote asset between stablecoin and BTC based on market regime."""
+    if settings is None:
+        settings = config.load_settings(refresh=True)
 
-    if config.trade_against_switch:
-        stablecoin = config.trade_against_switch_stablecoin #config.get_setting("trade_against_switch_stablecoin")
+    if settings.trade_against_switch:
+        stablecoin = settings.trade_against_switch_stablecoin
         btc_pair = f"BTC{stablecoin}"
         btc_timeframe = "1d"
         sell_timeframes = ["1d", "4h", "1h"]
@@ -162,14 +173,14 @@ def trade_against_auto_switch():
         if df_btc.empty or len(df_btc) < 2:
             return
 
-        btc_strategy_id = config.get_setting("btc_strategy")
+        btc_strategy = settings.btc_strategy
 
         # get buy and sell conditions
         buy_condition = False
         sell_condition = False
-        if btc_strategy_id in ['ema_cross']:
+        if btc_strategy in ['ema_cross']:
 
-            fast_ema, slow_ema = get_backtesting_results(strategy_id=btc_strategy_id, symbol=btc_pair, time_frame=btc_timeframe)
+            fast_ema, slow_ema = get_backtesting_results(strategy_id=btc_strategy, symbol=btc_pair, time_frame=btc_timeframe)
             
             # technical indicators
             df_btc['FastEma'] = df_btc['Price'].ewm(span=fast_ema, adjust=False).mean()
@@ -178,7 +189,7 @@ def trade_against_auto_switch():
             buy_condition = crossover(df_btc.FastEma, df_btc.SlowEma)
             sell_condition = crossover(df_btc.SlowEma, df_btc.FastEma)
 
-        elif btc_strategy_id in ["market_phases"]:
+        elif btc_strategy in ["market_phases"]:
 
             # technical indicators
             df_btc['SMA50'] = df_btc['Price'].rolling(50).mean()
@@ -202,7 +213,7 @@ def trade_against_auto_switch():
             sell_condition = buy_condition_previous and not buy_condition_curr
 
         # convert USDT/USDC to BTC
-        if config.trade_against in ["USDC", "USDT"] and buy_condition:
+        if settings.trade_against in ["USDC", "USDT"] and buy_condition:
             
             ################
             # Alert message
@@ -228,16 +239,17 @@ def trade_against_auto_switch():
             database.release_all_values()
             
             # convert all USDT/USDC to BTC
-            btc_pair_to_buy = f"BTC{config.trade_against}"
+            btc_pair_to_buy = f"BTC{settings.trade_against}"
             binance.create_buy_order(symbol=btc_pair_to_buy, bot=btc_timeframe, convert_all_balance=True)
                 
             # change trade against to BTC
-            config.set_trade_against("BTC")
+            config.update_settings({"trade_against": "BTC"})
             min_position_size = 0.0001
-            config.set_setting("min_position_size", min_position_size)
+            config.update_settings({"min_position_size": min_position_size})
+            settings = config.load_settings(refresh=True)
 
         # convert BTC to USDT/USDC
-        elif config.trade_against == "BTC" and sell_condition:
+        elif settings.trade_against == "BTC" and sell_condition:
             ################
             # Alert message
             ################
@@ -262,16 +274,21 @@ def trade_against_auto_switch():
             database.release_all_values()
 
             # convert all BTC to Stablecoin
-            btc_pair_to_sell = f"BTC{config.trade_against_switch_stablecoin}"
+            btc_pair_to_sell = f"BTC{settings.trade_against_switch_stablecoin}"
             binance.create_sell_order(symbol=btc_pair_to_sell, bot=btc_timeframe, convert_all_balance=True, reason=f"{sell_message}")
 
             # change trade against to stablecoin
-            config.set_trade_against(config.trade_against_switch_stablecoin)
+            config.update_settings({"trade_against": settings.trade_against_switch_stablecoin})
             min_position_size = 20
-            config.set_setting("min_position_size", min_position_size)
+            config.update_settings({"min_position_size": min_position_size})
+            settings = config.load_settings(refresh=True)
+
+    return settings
 
 def main(timeframe):
     """Run market phase scan, reporting, and updates."""
+    settings = config.load_settings(refresh=True)
+
     # Calculate program run time
     start = timeit.default_timer()
 
@@ -290,30 +307,31 @@ def main(timeframe):
     binance.create_balance_snapshot(telegram_prefix="")
 
     # run backtesting for all available BTC Strategies 
-    stablecoin = config.get_setting("trade_against_switch_stablecoin")
+    stablecoin = settings.trade_against_switch_stablecoin
     btc_pair = f"BTC{stablecoin}"
     df_strategies_btc = database.get_strategies_for_btc()
     for index, row in df_strategies_btc.iterrows():    
         # Dynamically import the entire strategies module
         strategy_module = importlib.import_module('my_backtesting')
         # Dynamically get the strategy class
-        btc_strategy_id = row['Id']
-        btc_strategy = getattr(strategy_module, btc_strategy_id)
+        btc_strategy = row['Id']
+        btc_strategy_impl = getattr(strategy_module, btc_strategy)
 
         # run backtesting
         calc_backtesting(
             symbol=btc_pair, 
             time_frame=timeframe,
-            strategy=btc_strategy,
+            strategy=btc_strategy_impl,
             optimize=bool(row['Backtest_Optimize'])
         )
     
     # Automatically switch trade against
-    trade_against_auto_switch()
+    settings = trade_against_auto_switch(settings=settings)
 
-    trade_against = config.get_setting("trade_against")
+    settings = config.load_settings(refresh=True)
+    trade_against = settings.trade_against
 
-    symbols = get_symbols(trade_against=trade_against)
+    symbols = get_symbols(trade_against=trade_against, settings=settings)
     msg = str(len(symbols)) + " symbols found. Calculating market phases..."
     msg = telegram.telegram_prefix_market_phases_sl + msg
     print(msg)
@@ -325,7 +343,7 @@ def main(timeframe):
     df_union = df_result.query("Market_Phase in ['bullish', 'accumulation']")
 
     df_top = df_union.sort_values(by=['Perc_Above_DSMA200'], ascending=False)
-    df_top = df_top.head(config.trade_top_performance)
+    df_top = df_top.head(settings.trade_top_performance)
 
     # Set rank for highest strength
     df_top['Rank'] = np.arange(len(df_top)) + 1
@@ -356,7 +374,7 @@ def main(timeframe):
     df_top_print = df_top_print.reset_index(drop=True)
     df_top_print.index += 1
 
-    msg = f"Top {str(config.trade_top_performance)} performance symbols:"
+    msg = f"Top {str(settings.trade_top_performance)} performance symbols:"
     msg = telegram.telegram_prefix_market_phases_sl + msg
     print(msg)
     telegram.send_telegram_message(telegram.telegram_token_main, "", msg)
@@ -382,8 +400,8 @@ def main(timeframe):
         # Remove symbols from positions table that are not top performers in accumulation or bullish phase
         database.delete_positions_not_top_rank()
 
-        # Add top rank symbols with positive returns to positions files
-        database.add_top_rank_to_positions(strategy_id=config.strategy_id)
+        # Add top rank symbols to positions files
+        database.add_top_rank_to_positions(strategy_id=settings.strategy_id)
 
         # Delete rows with calc completed and keep only symbols with calc not completed
         database.delete_symbols_to_calc_completed()
@@ -395,14 +413,11 @@ def main(timeframe):
         database.add_symbols_top_rank_to_calc()
 
         # Calc best ema for each symbol on 1d, 4h and 1h time frame and save on positions table
-        add_symbol.run()
+        add_symbol.run(settings=settings)
 
     else:
         # if there are no symbols in accumulation or bullish phase remove all not open from positions
         database.delete_all_positions_not_open()
-
-    # Close the database connection
-    database.conn.close()
 
     # calculate execution time
     stop = timeit.default_timer()

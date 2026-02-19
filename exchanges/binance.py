@@ -117,12 +117,13 @@ def separate_symbol_and_trade_against(symbol):
     return symbol_only, symbol_stable
 
 def calc_stake_amount(symbol, bot):
+    settings = config.load_settings()
     telegram_token = telegram.get_telegram_token()
 
-    if config.stake_amount_type == "unlimited":
+    if settings.stake_amount_type == "unlimited":
         num_open_positions = database.get_num_open_positions()
 
-        if num_open_positions >= config.max_number_of_open_positions:
+        if num_open_positions >= settings.max_number_of_open_positions:
             return -2 
 
         try:
@@ -141,14 +142,14 @@ def calc_stake_amount(symbol, bot):
             telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
             return 0
     
-        tradable_balance = balance*config.tradable_balance_ratio 
+        tradable_balance = balance*settings.tradable_balance_ratio
         # remove locked values from the balance
-        lock_values = config.get_setting("lock_values")
+        lock_values = settings.lock_values
         if lock_values:
             locked_values = database.get_total_locked_values()
             tradable_balance = tradable_balance-locked_values
             
-        stake_amount = tradable_balance/(config.max_number_of_open_positions-num_open_positions)
+        stake_amount = tradable_balance/(settings.max_number_of_open_positions-num_open_positions)
         
         if symbol == "BTC":
             stake_amount = round(stake_amount, 8)
@@ -156,8 +157,8 @@ def calc_stake_amount(symbol, bot):
             stake_amount = int(stake_amount)
         
         # make sure the size is >= the minimum size
-        if stake_amount < config.min_position_size:
-            stake_amount = config.min_position_size
+        if stake_amount < settings.min_position_size:
+            stake_amount = settings.min_position_size
 
         # make sure there are enough funds otherwise abort the buy position
         if balance < stake_amount:
@@ -165,14 +166,15 @@ def calc_stake_amount(symbol, bot):
 
         return stake_amount
     
-    elif int(config.stake_amount_type) >= 0:
-        return float(config.stake_amount_type)
+    elif int(settings.stake_amount_type) >= 0:
+        return float(settings.stake_amount_type)
     else:
         return 0
 
 def create_buy_order(symbol: str, bot: str, fast_ema: int = 0, slow_ema: int = 0, convert_all_balance: bool = False):
+    settings = config.load_settings()
     
-    run_mode = config.get_setting("run_mode")
+    run_mode = settings.run_mode
     if run_mode == "test":
         print("Exiting the function because run_mode is 'test'.")
         return
@@ -191,7 +193,7 @@ def create_buy_order(symbol: str, bot: str, fast_ema: int = 0, slow_ema: int = 0
             # convert full symbol_trade_against balance to symbol_trade_against
             try:
                 balance = float(get_client().get_asset_balance(asset = symbol_trade_against)['free'])                
-                tradable_balance = balance*config.tradable_balance_ratio      
+                tradable_balance = balance*settings.tradable_balance_ratio
                 position_size = tradable_balance
             except Exception as e:
                 msg = sys._getframe(  ).f_code.co_name+" - "+repr(e)
@@ -261,10 +263,10 @@ def create_buy_order(symbol: str, bot: str, fast_ema: int = 0, slow_ema: int = 0
                                    ema_fast=fast_ema,
                                    ema_slow=slow_ema)
         
-            if config.strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
-                strategy_name = str(fast_ema)+"/"+str(slow_ema)+" "+config.strategy_name
-            elif config.strategy_id in ["market_phases"]:
-                strategy_name = config.strategy_name
+            if settings.strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
+                strategy_name = str(fast_ema)+"/"+str(slow_ema)+" "+settings.strategy_name
+            elif settings.strategy_id in ["market_phases"]:
+                strategy_name = settings.strategy_name
 
             if convert_all_balance:
                 convert_message = "Trade against auto switch"
@@ -286,7 +288,7 @@ def create_buy_order(symbol: str, bot: str, fast_ema: int = 0, slow_ema: int = 0
             
         elif position_size == -2:
             num_open_positions = database.get_num_open_positions()
-            telegram.send_telegram_message(telegram_token, telegram.EMOJI_INFORMATION, Client.SIDE_BUY+" "+symbol+" - Max open positions ("+str(num_open_positions)+"/"+str(config.max_number_of_open_positions)+") already occupied!")
+            telegram.send_telegram_message(telegram_token, telegram.EMOJI_INFORMATION, Client.SIDE_BUY+" "+symbol+" - Max open positions ("+str(num_open_positions)+"/"+str(settings.max_number_of_open_positions)+") already occupied!")
         else:
             telegram.send_telegram_message(telegram_token, telegram.EMOJI_INFORMATION, Client.SIDE_BUY+" "+symbol+" - Not enough "+symbol_trade_against+" funds!")
 
@@ -308,8 +310,9 @@ def create_buy_order(symbol: str, bot: str, fast_ema: int = 0, slow_ema: int = 0
         telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
 
 def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percentage = 100, take_profit_num = 0, convert_all_balance: bool = False):
+    settings = config.load_settings()
 
-    run_mode = config.get_setting("run_mode")
+    run_mode = settings.run_mode
     if run_mode == "test":
         print("Exiting the function because run_mode is 'test'.")
         return
@@ -404,7 +407,7 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percenta
                             database.set_position_take_profit_4( bot=bot, symbol=symbol, take_profit_4=1)
                         
                         # lock values from parcial sales amounts
-                        lock_values = config.get_setting("lock_values")
+                        lock_values = settings.lock_values
                         if lock_values:
                             database.lock_value(
                                 position_id=df_pos['Id'].iloc[0],
@@ -433,10 +436,10 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percenta
             else:
                 alert_type = telegram.EMOJI_TRADE_WITH_LOSS
 
-            if config.strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
-                strategy_name = str(fast_ema)+"/"+str(slow_ema)+" "+config.strategy_name
-            elif config.strategy_id in ["market_phases"]:
-                strategy_name = config.strategy_name 
+            if settings.strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
+                strategy_name = str(fast_ema)+"/"+str(slow_ema)+" "+settings.strategy_name
+            elif settings.strategy_id in ["market_phases"]:
+                strategy_name = settings.strategy_name
             
             if convert_all_balance:
                 convert_message = "Trade against auto switch"

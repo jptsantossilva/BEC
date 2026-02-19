@@ -140,7 +140,34 @@ def delete_position(symbol, timeframe):
         
 def unrealized_pnl():
     with tab_upnl:
+        def _highlight_trading_status(row):
+            approved = str(row.get("Trading_Approved", "")).lower() in ("approved", "1", "true")
+            color = '#8FBC8F' if approved else '#E9967A'
+            change_style = f'background-color: {color}'
+            return [
+                change_style if col in ["Trading_Approved", "Trading_Rejection_Reasons"] else ""
+                for col in row.index
+            ]
+
         result_open_positions, positions_df_1d, positions_df_4h, positions_df_1h = calculate_unrealized_pnl()
+        strategy_id = config.load_settings().strategy_id
+        df_trading_status_all = database.get_top_performers_trading_status(strategy_id=strategy_id)
+
+        def _prepare_trading_status_for_tf(tf: str):
+            if df_trading_status_all.empty:
+                return pd.DataFrame()
+            df = df_trading_status_all[df_trading_status_all["Time_Frame"] == tf].copy()
+            if df.empty:
+                return df
+            df["Trading_Approved"] = df["Trading_Approved"].apply(
+                lambda x: "Approved" if int(x) == 1 else "Rejected"
+            )
+            df["Trading_Rejection_Reasons"] = df["Trading_Rejection_Reasons"].fillna("")
+            df.loc[
+                (df["Trading_Approved"] == "Rejected") & (df["Trading_Rejection_Reasons"] == ""),
+                "Trading_Rejection_Reasons",
+            ] = "Not evaluated yet"
+            return df
         # print("\nUnrealized PnL - Total")
         # print('-------------------------------')
         # print(result_open_positions)
@@ -182,6 +209,14 @@ def unrealized_pnl():
             on_select="rerun",
             selection_mode=["single-row", "multi-column"],
         )
+        with st.expander("Top performers eligibility 1d", expanded=False):
+            st.caption("Backtesting Approval Rules status for top performers on 1d.")
+            df_trading_status_1d = _prepare_trading_status_for_tf("1d")
+            if df_trading_status_1d.empty:
+                st.info("No trading approval data for 1d.")
+            else:
+                styled_status_1d = df_trading_status_1d.style.apply(_highlight_trading_status, axis=1)
+                st.dataframe(styled_status_1d, width="content", hide_index=True)
 
         # event_positions_1d.selection
 
@@ -213,6 +248,14 @@ def unrealized_pnl():
             on_select="rerun",
             selection_mode=["single-row", "multi-column"],
         )
+        with st.expander("Top performers eligibility 4h", expanded=False):
+            st.caption("Backtesting Approval Rules status for top performers on 4h.")
+            df_trading_status_4h = _prepare_trading_status_for_tf("4h")
+            if df_trading_status_4h.empty:
+                st.info("No trading approval data for 4h.")
+            else:
+                styled_status_4h = df_trading_status_4h.style.apply(_highlight_trading_status, axis=1)
+                st.dataframe(styled_status_4h, width="content", hide_index=True)
 
         # event_positions_1d.selection
 
@@ -243,6 +286,14 @@ def unrealized_pnl():
             on_select="rerun",
             selection_mode=["single-row", "multi-column"],
         )
+        with st.expander("Top performers eligibility 1h", expanded=False):
+            st.caption("Backtesting Approval Rules status for top performers on 1h.")
+            df_trading_status_1h = _prepare_trading_status_for_tf("1h")
+            if df_trading_status_1h.empty:
+                st.info("No trading approval data for 1h.")
+            else:
+                styled_status_1h = df_trading_status_1h.style.apply(_highlight_trading_status, axis=1)
+                st.dataframe(styled_status_1h, width="content", hide_index=True)
 
         # event_positions_1d.selection
 
@@ -365,7 +416,7 @@ def unrealized_pnl():
 
 def top_performers():
     with tab_top_perf:
-        top_perf = config.get_setting("trade_top_performance")
+        top_perf = config.read_setting("trade_top_performance")
         st.subheader(f"Top {top_perf} Performers")
         st.caption("The top performers are those in accumulation phase (Price > 50DSMA and Price > 200DSMA and 50DSMA < 200DSMA) and bullish phase (Price > 50DSMA and Price > 200DSMA and 50DSMA > 200DSMA) and then sorted by the price above the 200-day moving average (DSMA) in percentage terms. [Click here for more details](https://twitter.com/jptsantossilva/status/1539976855469428738?s=20).")
         df_mp = database.get_all_symbols_by_market_phase()
@@ -448,8 +499,8 @@ def settings():
     with tab_settings:
         st.markdown("### Overview")
         # Compact header card
-        ta = config.get_setting("trade_against")
-        max_pos = config.get_setting("max_number_of_open_positions")
+        ta = config.read_setting("trade_against")
+        max_pos = config.read_setting("max_number_of_open_positions")
         total_locked = round(database.get_total_locked_values(), 2)
         cur_bal = round(binance.get_symbol_balance(ta), 2)
         avail = max(cur_bal - total_locked, 0)
@@ -481,12 +532,12 @@ def settings():
                 "Also used in the daily refresh to apply approved backtesting results and update the symbols in Positions."
             )
             if "main_strategy" not in st.session_state:
-                st.session_state.main_strategy = config.get_setting("main_strategy")
+                st.session_state.main_strategy = config.read_setting("main_strategy")
             st.selectbox(
                 "Main Strategy", 
                 list(dict_strategies_main.keys()), 
                 key="main_strategy",
-                on_change=lambda: config.set_setting("main_strategy", 
+                on_change=lambda: config.update_setting("main_strategy", 
                 st.session_state.main_strategy),
                 format_func=format_func_strategies_main, 
                 label_visibility="collapsed",
@@ -500,12 +551,12 @@ def settings():
                 "It controls when the app switches trade exposure between stablecoin and BTC."
             )
             if "btc_strategy" not in st.session_state:
-                st.session_state.btc_strategy = config.get_setting("btc_strategy")
+                st.session_state.btc_strategy = config.read_setting("btc_strategy")
             st.selectbox(
                 "BTC Strategy", 
                 list(dict_strategies_btc.keys()), 
                 key="btc_strategy",
-                on_change=lambda: config.set_setting("btc_strategy", 
+                on_change=lambda: config.update_setting("btc_strategy", 
                 st.session_state.btc_strategy),
                 format_func=format_func_strategies_btc, 
                 label_visibility="collapsed",
@@ -518,13 +569,13 @@ def settings():
                     "automatically. This can trigger full portfolio reallocation and materially change risk."
                 )
                 if "trade_against_switch" not in st.session_state:
-                    st.session_state.trade_against_switch = config.get_setting("trade_against_switch")
+                    st.session_state.trade_against_switch = config.read_setting("trade_against_switch")
                 st.checkbox("Auto-switch Stablecoin/BTC", key="trade_against_switch",
-                            on_change=lambda: config.set_setting("trade_against_switch", st.session_state.trade_against_switch))
+                            on_change=lambda: config.update_setting("trade_against_switch", st.session_state.trade_against_switch))
                 if "trade_against_switch_stablecoin" not in st.session_state:
-                    st.session_state.trade_against_switch_stablecoin = config.get_setting("trade_against_switch_stablecoin")
+                    st.session_state.trade_against_switch_stablecoin = config.read_setting("trade_against_switch_stablecoin")
                 st.selectbox("Stablecoin for auto-switch", ["USDC","USDT"], key="trade_against_switch_stablecoin",
-                            on_change=lambda: config.set_setting("trade_against_switch_stablecoin", st.session_state.trade_against_switch_stablecoin))
+                            on_change=lambda: config.update_setting("trade_against_switch_stablecoin", st.session_state.trade_against_switch_stablecoin))
 
         st.space()
 
@@ -554,9 +605,9 @@ def settings():
             # c1, c2 = st.columns(2)
             # Trade Against
             if "trade_against" not in st.session_state:
-                st.session_state.trade_against = config.get_setting("trade_against")
+                st.session_state.trade_against = config.read_setting("trade_against")
             def on_ta(): 
-                config.set_setting("trade_against", st.session_state.trade_against)
+                config.update_setting("trade_against", st.session_state.trade_against)
             st.selectbox(
                 label="Trade Against", 
                 options=["USDC","USDT","BTC"], 
@@ -567,8 +618,8 @@ def settings():
             
             # Max open positions
             if "max_number_of_open_positions" not in st.session_state:
-                st.session_state.max_number_of_open_positions = config.get_setting("max_number_of_open_positions")
-            def on_max(): config.set_setting("max_number_of_open_positions", st.session_state.max_number_of_open_positions)
+                st.session_state.max_number_of_open_positions = config.read_setting("max_number_of_open_positions")
+            def on_max(): config.update_setting("max_number_of_open_positions", st.session_state.max_number_of_open_positions)
             st.number_input(
                 label="Max Open Positions", 
                 min_value=1, 
@@ -581,7 +632,7 @@ def settings():
             # Min size & Stop loss
             # c3, c4 = st.columns(2)
             if "min_position_size" not in st.session_state:
-                st.session_state.min_position_size = float(config.get_setting("min_position_size"))
+                st.session_state.min_position_size = float(config.read_setting("min_position_size"))
             def on_min():
                 MIN_USD = 20
                 ta = st.session_state.trade_against
@@ -590,7 +641,7 @@ def settings():
                 else:
                     if float(st.session_state.min_position_size) >= MIN_USD:
                         st.session_state.min_position_size = 0.0001
-                config.set_setting("min_position_size", st.session_state.min_position_size)
+                config.update_setting("min_position_size", st.session_state.min_position_size)
             min_kwargs = dict(min_value=20.0, step=10.0, format=None) if st.session_state.trade_against in ["USDC","USDT"] else dict(min_value=0.0001, step=0.0001, format="%.4f")
             st.number_input(
                 label="Minimum Position Size", 
@@ -600,8 +651,8 @@ def settings():
                 **min_kwargs)
             
             if "stop_loss" not in st.session_state:
-                st.session_state.stop_loss = config.get_setting("stop_loss")
-            def on_sl(): config.set_setting("stop_loss", st.session_state.stop_loss)
+                st.session_state.stop_loss = config.read_setting("stop_loss")
+            def on_sl(): config.update_setting("stop_loss", st.session_state.stop_loss)
             st.number_input(
                 label="Stop Loss %", 
                 min_value=0, 
@@ -614,24 +665,24 @@ def settings():
         # Top performers & Tradable ratio
         with st.container(horizontal=False):
             if "trade_top_performance" not in st.session_state:
-                st.session_state.trade_top_performance = config.get_setting("trade_top_performance")
+                st.session_state.trade_top_performance = config.read_setting("trade_top_performance")
             st.slider(
                 label="Trade Top Performance Symbols", 
                 min_value=0, max_value=500, step=5,
                 key="trade_top_performance",
-                on_change=lambda: config.set_setting("trade_top_performance", st.session_state.trade_top_performance),
+                on_change=lambda: config.update_setting("trade_top_performance", st.session_state.trade_top_performance),
                 # width=400
             )
             
             if "tradable_balance_ratio" not in st.session_state:
-                st.session_state.tradable_balance_ratio = config.get_setting("tradable_balance_ratio")*100
+                st.session_state.tradable_balance_ratio = config.read_setting("tradable_balance_ratio")*100
             st.slider(
                 label="Tradable Balance Ratio", 
                 min_value=0, 
                 max_value=100, 
                 step=1, 
                 format="%d%%", key="tradable_balance_ratio",
-                on_change=lambda: config.set_setting("tradable_balance_ratio", st.session_state.tradable_balance_ratio/100),
+                on_change=lambda: config.update_setting("tradable_balance_ratio", st.session_state.tradable_balance_ratio/100),
                 # width=400
             )
 
@@ -641,9 +692,9 @@ def settings():
         with st.container(border=False):
             def _tp_num(label, key_perc, key_amt, rps_value, rps_key):
                 if key_perc not in st.session_state:
-                    st.session_state[key_perc] = config.get_setting(key_perc)
+                    st.session_state[key_perc] = config.read_setting(key_perc)
                 if key_amt not in st.session_state:
-                    st.session_state[key_amt] = config.get_setting(key_amt)
+                    st.session_state[key_amt] = config.read_setting(key_amt)
                 st.session_state[rps_key] = rps_value
                 with st.container(horizontal=True):
                     st.number_input(
@@ -651,9 +702,9 @@ def settings():
                         min_value=0,
                         step=1,
                         key=key_perc,
-                        on_change=lambda k=key_perc: config.set_setting(k, st.session_state[k]),
+                        on_change=lambda k=key_perc: config.update_setting(k, st.session_state[k]),
                         help="The percentage increase in price at which the system will automatically trigger a sell order to secure profits.",
-                        width=140,
+                        width=130,
                     )
                     st.number_input(
                         f"{label} Amount (%)",
@@ -661,9 +712,9 @@ def settings():
                         max_value=100,
                         step=5,
                         key=key_amt,
-                        on_change=lambda k=key_amt: config.set_setting(k, st.session_state[k]),
+                        on_change=lambda k=key_amt: config.update_setting(k, st.session_state[k]),
                         help="The percentage of the position quantity to be sold when take profits level is achieved.",
-                        width=140,
+                        width=130,
                     )
                     st.number_input(
                         f"RPS {label[-1]} (%)",
@@ -672,7 +723,7 @@ def settings():
                         disabled=True,
                         key=rps_key,
                         help="Remaining position size after selling TP Amount% of the remainder.",
-                        width=140,
+                        width=80,
                     )
 
             a1 = float(st.session_state.get("take_profit_1_amount", 0) or 0)
@@ -694,10 +745,10 @@ def settings():
         st.markdown("### Locked Values")
         with st.container(border=False):
             if "lock_values" not in st.session_state:
-                st.session_state.lock_values = config.get_setting("lock_values")
+                st.session_state.lock_values = config.read_setting("lock_values")
             st.checkbox("Lock values from partial sales", key="lock_values",
                         on_change=lambda: (database.release_all_values() if not st.session_state.lock_values else None,
-                                        config.set_setting("lock_values", st.session_state.lock_values)),
+                                        config.update_setting("lock_values", st.session_state.lock_values)),
                         help="""When **enabled**, means that any amount obtained from partially selling a position will be temporarily locked and cannot be used to purchase another position until the entire position is sold. 
                             \nWhen **disabled**, partial sales can be freely reinvested into new positions. It's important to note that this may increase the risk of larger position amounts, as funds from partial sales may be immediately reinvested without reservation.
                         """)
@@ -723,11 +774,11 @@ def settings():
         with st.container(border=False):
             st.markdown("### Telegram")
             if "bot_prefix" not in st.session_state:
-                st.session_state.bot_prefix = config.get_setting("bot_prefix")
+                st.session_state.bot_prefix = config.read_setting("bot_prefix")
             st.text_input(
                 label="Telegram Messages Prefix",
                 key="bot_prefix",
-                on_change=lambda: config.set_setting("bot_prefix", st.session_state.bot_prefix),
+                on_change=lambda: config.update_setting("bot_prefix", st.session_state.bot_prefix),
                 width=200,
                 help="When there are multiple instances of BEC running, the prefix is useful to distinguish which BEC the telegram message belongs to.")
 
@@ -735,7 +786,7 @@ def settings():
 def show_main_page():
     
     global trade_against
-    trade_against = config.get_setting("trade_against") 
+    trade_against = config.read_setting("trade_against") 
 
     global num_decimals
     num_decimals = 8 if trade_against == "BTC" else 2
@@ -928,7 +979,7 @@ def calculate_unrealized_pnl():
         open_positions = 0
 
     # Show "open / max" positions
-    max_num_positions = config.get_setting("max_number_of_open_positions")
+    max_num_positions = config.read_setting("max_number_of_open_positions")
     positions_info_total = f"{open_positions}/{max_num_positions}"
 
     # Append TOTAL row (weighted)

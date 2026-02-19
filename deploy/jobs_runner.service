@@ -1,0 +1,13 @@
+[Unit]
+Description=BEC Jobs Runner
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/joao/Documents/GitHub/BEC
+ExecStart=/home/joao/Documents/GitHub/BEC/.venv/bin/python /home/joao/Documents/GitHub/BEC/jobs_runner.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

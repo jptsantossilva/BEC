@@ -103,7 +103,8 @@ def extract_trading_pairs_from_announcement(url, page):
 def main():
     print(f"🔍 Checking Binance delisting announcements at {datetime.now()}")
 
-    delisting_start_date = config.get_setting("delisting_start_date")
+    settings = config.load_settings()
+    delisting_start_date = settings.delisting_start_date
     start_date = datetime.fromisoformat(delisting_start_date)
 
     blacklist = load_blacklist()

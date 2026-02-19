@@ -368,8 +368,9 @@ def add_order_sell(sell_order_id: str, buy_order_id: str, date: str, bot: str, s
             # since we can make multiple sells, I will use the buy_qty = sell_qty to get the pnl_value for the partial sold position 
             # pnl_value = (sell_price*sell_qty)-(buy_price*buy_qty)
             from utils import config as _config
+            settings = _config.load_settings()
             pnl_value = (sell_price*sell_qty)-(buy_price*sell_qty)
-            pnl_value = float(round(pnl_value, _config.n_decimals))
+            pnl_value = float(round(pnl_value, settings.n_decimals))
         else:
             msg = "No Buy_Order_ID!"
             print(msg)        
@@ -623,26 +624,67 @@ def get_num_open_positions_by_bot(bot: str):
     result = int(df.iloc[0, 0])
     return result
 
-#   
-sql_add_top_rank_to_positions = """
-    INSERT INTO Positions (Bot, Symbol, Position, Rank, Ema_Fast, Ema_Slow)
-    SELECT br.Time_Frame, mp.Symbol, 0, mp.Rank, br.Ema_Fast, br.Ema_Slow
-    FROM 
-        Symbols_By_Market_Phase mp
-        INNER JOIN Backtesting_Results br ON mp.Symbol = br.Symbol
-    WHERE   
+# Candidates for Positions from current top-ranked symbols and backtesting results.
+sql_get_top_rank_position_candidates = """
+    SELECT
+        br.Time_Frame AS Bot,
+        mp.Symbol AS Symbol,
+        mp.Rank AS Rank,
+        br.Ema_Fast AS Ema_Fast,
+        br.Ema_Slow AS Ema_Slow,
+        br.Return_Perc,
+        br.BuyHold_Return_Perc,
+        br.Max_Drawdown_Perc,
+        br.Trades,
+        br.Profit_Factor,
+        br.SQN
+    FROM Symbols_By_Market_Phase mp
+    INNER JOIN Backtesting_Results br ON mp.Symbol = br.Symbol
+    WHERE
         br.Return_Perc > 0
         AND br.Strategy_Id = ?
         AND NOT EXISTS (
-            SELECT 1 
-            FROM Positions 
+            SELECT 1
+            FROM Positions
             WHERE Bot = br.Time_Frame AND Symbol = mp.Symbol
         );
 """
+
+sql_insert_top_rank_position = """
+    INSERT INTO Positions (Bot, Symbol, Position, Rank, Ema_Fast, Ema_Slow)
+    VALUES (?, ?, 0, ?, ?, ?);
+"""
+
 def add_top_rank_to_positions(strategy_id: str):
     connection = _get_conn()
+    candidates = pd.read_sql(sql_get_top_rank_position_candidates, connection, params=(strategy_id,))
+    if candidates.empty:
+        return
+
+    to_insert = []
+    for _, row in candidates.iterrows():
+        timeframe = str(row["Bot"])
+        approved, _ = is_backtest_approved(timeframe, row)
+        if not approved:
+            continue
+
+        ema_fast = None if pd.isna(row["Ema_Fast"]) else int(row["Ema_Fast"])
+        ema_slow = None if pd.isna(row["Ema_Slow"]) else int(row["Ema_Slow"])
+        to_insert.append(
+            (
+                timeframe,
+                str(row["Symbol"]),
+                int(row["Rank"]),
+                ema_fast,
+                ema_slow,
+            )
+        )
+
+    if not to_insert:
+        return
+
     with connection:
-        connection.execute(sql_add_top_rank_to_positions, (strategy_id,))
+        connection.executemany(sql_insert_top_rank_position, to_insert)
 
 sql_set_rank_from_positions = """
     UPDATE Positions
@@ -694,8 +736,9 @@ def update_position_pnl(bot: str, symbol: str, curr_price: float):
         pnl_perc = float(round(pnl_perc,2))
 
         from utils import config as _config
+        settings = _config.load_settings()
         pnl_value = (curr_price*qty)-(buy_price*qty)
-        pnl_value = float(round(pnl_value, _config.n_decimals))
+        pnl_value = float(round(pnl_value, settings.n_decimals))
         
         # duration
         datetime_now = datetime.now()
@@ -1033,6 +1076,8 @@ sql_create_backtesting_results_table = """
         Expectancy_Perc REAL,
         SQN REAL,
         Kelly_Criterion REAL,
+        Trading_Approved INTEGER NOT NULL DEFAULT 0,
+        Trading_Rejection_Reasons TEXT,
         Strategy_Id TEXT,
         CONSTRAINT symbol_time_frame_strategy_unique UNIQUE (Symbol, Time_Frame, Strategy_Id)
     );
@@ -1109,9 +1154,9 @@ sql_add_backtesting_results = """
     INSERT OR REPLACE INTO Backtesting_Results (
         Symbol, Ema_Fast, Ema_Slow, Time_Frame, Return_Perc, BuyHold_Return_Perc, Backtest_Start_Date, Backtest_End_Date,
         Max_Drawdown_Perc, Trades, Win_Rate_Perc, Best_Trade_Perc, Worst_Trade_Perc, Avg_Trade_Perc, Max_Trade_Duration, Avg_Trade_Duration,
-        Profit_Factor, Expectancy_Perc, SQN, Kelly_Criterion, Strategy_Id
+        Profit_Factor, Expectancy_Perc, SQN, Kelly_Criterion, Trading_Approved, Trading_Rejection_Reasons, Strategy_Id
         ) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 """
 def add_backtesting_results(timeframe: str,
                             symbol: str,
@@ -1133,7 +1178,9 @@ def add_backtesting_results(timeframe: str,
                             expectancy_perc: float,
                             sqn: float,
                             kelly_criterion: float,
-                            strategy_Id: str):
+                            strategy_Id: str,
+                            trading_approved: bool = False,
+                            trading_rejection_reasons: str = ""):
     connection = _get_conn()
     with connection:
         connection.execute(sql_add_backtesting_results, (str(symbol), 
@@ -1156,9 +1203,35 @@ def add_backtesting_results(timeframe: str,
                                               float(expectancy_perc) if expectancy_perc is not None else None,
                                               float(sqn) if sqn is not None else None,
                                               float(kelly_criterion) if kelly_criterion is not None else None,
+                                              1 if trading_approved else 0,
+                                              str(trading_rejection_reasons) if trading_rejection_reasons is not None else "",
                                               str(strategy_Id)
                                               )
                             )
+
+sql_update_backtesting_approval = """
+    UPDATE Backtesting_Results
+    SET
+        Trading_Approved = ?,
+        Trading_Rejection_Reasons = ?
+    WHERE
+        Symbol = ?
+        AND Time_Frame = ?
+        AND Strategy_Id = ?;
+"""
+def set_backtesting_approval(symbol: str, time_frame: str, strategy_id: str, trading_approved: bool, trading_rejection_reasons: str = ""):
+    connection = _get_conn()
+    with connection:
+        connection.execute(
+            sql_update_backtesting_approval,
+            (
+                1 if trading_approved else 0,
+                trading_rejection_reasons or "",
+                symbol,
+                time_frame,
+                strategy_id,
+            ),
+        )
     
 sql_delete_all_backtesting_results = "DELETE FROM Backtesting_Results;"
 def delete_all_backtesting_results():
@@ -1359,10 +1432,46 @@ def symbols_by_market_phase_Historical_get_symbols_days_at_top():
     return pd.read_sql(sql_symbols_by_market_phase_Historical_get_symbols_days_at_top, connection)
 
 
-sql_get_all_symbols_by_market_phase = "SELECT Id,Rank, Symbol, Price, DSMA50, DSMA200, Market_Phase, Perc_Above_DSMA50, Perc_Above_DSMA200 FROM Symbols_By_Market_Phase;"
+sql_get_all_symbols_by_market_phase = """
+    SELECT
+        Id,
+        Rank,
+        Symbol,
+        Price,
+        DSMA50,
+        DSMA200,
+        Market_Phase,
+        Perc_Above_DSMA50,
+        Perc_Above_DSMA200
+    FROM Symbols_By_Market_Phase;
+"""
 def get_all_symbols_by_market_phase():
     connection = _get_conn()
     return pd.read_sql(sql_get_all_symbols_by_market_phase, connection, index_col="Id")
+
+sql_get_top_performers_trading_status = """
+    SELECT
+        mp.Rank,
+        mp.Symbol,
+        br.Time_Frame,
+        br.Trading_Approved,
+        br.Trading_Rejection_Reasons
+    FROM Symbols_By_Market_Phase mp
+    JOIN Backtesting_Results br ON br.Symbol = mp.Symbol
+    WHERE br.Strategy_Id = ?
+    ORDER BY
+        mp.Rank ASC,
+        CASE br.Time_Frame
+            WHEN '1d' THEN 1
+            WHEN '4h' THEN 2
+            WHEN '1h' THEN 3
+            ELSE 4
+        END,
+        br.Time_Frame ASC;
+"""
+def get_top_performers_trading_status(strategy_id: str):
+    connection = _get_conn()
+    return pd.read_sql(sql_get_top_performers_trading_status, connection, params=(strategy_id,))
     
 sql_get_symbols_from_symbols_by_market_phase = "SELECT Symbol FROM Symbols_By_Market_Phase;"
 def get_symbols_from_symbols_by_market_phase():
@@ -1395,10 +1504,31 @@ sql_insert_symbols_by_market_phase = """
         Rank)
     VALUES(?,?,?,?,?,?,?,?);
 """
-def insert_symbols_by_market_phase(symbol: str, price: float, dsma50: float, dsma200: float, market_phase: str, perc_above_dsma50: float, perc_above_dsma200: float, rank: int):
+def insert_symbols_by_market_phase(
+    symbol: str,
+    price: float,
+    dsma50: float,
+    dsma200: float,
+    market_phase: str,
+    perc_above_dsma50: float,
+    perc_above_dsma200: float,
+    rank: int,
+):
     connection = _get_conn()
     with connection:
-        connection.execute(sql_insert_symbols_by_market_phase,(symbol, price, dsma50, dsma200, market_phase, perc_above_dsma50, perc_above_dsma200, rank))
+        connection.execute(
+            sql_insert_symbols_by_market_phase,
+            (
+                symbol,
+                price,
+                dsma50,
+                dsma200,
+                market_phase,
+                perc_above_dsma50,
+                perc_above_dsma200,
+                rank,
+            ),
+        )
 
 sql_insert_symbols_by_market_phase_historical = """
     INSERT INTO Symbols_By_Market_Phase_Historical 
@@ -2004,6 +2134,7 @@ def create_tables():
         connection.execute(sql_create_positions_table)
         connection.execute(sql_create_blacklist_table)
         connection.execute(sql_create_backtesting_results_table)
+        _ensure_backtesting_results_columns(connection)
         connection.execute(sql_create_backtesting_trades_table)
         connection.execute(sql_create_strategies_table)
         # Split the SQL statements and execute them one by one
@@ -2061,6 +2192,19 @@ def create_tables():
         # update version on db
         # commented because the db user version must be in the end of database script to make sure everything was ok with the script
         # set_pragma_user_version(version=version_changelog)
+
+def _ensure_backtesting_results_columns(connection):
+    cursor = connection.execute("PRAGMA table_info(Backtesting_Results)")
+    existing_cols = {row[1] for row in cursor.fetchall()}
+
+    if "Trading_Approved" not in existing_cols:
+        connection.execute(
+            "ALTER TABLE Backtesting_Results ADD COLUMN Trading_Approved INTEGER NOT NULL DEFAULT 0"
+        )
+    if "Trading_Rejection_Reasons" not in existing_cols:
+        connection.execute(
+            "ALTER TABLE Backtesting_Results ADD COLUMN Trading_Rejection_Reasons TEXT"
+        )
 
 def apply_database_scripts_updates():
     connection = _get_conn()

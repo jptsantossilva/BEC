@@ -14,7 +14,10 @@ pd.set_option("display.precision", 8)
 
 timeframe = ["1d", "4h", "1h"]
 
-def run():
+def run(settings=None):
+    if settings is None:
+        settings = config.load_settings(refresh=True)
+
     # get the symbols list not yet calculated 
     list_not_completed = database.get_symbols_to_calc_by_calc_completed( completed = 0)
 
@@ -33,7 +36,7 @@ def run():
         
     df_strategies = database.get_strategies_for_main()
     # Move row with current main strategy to the top to be the first to be calculated
-    df_strategies = pd.concat([df_strategies[df_strategies['Id'] == config.strategy_id], df_strategies[df_strategies['Id'] != config.strategy_id]])
+    df_strategies = pd.concat([df_strategies[df_strategies['Id'] == settings.strategy_id], df_strategies[df_strategies['Id'] != settings.strategy_id]])
 
     for index, row in df_strategies.iterrows():    
         # Dynamically get the strategy class
@@ -49,20 +52,33 @@ def run():
         for symbol in list_not_completed.Symbol:
             for tf in timeframe: 
                 # backtesting
-                result = calc_backtesting(symbol, tf, strategy=strategy, optimize=strategy_backtest_optimize)
+                calc_backtesting(symbol, tf, strategy=strategy, optimize=strategy_backtest_optimize)
                 
                 # get strategy backtesting results
                 df_strategy_results = database.get_backtesting_results_by_symbol_timeframe_strategy( symbol=symbol, time_frame=tf, strategy_id=strategy_id)
 
                 # check backtest approval rules
+                approved = False
+                reasons = []
                 if not df_strategy_results.empty:
                     approved, reasons = database.is_backtest_approved(tf, df_strategy_results.iloc[0])
-                    if not approved:
-                        print(f"{symbol} {tf} rejected by approval rules: {reasons}")
-                        continue
+                else:
+                    reasons = ["Missing_Backtest"]
+
+                database.set_backtesting_approval(
+                    symbol=symbol,
+                    time_frame=tf,
+                    strategy_id=strategy_id,
+                    trading_approved=approved,
+                    trading_rejection_reasons="" if approved else ";".join(reasons),
+                )
+
+                if not approved:
+                    print(f"{symbol} {tf} rejected by approval rules: {reasons}")
+                    continue
 
                 # if the backtesting strategy is the one we are currently using, we want to add the symbol to positions table and update rank
-                if strategy_id == config.strategy_id:
+                if strategy_id == settings.strategy_id:
                     # initialize vars
                     ema_fast = 0
                     ema_slow = 0
@@ -72,7 +88,7 @@ def run():
                         ema_slow = int(df_strategy_results.Ema_Slow.values[0])  
                     
                     # if symbol do not exist in positions table then add it
-                    symbol_exist = database.get_all_positions_by_bot_symbol( bot=tf, symbol=symbol)
+                    symbol_exist = database.get_all_positions_by_bot_symbol(bot=tf, symbol=symbol)
                     if not symbol_exist:
                         database.insert_position(
                             bot=tf,
@@ -82,18 +98,15 @@ def run():
                         )
                     else:
                         # update rank
-                        rank = database.get_rank_from_symbols_by_market_phase_by_symbol( symbol)
-                        database.set_rank_from_positions( symbol=symbol, rank=rank)
+                        rank = database.get_rank_from_symbols_by_market_phase_by_symbol(symbol)
+                        database.set_rank_from_positions(symbol=symbol, rank=rank)
                         # update best ema for those symbols with no positions open
                         if strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
-                            database.set_backtesting_results_from_positions( symbol=symbol, timeframe=tf, ema_fast=ema_fast, ema_slow=ema_slow)
+                            database.set_backtesting_results_from_positions(symbol=symbol, timeframe=tf, ema_fast=ema_fast, ema_slow=ema_slow)
             
     # mark symbols as calc completed
     for symbol in list_not_completed.Symbol:    
         database.set_symbols_to_calc_completed( symbol=symbol)
 
 if __name__ == "__main__":
-    # use the strategy from config file 
-    # strategy = config.strategy
-    # run(strategy=strategy)
-    run()
+    run(settings=config.load_settings(refresh=True))

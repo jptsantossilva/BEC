@@ -225,9 +225,8 @@ def get_symbols(trade_against):
     return symbols
 
 def run():
-
-    # trade_against = config.trade_against
-    trade_against = "USDC"
+    settings = config.load_settings(refresh=True)
+    trade_against = settings.trade_against
     symbols = get_symbols(trade_against=trade_against)
 
     # test

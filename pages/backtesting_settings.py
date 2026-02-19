@@ -1,66 +1,16 @@
-import pandas as pd
 import streamlit as st
+import time
 
 import utils.database as database
 import utils.icons as icons
 
-# st.header("Backtest Settings")
-st.markdown("## Backtest Settings")
-st.caption("Configure backtesting settings. These settings will be used when running strategy backtests.")
-
-st.space()
-
-
-
-settings = database.get_backtesting_settings()
-
-with st.container(horizontal=True):
-    cash_value = st.number_input(
-        "Initial cash to start with (USD)",
-        min_value=0.0,
-        step=100.0,
-        value=float(settings["Cash_Value"]),
-        format="%.2f",
-        width=200,
-    )
-
-    commission_percent = st.number_input(
-        "Exchange commission rate (%)",
-        min_value=0.0,
-        max_value=10.0,
-        step=0.1,
-        value=float(settings["Commission_Value"]) * 100.0,
-        format="%.2f",
-        width=200,
-    )
-
-st.space()
-
-maximize_options = {
+MAXIMIZE_OPTIONS = {
     "SQN": "Van Tharp's [System Quality Number](https://www.google.com/search?q=System+Quality+Number).",
     "Equity Final [$]": "Maximizes final equity (more aggressive).",
     "Calmar Ratio": "Favors return with drawdown control.",
     "Sharpe Ratio": "Favors return per unit of volatility.",
     "Sortino Ratio": "Like Sharpe but penalizes downside more.",
 }
-
-maximize = st.radio(
-    label="Optimize strategy parameter to an optimal combination",
-    options=list(maximize_options.keys()),
-    index=list(maximize_options.keys()).index(settings["Maximize"]) if settings["Maximize"] in maximize_options else 0,
-    captions=[maximize_options[k] for k in maximize_options],
-)
-
-if st.button("Save", icon=icons.ICON_SAVE):
-    commission_value = commission_percent / 100.0
-    database.update_backtesting_settings(
-        commission_value=commission_value,
-        cash_value=cash_value,
-        maximize=maximize,
-    )
-    st.success("Backtesting settings updated.")
-
-st.space()
 
 
 @st.fragment
@@ -117,8 +67,9 @@ def approval_rules_section():
         key="backtest_rules_editor",
     )
 
-
-    with st.container(horizontal=True):
+    rules_buttons_container = st.container(horizontal=True)
+    after_rules_buttons_container = st.container()
+    with rules_buttons_container:
 
         if st.button("Save Rules", icon=icons.ICON_SAVE):
             normalized = edited_rules.copy()
@@ -173,13 +124,71 @@ def approval_rules_section():
                 db_timeframe = None if timeframe == "global" else timeframe
                 database.delete_backtest_approval_rule(rule_name=rule_name, timeframe=db_timeframe)
 
-            st.success("Approval rules updated.")
+            after_rules_buttons_container.success("Approval rules updated.")
             st.session_state.pop("backtest_rules_editor", None)
+            time.sleep(1.0)
+            
             st.rerun(scope="fragment")
 
         if st.button("Discard Changes", icon=icons.ICON_CANCEL):
             st.session_state.pop("backtest_rules_editor", None)
             st.rerun(scope="fragment")
 
+@st.fragment
+def render_backtest_settings():
+    st.markdown("## Backtest Settings")
+    st.caption("Configure backtesting settings. These settings will be used when running strategy backtests.")
+    st.space()
 
-approval_rules_section()
+    settings = database.get_backtesting_settings()
+
+    with st.container(horizontal=True):
+        cash_value = st.number_input(
+            "Initial cash to start with (USD)",
+            min_value=0.0,
+            step=100.0,
+            value=float(settings["Cash_Value"]),
+            format="%.2f",
+            width=200,
+        )
+
+        commission_percent = st.number_input(
+            "Exchange commission rate (%)",
+            min_value=0.0,
+            max_value=10.0,
+            step=0.1,
+            value=float(settings["Commission_Value"]) * 100.0,
+            format="%.2f",
+            width=200,
+        )
+
+    st.space()
+
+    maximize = st.radio(
+        label="Optimize strategy parameter to an optimal combination",
+        options=list(MAXIMIZE_OPTIONS.keys()),
+        index=list(MAXIMIZE_OPTIONS.keys()).index(settings["Maximize"]) if settings["Maximize"] in MAXIMIZE_OPTIONS else 0,
+        captions=[MAXIMIZE_OPTIONS[k] for k in MAXIMIZE_OPTIONS],
+    )
+
+    if st.button("Save", icon=icons.ICON_SAVE):
+        commission_value = commission_percent / 100.0
+        database.update_backtesting_settings(
+            commission_value=commission_value,
+            cash_value=cash_value,
+            maximize=maximize,
+        )
+        st.success("Backtesting settings updated.")
+        time.sleep(1.0)
+        st.rerun(scope="fragment")
+
+    st.space()
+
+
+def main():
+    render_backtest_settings()
+    approval_rules_section()
+
+
+if __name__ == "__main__":
+    main()

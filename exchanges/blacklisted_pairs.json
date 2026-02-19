@@ -1,0 +1,98 @@
+{
+  "https://www.binance.com/en/support/announcement/detail/db7ad1c7aa6248cda735102cdcdc4b8d": {
+    "date_checked": "2025-03-25 13:00:07.377174",
+    "published_date": "2025-03-21 05:50:00",
+    "pairs": [
+      "AERGO/USDT",
+      "AST/USDT",
+      "COMBO/USDT",
+      "LINA/USDT"
+    ]
+  },
+  "https://www.binance.com/en/support/announcement/detail/69ff9abd38ad4cfcbe4521f654278a7d": {
+    "date_checked": "2025-03-25 13:00:34.544261",
+    "published_date": "2025-03-19 04:00:00",
+    "pairs": [
+      "ALICE/BTC",
+      "ETHFI/BTC",
+      "MBOX/BTC"
+    ]
+  },
+  "https://www.binance.com/en/support/announcement/detail/edf76712d2ea48f8916a32cfe1b82fb9": {
+    "date_checked": "2025-03-25 13:00:37.523940",
+    "published_date": "2025-03-18 03:00:00",
+    "pairs": [
+      "ALPHA/BTC",
+      "CTXC/BTC",
+      "DODO/BTC",
+      "FLM/BTC",
+      "IDEX/USDC",
+      "NKN/BTC",
+      "SAGA/BTC"
+    ]
+  },
+  "https://www.binance.com/en/support/announcement/detail/4b88b1f8848444d9ad7af3d406bff72e": {
+    "date_checked": "2025-03-25 13:00:39.731469",
+    "published_date": "2025-03-12 09:00:00",
+    "pairs": [
+      "IDEX/BTC",
+      "LQTY/BTC"
+    ]
+  },
+  "https://www.binance.com/en/support/announcement/detail/820e86ea4d5145a1bc357682394552ba": {
+    "date_checked": "2025-03-25 13:00:43.862708",
+    "published_date": "2025-03-05 02:00:00",
+    "pairs": [
+      "MDT/BTC",
+      "MLN/BTC",
+      "VIB/BTC",
+      "VIC/BTC",
+      "XAI/BTC"
+    ]
+  },
+  "https://www.binance.com/en/support/announcement/detail/487e8345ab8146bba30ce251e2f9f974": {
+    "date_checked": "2025-03-25 13:00:46.969909",
+    "published_date": "2025-03-04 04:00:00",
+    "pairs": [
+      "ATA/BTC"
+    ]
+  },
+  "https://www.binance.com/en/support/announcement/detail/7600776423b74af5a8716354b0cdef8b": {
+    "date_checked": "2025-03-25 13:00:50.092248",
+    "published_date": "2025-02-26 05:00:00",
+    "pairs": []
+  },
+  "https://www.binance.com/en/support/announcement/detail/0d93139d71c64f74bd63749c141842fb": {
+    "date_checked": "2025-03-25 13:00:52.626560",
+    "published_date": "2025-02-20 05:00:00",
+    "pairs": [
+      "ALGO/USDC",
+      "ALGO/USDT",
+      "ATOM/USDC",
+      "ATOM/USDT"
+    ]
+  },
+  "https://www.binance.com/en/support/announcement/detail/d3f0e61ac6d942c98ede2cfeade10314": {
+    "date_checked": "2025-03-25 13:00:55.725788",
+    "published_date": "2025-02-19 04:00:00",
+    "pairs": []
+  },
+  "https://www.binance.com/en/support/announcement/detail/f3cc64a8758d4bb394e0830e5b31da97": {
+    "date_checked": "2025-03-25 13:00:58.605444",
+    "published_date": "2025-02-17 07:00:00",
+    "pairs": [
+      "AMB/USDT",
+      "CLV/BTC",
+      "CLV/USDT",
+      "STMX/USDT",
+      "VITE/USDT"
+    ]
+  },
+  "https://www.binance.com/en/support/announcement/detail/77c21bfbaec349c18709d6c49a49e03b": {
+    "date_checked": "2025-03-26 11:48:39.399725",
+    "published_date": "2025-03-26 07:00:00",
+    "pairs": [
+      "PERP/BTC"
+    ]
+  }
+}

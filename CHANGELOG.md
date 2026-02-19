@@ -2,6 +2,17 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-02-19]
+
+### Added
+- Backtesting Results - Added `Trading_Approved` and `Trading_Rejection_Reasons` fields per symbol/timeframe/strategy so approval status is persisted at backtest level.
+- Trading Dashboard - Top Performers approval view in Unrealized PnL tab, split by timeframe (`1d`, `4h`, `1h`) inside optional expanders.
+
+### Changed
+- Config - Continued migration away from legacy globals to a single settings service interface (`load_settings`, `read_setting`, `update_setting`, `update_settings`).
+- Top Performers flow - Positions insertion now respects backtesting approval outcome before adding symbols to `Positions`.
+- Backtesting Settings page - Refactored `pages/backtesting_settings.py` to a cleaner entry-point structure.
+
 ## [2026-02-12]
 
 ### Added
