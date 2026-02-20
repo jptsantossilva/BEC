@@ -1,5 +1,5 @@
 
-#Virtual env
+# Virtual env
 
 SETUP
 python3 -m venv .venv
@@ -14,5 +14,5 @@ pip-sync
 ---
 
 
-install libraries from requirements file
+# install libraries from requirements file
 pip install -r requirements.txt

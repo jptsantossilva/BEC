@@ -121,9 +121,10 @@ def check_app_version():
             )
             if update_version:
                 if _running_in_docker():
-                    st.info(
-                        "Update is managed via Docker. Run:\n"
-                        "`docker compose pull && docker compose up -d`"
+                    st.info("Update is managed via Docker, run this command in your server terminal:")
+                    st.code(
+                        "docker compose pull && docker compose up -d",
+                        language="bash",
                     )
                 else:
                     with st.spinner(

@@ -565,9 +565,6 @@ def run(timeframe, run_mode):
 
     # exchange.create_balance_snapshot(telegram_prefix="")
 
-    # Close the database connection
-    database.conn.close()
-
     # calculate execution time
     stop = timeit.default_timer()
     total_seconds = stop - start

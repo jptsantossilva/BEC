@@ -2,6 +2,7 @@ import math
 import os
 import shutil
 import sqlite3
+import threading
 import time
 from datetime import datetime
 
@@ -12,6 +13,7 @@ from utils import general
 
 # Global connection handle (initialized later)
 conn = None
+_thread_local = threading.local()
 
 def connect(path: str = ""):
     try:
@@ -31,12 +33,13 @@ def is_connection_open(conn):
     except sqlite3.Error:
         return False
 
-# --- Connection resolver (always use the global connection) ---
+# --- Connection resolver (use one SQLite connection per thread) ---
 def _get_conn():
-    global conn
-    if conn is None or not is_connection_open(conn):
-        conn = connect()
-    return conn
+    connection = getattr(_thread_local, "conn", None)
+    if connection is None or not is_connection_open(connection):
+        connection = connect()
+        _thread_local.conn = connection
+    return connection
 
 
 # change connection on Dashboard
