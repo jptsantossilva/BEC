@@ -2,6 +2,9 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-02-20]
+- Backtesting - Backtesting EMA updates now propagate to `Positions` for existing symbol/timeframe rows, including open positions (`Position = 1`). Even when a symbol/timeframe is rejected by approval rules, existing `Positions` rows still receive latest `Ema_Fast`/`Ema_Slow` values from backtesting.
+
 ## [2026-02-19]
 
 ### Added

@@ -706,7 +706,6 @@ sql_set_backtesting_results_from_positions = """
     WHERE 
         Symbol = ?
         and Bot = ?
-        and Position = 0
 """
 def set_backtesting_results_from_positions(symbol: str, timeframe: str, ema_fast: int, ema_slow: int):
     connection = _get_conn()

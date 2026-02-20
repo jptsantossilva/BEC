@@ -73,6 +73,24 @@ def run(settings=None):
                     trading_rejection_reasons="" if approved else ";".join(reasons),
                 )
 
+                # Keep EMAs in Positions synchronized with latest backtesting results
+                # even when a symbol is rejected by approval rules.
+                if (
+                    strategy_id == settings.strategy_id
+                    and strategy_id in ["ema_cross_with_market_phases", "ema_cross"]
+                    and not df_strategy_results.empty
+                ):
+                    ema_fast = int(df_strategy_results.Ema_Fast.values[0])
+                    ema_slow = int(df_strategy_results.Ema_Slow.values[0])
+                    symbol_exist = database.get_all_positions_by_bot_symbol(bot=tf, symbol=symbol)
+                    if symbol_exist:
+                        database.set_backtesting_results_from_positions(
+                            symbol=symbol,
+                            timeframe=tf,
+                            ema_fast=ema_fast,
+                            ema_slow=ema_slow,
+                        )
+
                 if not approved:
                     print(f"{symbol} {tf} rejected by approval rules: {reasons}")
                     continue
