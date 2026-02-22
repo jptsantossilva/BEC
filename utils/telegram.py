@@ -86,15 +86,10 @@ def read_env_var():
 # fulfill telegram vars
 read_env_var()
 
-def remove_chars_exceptions(string):
-    
-    # define the characters to be removed
-    chars_to_remove = ['<', '>', '{', '}', "'", '"']
-
-    # use a loop to replace each character with an empty string
-    for char in chars_to_remove:
-        string = string.replace(char, '')
-
+def remove_chars_exceptions(string, parse_mode: str | None = "HTML"):
+    """Sanitize outgoing text according to parse mode."""
+    if parse_mode == "HTML":
+        return _html_escape(string)
     return string
 
 def get_telegram_token() -> str:
@@ -131,7 +126,7 @@ def send_telegram_message(
         msg (str): The message body.
         include_prefix (bool): If True, prepend bot_prefix to the message.
                                If False, send the message exactly as provided.
-        sanitize (bool): If True, apply remove_chars_exceptions() to sanitize the text.
+        sanitize (bool): If True, sanitize the text for the selected parse mode.
                          If False, send raw text (important for passwords).
         parse_mode (str|None): Telegram parse mode (e.g., "HTML", "Markdown").
                                If None, sends plain text without formatting.
@@ -143,7 +138,7 @@ def send_telegram_message(
     """
 
     if sanitize:
-        msg = remove_chars_exceptions(msg)
+        msg = remove_chars_exceptions(msg, parse_mode=parse_mode)
 
     prefix_str = (bot_prefix + " - ") if include_prefix else ""
 
