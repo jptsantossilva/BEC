@@ -394,7 +394,19 @@ def trade(timeframe, run_mode, settings=None):
             best_emas = (
                 "" if fast_ema == 0 or slow_ema == 0 else f"{fast_ema}/{slow_ema}"
             )
-            msg = f"{symbol} - {best_emas} {settings.strategy_name} - Sell condition not fulfilled"
+            ema_debug = ""
+            if settings.strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
+                fast_ema_value = float(lastrow.FastEMA)
+                slow_ema_value = float(lastrow.SlowEMA)
+                ema_debug = (
+                    f" | FastEMA: {fast_ema_value:.8f} | SlowEMA: {slow_ema_value:.8f} "
+                    f"| Slow>Fast: {slow_ema_value > fast_ema_value}"
+                )
+
+            msg = (
+                f"{symbol} - {best_emas} {settings.strategy_name} - Sell condition not fulfilled"
+                f"{ema_debug}"
+            )
             msg = telegram_prefix_sl + msg
             print(msg)
             telegram.send_telegram_message(telegram_token, "", msg)

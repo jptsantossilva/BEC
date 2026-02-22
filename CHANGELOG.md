@@ -2,6 +2,9 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-02-22]
+- Trading - Improved the "Sell condition not fulfilled" message to include `FastEMA`, `SlowEMA` (8 decimals), and the evaluated `SlowEMA > FastEMA` result for easier troubleshooting.
+
 ## [2026-02-20]
 - Backtesting - Backtesting EMA updates now propagate to `Positions` for existing symbol/timeframe rows, including open positions (`Position = 1`). Even when a symbol/timeframe is rejected by approval rules, existing `Positions` rows still receive latest `Ema_Fast`/`Ema_Slow` values from backtesting.
 - Database - SQLite connection handling was changed from a shared global connection to a per-thread connection in `utils/database.py`, reducing `sqlite3.InterfaceError` issues in concurrent contexts.
