@@ -12,6 +12,16 @@ ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 PYTHON = sys.executable
 MAX_PARALLEL = 10
 
+
+def _extract_main_timeframe(schedule_name: str):
+    """Return timeframe for main jobs (main_1d/main_4h/main_1h), else None."""
+    if not schedule_name.startswith("main_"):
+        return None
+    timeframe = schedule_name.replace("main_", "", 1)
+    if timeframe in {"1d", "4h", "1h"}:
+        return timeframe
+    return None
+
 def _parse_last_run(value):
     if not value:
         return None
@@ -77,8 +87,17 @@ def run_loop():
             if not row.script:
                 continue
             cadence = row.cadence
+
+            # If timeframe trading is disabled, keep running main_* jobs only to process
+            # potential exits from existing open positions. New entries remain blocked
+            # in main.py when timeframe is disabled.
             if not row.enabled:
-                continue
+                timeframe = _extract_main_timeframe(name)
+                if timeframe is None:
+                    continue
+                if database.get_num_open_positions_by_bot(timeframe) <= 0:
+                    continue
+
             if not _on_schedule(now_utc, cadence):
                 continue
 

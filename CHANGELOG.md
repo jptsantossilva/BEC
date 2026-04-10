@@ -2,6 +2,9 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-04-10]
+- Dashboard / Jobs Runner - Timeframe toggles (`main_1d`, `main_4h`, `main_1h`) now keep running sell checks for existing open positions even when disabled; disabled timeframes still do not open new positions.
+
 ## [2026-02-22]
 - Trading - Improved the "Sell condition not fulfilled" message to include `FastEMA`, `SlowEMA` (8 decimals), and the evaluated `SlowEMA > FastEMA` result for easier troubleshooting.
 
