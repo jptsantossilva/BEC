@@ -10,8 +10,8 @@ Free and open-source automated trading app for Binance spot, combining multi-str
 
 
 ```bash
-mkdir -p bec
-cd bec
+mkdir -p /opt/bec
+cd /opt/bec
 
 curl -fsSL https://raw.githubusercontent.com/jptsantossilva/BEC/main/docker-compose.yml -o docker-compose.yml
 curl -fsSL https://raw.githubusercontent.com/jptsantossilva/BEC/main/.env.example -o .env
