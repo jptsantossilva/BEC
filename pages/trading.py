@@ -501,12 +501,20 @@ def settings():
         # Compact header card
         ta = config.read_setting("trade_against")
         max_pos = config.read_setting("max_number_of_open_positions")
-        total_locked = round(database.get_total_locked_values(), 2)
-        cur_bal = round(binance.get_symbol_balance(ta), 2)
+
+        def _format_overview_value(value: float) -> str:
+            if ta == "BTC":
+                if float(value) == 0:
+                    return "0"
+                return f"{float(value):.8f}".rstrip("0").rstrip(".")
+            return millify(value, precision=2)
+
+        total_locked = float(database.get_total_locked_values())
+        cur_bal = float(binance.get_symbol_balance(ta))
         avail = max(cur_bal - total_locked, 0)
         open_now = database.get_num_open_positions()
         rem = max(max_pos - open_now, 0)
-        next_pos = 0 if rem == 0 else round(avail / rem, 2)
+        next_pos = 0 if rem == 0 else (avail / rem)
         # c1, c2, c3, c4, c5 = st.columns(5)
         # c1.metric("Trade Against", ta)
         # c2.metric("Max Open", max_pos)
@@ -515,10 +523,10 @@ def settings():
         # c5.metric(f"Next Pos Size {ta}", millify(next_pos, precision=2))
 
         c6, c7, c8, c9 = st.columns(4)
-        c6.metric(f"Balance {ta}", millify(avail, precision=2))
-        c7.metric(f"Locked {ta}", millify(total_locked, precision=2))    
+        c6.metric(f"Balance {ta}", _format_overview_value(avail))
+        c7.metric(f"Locked {ta}", _format_overview_value(total_locked))
         c8.metric("Available Positions", rem)
-        c9.metric(f"Next Position Size {ta}", millify(next_pos, precision=2))
+        c9.metric(f"Next Position Size {ta}", _format_overview_value(next_pos))
         
         # st.space("medium")
         # st.space("small")

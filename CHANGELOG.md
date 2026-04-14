@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 - Database - Added automatic schema reconciliation for `Backtesting_Results` on startup in `utils/database.py`. Missing columns from `db_scripts_2026-02-12.sql` are now created automatically (`Trades`, `Win_Rate_Perc`, `Best_Trade_Perc`, `Worst_Trade_Perc`, `Avg_Trade_Perc`, `Max_Trade_Duration`, `Avg_Trade_Duration`, `Profit_Factor`, `Expectancy_Perc`, `SQN`, `Kelly_Criterion`, `Max_Drawdown_Perc`), preventing runtime errors when SQL migration scripts were not applied manually.
 - Docker - Updated `sqlite_web` service in `docker-compose.yml` to require authentication via `SQLITE_WEB_PASSWORD` and `--password`.
 - Dashboard - Update banner (Docker mode) now shows a cleaner single-card layout with the update command and an optional Dockge shortcut (`Open Dockge`).
+- Trading Dashboard - Settings / Overview metrics now preserve BTC precision (up to 8 decimals) for `Balance`, `Locked`, and `Next Position Size`, avoiding 2-decimal rounding in BTC mode.
 
 ## [2026-04-13]
 - Dashboard - Settings / Take-Profit Levels - Fixed `RPS` (Remaining Position Size) initial rendering to use stored TP Amount values on first load; previously values could appear as `100.00` until a TP field was edited.
