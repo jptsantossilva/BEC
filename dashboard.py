@@ -121,7 +121,6 @@ def check_app_version():
         return "http://localhost:5001"
 
     github_last_date = general.extract_date_from_github_changelog()
-    last_date = "1"
     if github_last_date != last_date:
         # Render the banner at the very top, using the global placeholder
         global TOP_NOTICE
@@ -133,7 +132,6 @@ def check_app_version():
             update_version = st.button(
                 "Update", key="update_version", icon=":material/deployed_code_update:"
             )
-            update_version = True
             if update_version:
                 if _running_in_docker():
                     with st.container(border=True):
