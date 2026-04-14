@@ -691,10 +691,6 @@ def settings():
         st.markdown("### Take-Profit Levels")
         with st.container(border=False):
             def _tp_num(label, key_perc, key_amt, rps_value, rps_key):
-                if key_perc not in st.session_state:
-                    st.session_state[key_perc] = config.read_setting(key_perc)
-                if key_amt not in st.session_state:
-                    st.session_state[key_amt] = config.read_setting(key_amt)
                 st.session_state[rps_key] = rps_value
                 with st.container(horizontal=True):
                     st.number_input(
@@ -725,6 +721,20 @@ def settings():
                         help="Remaining position size after selling TP Amount% of the remainder.",
                         width=80,
                     )
+
+            # Ensure TP state is initialized before first RPS calculation.
+            for key in [
+                "take_profit_1",
+                "take_profit_2",
+                "take_profit_3",
+                "take_profit_4",
+                "take_profit_1_amount",
+                "take_profit_2_amount",
+                "take_profit_3_amount",
+                "take_profit_4_amount",
+            ]:
+                if key not in st.session_state:
+                    st.session_state[key] = config.read_setting(key)
 
             a1 = float(st.session_state.get("take_profit_1_amount", 0) or 0)
             a2 = float(st.session_state.get("take_profit_2_amount", 0) or 0)

@@ -2198,15 +2198,28 @@ def create_tables():
 def _ensure_backtesting_results_columns(connection):
     cursor = connection.execute("PRAGMA table_info(Backtesting_Results)")
     existing_cols = {row[1] for row in cursor.fetchall()}
+    required_columns = {
+        "Trades": "INTEGER",
+        "Win_Rate_Perc": "REAL",
+        "Best_Trade_Perc": "REAL",
+        "Worst_Trade_Perc": "REAL",
+        "Avg_Trade_Perc": "REAL",
+        "Max_Trade_Duration": "TEXT",
+        "Avg_Trade_Duration": "TEXT",
+        "Profit_Factor": "REAL",
+        "Expectancy_Perc": "REAL",
+        "SQN": "REAL",
+        "Kelly_Criterion": "REAL",
+        "Max_Drawdown_Perc": "REAL",
+        "Trading_Approved": "INTEGER NOT NULL DEFAULT 0",
+        "Trading_Rejection_Reasons": "TEXT",
+    }
 
-    if "Trading_Approved" not in existing_cols:
-        connection.execute(
-            "ALTER TABLE Backtesting_Results ADD COLUMN Trading_Approved INTEGER NOT NULL DEFAULT 0"
-        )
-    if "Trading_Rejection_Reasons" not in existing_cols:
-        connection.execute(
-            "ALTER TABLE Backtesting_Results ADD COLUMN Trading_Rejection_Reasons TEXT"
-        )
+    for column_name, column_type in required_columns.items():
+        if column_name not in existing_cols:
+            connection.execute(
+                f"ALTER TABLE Backtesting_Results ADD COLUMN {column_name} {column_type}"
+            )
 
 def apply_database_scripts_updates():
     connection = _get_conn()

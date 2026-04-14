@@ -2,6 +2,12 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-04-14]
+- Database - Added automatic schema reconciliation for `Backtesting_Results` on startup in `utils/database.py`. Missing columns from `db_scripts_2026-02-12.sql` are now created automatically (`Trades`, `Win_Rate_Perc`, `Best_Trade_Perc`, `Worst_Trade_Perc`, `Avg_Trade_Perc`, `Max_Trade_Duration`, `Avg_Trade_Duration`, `Profit_Factor`, `Expectancy_Perc`, `SQN`, `Kelly_Criterion`, `Max_Drawdown_Perc`), preventing runtime errors when SQL migration scripts were not applied manually.
+
+## [2026-04-13]
+- Dashboard - Settings / Take-Profit Levels - Fixed `RPS` (Remaining Position Size) initial rendering to use stored TP Amount values on first load; previously values could appear as `100.00` until a TP field was edited.
+
 ## [2026-04-10]
 - Dashboard / Jobs Runner - Timeframe toggles (`main_1d`, `main_4h`, `main_1h`) now keep running sell checks for existing open positions even when disabled; disabled timeframes still do not open new positions.
 
