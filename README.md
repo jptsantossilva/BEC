@@ -56,6 +56,46 @@ docker compose down -v
 ## Updates
 Follow the last updates from the change log [here](https://github.com/jptsantossilva/BEC/blob/main/CHANGELOG.md)
 
+### Update with Dockge (Web UI)
+If you prefer updating BEC without using terminal commands, you can manage your Docker Compose stack with Dockge.
+
+1. Install Dockge:
+```bash
+sudo mkdir -p /opt/dockge/data
+cd /opt/dockge
+```
+
+Create `compose.yaml`:
+```yaml
+services:
+  dockge:
+    image: louislam/dockge:1
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5001:5001"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/app/data
+      - /opt/bec:/opt/bec
+    environment:
+      - DOCKGE_STACKS_DIR=/opt/bec
+```
+
+Start Dockge:
+```bash
+docker compose -f /opt/dockge/compose.yaml up -d
+```
+
+2. Open Dockge at `http://localhost:5001`, create your admin account, and import/create your BEC stack.
+
+3. Update BEC from Dockge:
+- Open the BEC stack.
+- Click **Update** (or **Pull** + **Redeploy**, depending on your Dockge version).
+- Confirm containers are healthy in logs/status.
+
+Security note:
+- Keep Dockge private/admin-only. Do not expose it publicly without proper protection (TLS, authentication, restricted access).
+
 ## Features
 - Trades on 1-day, 4-hour, and 1-hour timeframes.
 - Trades against stable pairs (USDT/USDC) or BTC.

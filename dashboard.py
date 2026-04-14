@@ -107,7 +107,21 @@ def check_app_version():
         except Exception:
             return False
 
+    def _default_dockge_url() -> str:
+        try:
+            headers = dict(st.context.headers)
+            host = headers.get("X-Forwarded-Host") or headers.get("Host")
+            proto = headers.get("X-Forwarded-Proto") or "http"
+            if host:
+                host = host.split(",")[0].strip()
+                hostname = host.split(":")[0]
+                return f"{proto}://{hostname}:5001"
+        except Exception:
+            pass
+        return "http://localhost:5001"
+
     github_last_date = general.extract_date_from_github_changelog()
+    last_date = "1"
     if github_last_date != last_date:
         # Render the banner at the very top, using the global placeholder
         global TOP_NOTICE
@@ -119,13 +133,21 @@ def check_app_version():
             update_version = st.button(
                 "Update", key="update_version", icon=":material/deployed_code_update:"
             )
+            update_version = True
             if update_version:
                 if _running_in_docker():
-                    st.info("Update is managed via Docker, run this command in your server terminal:")
-                    st.code(
-                        "docker compose pull && docker compose up -d",
-                        language="bash",
-                    )
+                    with st.container(border=True):
+                        st.markdown("**Update via Docker**")
+                        st.write("Update is managed via Docker, run this command in your server terminal:")
+                        st.code(
+                            "docker compose pull && docker compose up -d",
+                            language="bash",
+                        )
+                        st.link_button(
+                            "Open Dockge",
+                            _default_dockge_url(),
+                            icon=":material/open_in_new:",
+                        )
                 else:
                     with st.spinner(
                         "🎉 Hold on tight! 🎉 Our elves are sprinkling magic dust on the app to make it even better."
