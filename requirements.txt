@@ -43,7 +43,7 @@ click==8.3.1
     # via streamlit
 contourpy==1.3.3
     # via bokeh
-cryptography==46.0.4
+cryptography==46.0.6
     # via streamlit-authenticator
 dateparser==1.2.2
     # via python-binance
