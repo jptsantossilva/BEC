@@ -50,6 +50,8 @@ if "authentication_status" not in st.session_state:
     st.session_state.authentication_status = None
 if "role" not in st.session_state:
     st.session_state.role = None
+if "logout" not in st.session_state:
+    st.session_state.logout = False
 
 ROLES = [None, "Trading", "Market Analysis", "Admin"]
 
@@ -65,8 +67,10 @@ def logout():
         authenticator.logout(location="unrendered")
     except Exception:
         pass
-    # st.session_state["authentication_status"] = None
-    # st.rerun()
+    st.session_state["logout"] = True
+    for key in ("authentication_status", "username", "name", "role"):
+        st.session_state[key] = None
+    st.rerun()
 
 
 def logout_page_view():
