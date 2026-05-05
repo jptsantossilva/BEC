@@ -12,8 +12,12 @@ MAXIMIZE_OPTIONS = {
     "Sortino Ratio": "Like Sharpe but penalizes downside more.",
 }
 
+BUY_HOLD_START_MODE_OPTIONS = {
+    "indicator_warmup": "After indicator warm-up",
+    "full_period": "From first data candle",
+}
 
-@st.fragment
+
 def approval_rules_section():
     st.subheader("Approval Rules")
     st.caption(
@@ -138,56 +142,258 @@ def approval_rules_section():
 def render_backtest_settings():
     st.markdown("## Backtest Settings")
     st.caption("Configure backtesting settings. These settings will be used when running strategy backtests.")
-    st.space()
 
     settings = database.get_backtesting_settings()
 
-    with st.container(horizontal=True):
-        cash_value = st.number_input(
-            "Initial cash to start with (USD)",
-            min_value=0.0,
-            step=100.0,
-            value=float(settings["Cash_Value"]),
-            format="%.2f",
-            width=200,
-        )
-
-        commission_percent = st.number_input(
-            "Exchange commission rate (%)",
-            min_value=0.0,
-            max_value=10.0,
-            step=0.1,
-            value=float(settings["Commission_Value"]) * 100.0,
-            format="%.2f",
-            width=200,
-        )
-
-    st.space()
-
-    maximize = st.radio(
-        label="Optimize strategy parameter to an optimal combination",
-        options=list(MAXIMIZE_OPTIONS.keys()),
-        index=list(MAXIMIZE_OPTIONS.keys()).index(settings["Maximize"]) if settings["Maximize"] in MAXIMIZE_OPTIONS else 0,
-        captions=[MAXIMIZE_OPTIONS[k] for k in MAXIMIZE_OPTIONS],
+    execution_tab, market_phase_tab, quality_score_tab = st.tabs(
+        ["Execution", "Market Phase", "Quality Score"]
     )
 
-    if st.button("Save", icon=icons.ICON_SAVE):
+    with execution_tab:
+        st.subheader("Execution")
+        st.caption("Core assumptions used by every backtest run.")
+
+        with st.container(horizontal=True):
+            cash_value = st.number_input(
+                "Initial cash to start with (USD)",
+                min_value=0.0,
+                step=100.0,
+                value=float(settings["Cash_Value"]),
+                format="%.2f",
+                width=220,
+            )
+
+            commission_percent = st.number_input(
+                "Exchange commission rate (%)",
+                min_value=0.0,
+                max_value=10.0,
+                step=0.1,
+                value=float(settings["Commission_Value"]) * 100.0,
+                format="%.2f",
+                width=220,
+            )
+
+        st.subheader("Optimization")
+        st.caption("Metric used when strategy parameters are optimized.")
+
+        maximize = st.radio(
+            label="Optimize strategy parameter to an optimal combination",
+            options=list(MAXIMIZE_OPTIONS.keys()),
+            index=list(MAXIMIZE_OPTIONS.keys()).index(settings["Maximize"]) if settings["Maximize"] in MAXIMIZE_OPTIONS else 0,
+            captions=[MAXIMIZE_OPTIONS[k] for k in MAXIMIZE_OPTIONS],
+        )
+
+        st.subheader("Buy & Hold Benchmark")
+        st.caption("Choose where the Buy & Hold comparison starts.")
+
+        current_buy_hold_start_mode = settings.get("Buy_Hold_Start_Mode", "indicator_warmup")
+        buy_hold_start_mode_options = list(BUY_HOLD_START_MODE_OPTIONS.keys())
+        buy_hold_start_mode = st.radio(
+            "Buy & Hold start",
+            options=buy_hold_start_mode_options,
+            index=(
+                buy_hold_start_mode_options.index(current_buy_hold_start_mode)
+                if current_buy_hold_start_mode in buy_hold_start_mode_options
+                else 0
+            ),
+            format_func=lambda value: BUY_HOLD_START_MODE_OPTIONS[value],
+            captions=[
+                "Use the native backtesting.py benchmark start, after indicators have enough data.",
+                "Override Buy & Hold to start at the first candle in the dataset.",
+            ],
+            horizontal=True,
+        )
+
+        execution_settings_actions = st.container()
+        st.divider()
+        approval_rules_section()
+
+    with market_phase_tab:
+        st.subheader("Market Phase Filters")
+        st.caption("Configure the SMA regime filters used by intraday and daily backtests.")
+
+        use_intraday_current_timeframe_market_phase_filter = st.checkbox(
+            "Include current timeframe market phase filter for 1h and 4h",
+            value=bool(int(settings.get("Use_Intraday_Current_Timeframe_Market_Phase_Filter", 1))),
+            help=(
+                "When enabled, intraday backtests that support market phases require both the 1h/4h "
+                "market phase and the 1d market phase. When disabled, 1h/4h backtests keep only the "
+                "1d market phase filter."
+            ),
+        )
+
+        st.subheader("SMA Periods By Timeframe")
+        st.caption("For 1h/4h backtests, the current timeframe uses its own row and the higher-timeframe filter uses 1D.")
+
+        with st.container(horizontal=True):
+            market_phase_1h_sma_fast = st.number_input(
+                "1H SMA fast",
+                min_value=1,
+                step=1,
+                value=int(settings.get("Market_Phase_1h_SMA_Fast", 50)),
+                width=150,
+            )
+            market_phase_1h_sma_slow = st.number_input(
+                "1H SMA slow",
+                min_value=1,
+                step=1,
+                value=int(settings.get("Market_Phase_1h_SMA_Slow", 200)),
+                width=150,
+            )
+
+        with st.container(horizontal=True):
+            market_phase_4h_sma_fast = st.number_input(
+                "4H SMA fast",
+                min_value=1,
+                step=1,
+                value=int(settings.get("Market_Phase_4h_SMA_Fast", 50)),
+                width=150,
+            )
+            market_phase_4h_sma_slow = st.number_input(
+                "4H SMA slow",
+                min_value=1,
+                step=1,
+                value=int(settings.get("Market_Phase_4h_SMA_Slow", 200)),
+                width=150,
+            )
+
+        with st.container(horizontal=True):
+            market_phase_1d_sma_fast = st.number_input(
+                "1D SMA fast",
+                min_value=1,
+                step=1,
+                value=int(settings.get("Market_Phase_1d_SMA_Fast", 50)),
+                width=150,
+            )
+            market_phase_1d_sma_slow = st.number_input(
+                "1D SMA slow",
+                min_value=1,
+                step=1,
+                value=int(settings.get("Market_Phase_1d_SMA_Slow", 200)),
+                width=150,
+            )
+
+        market_phase_settings_actions = st.container()
+
+    with quality_score_tab:
+        st.subheader("Strategy Quality Score")
+        st.caption("Weights used to combine return, risk, trade quality and robustness into a 0-100 score.")
+
+        with st.container(horizontal=True):
+            strategy_quality_return_weight = st.number_input(
+                "Return %",
+                min_value=0.0,
+                max_value=100.0,
+                step=1.0,
+                value=float(settings.get("Strategy_Quality_Return_Weight", 20.0)),
+                width=130,
+            )
+            strategy_quality_risk_weight = st.number_input(
+                "Risk %",
+                min_value=0.0,
+                max_value=100.0,
+                step=1.0,
+                value=float(settings.get("Strategy_Quality_Risk_Weight", 25.0)),
+                width=130,
+            )
+            strategy_quality_risk_adjusted_weight = st.number_input(
+                "Risk-adjusted %",
+                min_value=0.0,
+                max_value=100.0,
+                step=1.0,
+                value=float(settings.get("Strategy_Quality_Risk_Adjusted_Weight", 20.0)),
+                width=160,
+            )
+            strategy_quality_trade_quality_weight = st.number_input(
+                "Trade quality %",
+                min_value=0.0,
+                max_value=100.0,
+                step=1.0,
+                value=float(settings.get("Strategy_Quality_Trade_Quality_Weight", 20.0)),
+                width=160,
+            )
+            strategy_quality_robustness_weight = st.number_input(
+                "Robustness %",
+                min_value=0.0,
+                max_value=100.0,
+                step=1.0,
+                value=float(settings.get("Strategy_Quality_Robustness_Weight", 15.0)),
+                width=150,
+            )
+
+    strategy_quality_weight_total = (
+        strategy_quality_return_weight
+        + strategy_quality_risk_weight
+        + strategy_quality_risk_adjusted_weight
+        + strategy_quality_trade_quality_weight
+        + strategy_quality_robustness_weight
+    )
+    with quality_score_tab:
+        if abs(strategy_quality_weight_total - 100.0) <= 0.0001:
+            st.caption(f"Total weight: {strategy_quality_weight_total:g}%")
+        else:
+            st.markdown(
+                f"<span style='color:#dc2626;font-size:0.875rem;'>"
+                f"Total weight: {strategy_quality_weight_total:g}% - must equal 100% to save."
+                f"</span>",
+                unsafe_allow_html=True,
+            )
+        quality_score_settings_actions = st.container()
+
+    def save_backtesting_settings():
+        if market_phase_1h_sma_fast >= market_phase_1h_sma_slow:
+            st.error("1H SMA fast must be lower than 1H SMA slow.")
+            st.stop()
+        if market_phase_4h_sma_fast >= market_phase_4h_sma_slow:
+            st.error("4H SMA fast must be lower than 4H SMA slow.")
+            st.stop()
+        if market_phase_1d_sma_fast >= market_phase_1d_sma_slow:
+            st.error("1D SMA fast must be lower than 1D SMA slow.")
+            st.stop()
+        if abs(strategy_quality_weight_total - 100.0) > 0.0001:
+            st.error("Strategy Quality Score weights must add up to 100%.")
+            st.stop()
+
         commission_value = commission_percent / 100.0
         database.update_backtesting_settings(
             commission_value=commission_value,
             cash_value=cash_value,
             maximize=maximize,
+            buy_hold_start_mode=buy_hold_start_mode,
+            use_intraday_current_timeframe_market_phase_filter=use_intraday_current_timeframe_market_phase_filter,
+            market_phase_1h_sma_fast=market_phase_1h_sma_fast,
+            market_phase_1h_sma_slow=market_phase_1h_sma_slow,
+            market_phase_4h_sma_fast=market_phase_4h_sma_fast,
+            market_phase_4h_sma_slow=market_phase_4h_sma_slow,
+            market_phase_1d_sma_fast=market_phase_1d_sma_fast,
+            market_phase_1d_sma_slow=market_phase_1d_sma_slow,
+            strategy_quality_return_weight=strategy_quality_return_weight,
+            strategy_quality_risk_weight=strategy_quality_risk_weight,
+            strategy_quality_risk_adjusted_weight=strategy_quality_risk_adjusted_weight,
+            strategy_quality_trade_quality_weight=strategy_quality_trade_quality_weight,
+            strategy_quality_robustness_weight=strategy_quality_robustness_weight,
         )
         st.success("Backtesting settings updated.")
         time.sleep(1.0)
         st.rerun(scope="fragment")
+
+    with execution_settings_actions:
+        if st.button("Save Settings", icon=icons.ICON_SAVE, key="save_backtesting_settings_execution"):
+            save_backtesting_settings()
+
+    with market_phase_settings_actions:
+        if st.button("Save Settings", icon=icons.ICON_SAVE, key="save_backtesting_settings_market_phase"):
+            save_backtesting_settings()
+
+    with quality_score_settings_actions:
+        if st.button("Save Settings", icon=icons.ICON_SAVE, key="save_backtesting_settings_quality_score"):
+            save_backtesting_settings()
 
     st.space()
 
 
 def main():
     render_backtest_settings()
-    approval_rules_section()
 
 
 if __name__ == "__main__":

@@ -2,6 +2,14 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-05-05]
+- Backtesting - Added Strategy Quality Score to backtest results, including score, grade, components, penalties and summary details.
+- Backtesting Settings - Added Buy & Hold benchmark start mode, allowing users to choose between indicator warm-up and first data candle.
+- Backtesting - Added risk management, ATR trailing stop, take-profit configuration and exit reason tracking to backtest trades.
+- Backtesting - Added higher-timeframe market phase and daily LINREG filters for supported strategies.
+- Backtesting Results - Added AI analysis support for selected backtests using stats, config, trades and quality score context.
+- Database - Added automatic schema updates for new backtesting settings, quality score, config JSON and trade risk/exit fields.
+
 ## [2026-04-14]
 - Database - Added automatic schema reconciliation for `Backtesting_Results` on startup in `utils/database.py`. Missing columns from `db_scripts_2026-02-12.sql` are now created automatically (`Trades`, `Win_Rate_Perc`, `Best_Trade_Perc`, `Worst_Trade_Perc`, `Avg_Trade_Perc`, `Max_Trade_Duration`, `Avg_Trade_Duration`, `Profit_Factor`, `Expectancy_Perc`, `SQN`, `Kelly_Criterion`, `Max_Drawdown_Perc`), preventing runtime errors when SQL migration scripts were not applied manually.
 - Docker - Updated `sqlite_web` service in `docker-compose.yml` to require authentication via `SQLITE_WEB_PASSWORD` and `--password`.

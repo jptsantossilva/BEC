@@ -17,6 +17,10 @@ _UPDATABLE_SETTING_KEYS = {
     "min_position_size",
     "trade_against",
     "stop_loss",
+    "atr_trailing_enabled",
+    "atr_period",
+    "atr_multiplier",
+    "atr_activation_pnl",
     "trade_top_performance",
     "main_strategy",
     "btc_strategy",
@@ -49,6 +53,10 @@ class AppSettings:
     min_position_size: float
     trade_against: str
     stop_loss: float
+    atr_trailing_enabled: bool
+    atr_period: int
+    atr_multiplier: float
+    atr_activation_pnl: float
     trade_top_performance: int
     main_strategy: str
     main_strategy_name: str
@@ -128,7 +136,11 @@ def load_settings(refresh: bool = False) -> AppSettings:
     tradable_balance_ratio = database.get_setting("tradable_balance_ratio")
     min_position_size = database.get_setting("min_position_size")
     trade_against = database.get_setting("trade_against")
-    stop_loss = database.get_setting("stop_loss")
+    stop_loss = float(database.get_setting("stop_loss"))
+    atr_trailing_enabled = database.get_setting("atr_trailing_enabled")
+    atr_period = database.get_setting("atr_period")
+    atr_multiplier = database.get_setting("atr_multiplier")
+    atr_activation_pnl = database.get_setting("atr_activation_pnl")
     trade_top_performance = database.get_setting("trade_top_performance")
     main_strategy = database.get_setting("main_strategy")
     btc_strategy = database.get_setting("btc_strategy")
@@ -194,6 +206,10 @@ def load_settings(refresh: bool = False) -> AppSettings:
         min_position_size=min_position_size,
         trade_against=trade_against,
         stop_loss=stop_loss,
+        atr_trailing_enabled=atr_trailing_enabled,
+        atr_period=atr_period,
+        atr_multiplier=atr_multiplier,
+        atr_activation_pnl=atr_activation_pnl,
         trade_top_performance=trade_top_performance,
         main_strategy=main_strategy,
         main_strategy_name=main_strategy_name,

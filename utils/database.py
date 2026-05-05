@@ -88,7 +88,11 @@ def get_setting(setting_name):
         "tradable_balance_ratio": 1.0,
         "min_position_size": 20.0,
         "trade_against": "USDC",
-        "stop_loss": 10,
+        "stop_loss": 10.0,
+        "atr_trailing_enabled": True,
+        "atr_period": 14,
+        "atr_multiplier": 1.8,
+        "atr_activation_pnl": 2.0,
         "trade_top_performance": 500,
         "stake_amount_type": "unlimited",
         "trade_against_switch_stablecoin": "USDC",
@@ -116,6 +120,10 @@ def get_setting(setting_name):
         "min_position_size": "Minimum trade size.",
         "trade_against": "The asset to trade against ('BTC', 'USDC', 'USDT').",
         "stop_loss": "Stop-loss percentage.",
+        "atr_trailing_enabled": "Enable/disable ATR-based trailing stop-loss.",
+        "atr_period": "ATR lookback period used by trailing stop logic.",
+        "atr_multiplier": "ATR multiplier (k) used to calculate the trailing stop distance.",
+        "atr_activation_pnl": "PnL percentage threshold required to activate ATR trailing stop.",
         "trade_top_performance": "Top assets considered for trading.",
         "stake_amount_type": "Determines staking limits ('unlimited' or other values).",
         "trade_against_switch_stablecoin": "Choose the stablecoin for auto-switching.",
@@ -226,7 +234,12 @@ create_orders_table = """
         PnL_Value REAL,
         Buy_Order_Id TEXT,
         Exit_Reason TEXT,
-        Sell_Perc INTEGER
+        Sell_Perc INTEGER,
+        Stop_Type TEXT,
+        Stop_Trigger_Price REAL,
+        Trail_Stop_ATR_At_Exit REAL,
+        Highest_Price_Since_Entry_At_Exit REAL,
+        Atr_Params_At_Exit TEXT
     );
 """
 
@@ -331,10 +344,32 @@ sql_add_order_sell = """
         PnL_Value,
         Buy_Order_Id,
         Exit_Reason,
-        Sell_Perc)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?);        
+        Sell_Perc,
+        Stop_Type,
+        Stop_Trigger_Price,
+        Trail_Stop_ATR_At_Exit,
+        Highest_Price_Since_Entry_At_Exit,
+        Atr_Params_At_Exit)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);        
 """
-def add_order_sell(sell_order_id: str, buy_order_id: str, date: str, bot: str, symbol: str, price: float, qty: float, ema_fast: int, ema_slow: int, exit_reason: str, sell_percentage: int = 100):
+def add_order_sell(
+    sell_order_id: str,
+    buy_order_id: str,
+    date: str,
+    bot: str,
+    symbol: str,
+    price: float,
+    qty: float,
+    ema_fast: int,
+    ema_slow: int,
+    exit_reason: str,
+    sell_percentage: int = 100,
+    stop_type: str = "",
+    stop_trigger_price: float = 0.0,
+    trail_stop_atr_at_exit: float = 0.0,
+    highest_price_since_entry_at_exit: float = 0.0,
+    atr_params_at_exit: str = "",
+):
     # sell_order_id and buy_order_id are the exchange ids from the exchange order
     connection = _get_conn()
 
@@ -400,7 +435,12 @@ def add_order_sell(sell_order_id: str, buy_order_id: str, date: str, bot: str, s
                                                 pnl_value, 
                                                 order_id, 
                                                 exit_reason,
-                                                sell_percentage))
+                                                sell_percentage,
+                                                stop_type,
+                                                stop_trigger_price,
+                                                trail_stop_atr_at_exit,
+                                                highest_price_since_entry_at_exit,
+                                                atr_params_at_exit))
         return float(pnl_value), float(pnl_perc)
 
 sql_get_last_buy_order_by_bot_symbol = """
@@ -454,7 +494,12 @@ sql_get_orders_by_bot_side_year_month = """
         (os.Qty*os.Price) Sell_Position_Value,
         os.Ema_Fast,
         os.Ema_Slow,
-        os.Exit_Reason    
+        os.Exit_Reason,
+        os.Stop_Type,
+        os.Stop_Trigger_Price,
+        os.Trail_Stop_ATR_At_Exit,
+        os.Highest_Price_Since_Entry_At_Exit,
+        os.Atr_Params_At_Exit
     FROM Orders as os
     LEFT JOIN orders ob ON os.Buy_Order_Id = ob.Id    
     WHERE
@@ -469,7 +514,12 @@ def get_orders_by_bot_side_year_month(bot: str, side: str, year: str, month: str
     month = month.zfill(2)
 
     if year == None:
-        df = pd.DataFrame(columns=['Bot', 'Symbol', 'PnL_Perc', 'PnL_Value','Buy_Date', 'Buy_Price', 'Buy_Qty', 'Position_Value', 'Sell_Date','Sell_Price','Sell_Qty','Sell_Position_Value','Ema_Fast','Ema_Slow','Exit_Reason'])
+        df = pd.DataFrame(columns=[
+            'Bot', 'Symbol', 'PnL_Perc', 'PnL_Value', 'Buy_Date', 'Buy_Price', 'Buy_Qty',
+            'Position_Value', 'Sell_Date', 'Sell_Price', 'Sell_Qty', 'Sell_Position_Value',
+            'Ema_Fast', 'Ema_Slow', 'Exit_Reason', 'Stop_Type', 'Stop_Trigger_Price',
+            'Trail_Stop_ATR_At_Exit', 'Highest_Price_Since_Entry_At_Exit', 'Atr_Params_At_Exit'
+        ])
         return df
     
     if month == '13':
@@ -501,7 +551,9 @@ sql_create_positions_table = """
         Take_Profit_1 INTEGER NOT NULL DEFAULT 0,
         Take_Profit_2 INTEGER NOT NULL DEFAULT 0,
         Take_Profit_3 INTEGER NOT NULL DEFAULT 0,
-        Take_Profit_4 INTEGER NOT NULL DEFAULT 0
+        Take_Profit_4 INTEGER NOT NULL DEFAULT 0,
+        Highest_Price_Since_Entry REAL NOT NULL DEFAULT 0,
+        Trail_Stop_ATR REAL NOT NULL DEFAULT 0
     );
 """
 
@@ -538,7 +590,7 @@ def get_positions_by_bot_position(bot: str, position: int):
     return pd.read_sql(sql_get_positions_by_bot_position, connection, params=(bot, position))
 
 sql_get_unrealized_pnl_by_bot = """
-    SELECT pos.Id, pos.Bot, pos.Symbol, pos.PnL_Perc, pos.PnL_Value, pos.Take_Profit_1 as TP1, pos.Take_Profit_2 as TP2, pos.Take_Profit_3 as TP3, pos.Take_Profit_4 as TP4, ROUND((pos.Qty/ord.Qty)*100,2) as "RPQ%", pos.Qty, pos.Buy_Price, (pos.Qty*pos.Buy_Price) Position_Value, pos.Date, pos.Duration, pos.Ema_Fast, pos.Ema_Slow
+    SELECT pos.Id, pos.Bot, pos.Symbol, pos.PnL_Perc, pos.PnL_Value, pos.Take_Profit_1 as TP1, pos.Take_Profit_2 as TP2, pos.Take_Profit_3 as TP3, pos.Take_Profit_4 as TP4, ROUND((pos.Qty/ord.Qty)*100,2) as "RPQ%", pos.Qty, pos.Buy_Price, (pos.Qty*pos.Buy_Price) Position_Value, pos.Date, pos.Duration, pos.Ema_Fast, pos.Ema_Slow, pos.Trail_Stop_ATR, pos.Highest_Price_Since_Entry
     FROM Positions pos
     JOIN Orders ord ON pos.Buy_Order_Id = ord.Exchange_Order_Id 
     WHERE 
@@ -559,6 +611,8 @@ def get_unrealized_pnl_by_bot(bot: str):
     df['Buy_Price'] = df['Buy_Price'].astype(float)
     df['Ema_Fast'] = df['Ema_Fast'].astype(int)
     df['Ema_Slow'] = df['Ema_Slow'].astype(int)
+    df['Trail_Stop_ATR'] = df['Trail_Stop_ATR'].astype(float)
+    df['Highest_Price_Since_Entry'] = df['Highest_Price_Since_Entry'].astype(float)
     return df
 
 sql_get_positions_by_bot_symbol_position = """
@@ -774,7 +828,9 @@ sql_set_position_buy = """
         Buy_Order_Id = ?,
         PnL_Perc = 0,
         PnL_Value = 0,
-        Duration = 0
+        Duration = 0,
+        Highest_Price_Since_Entry = ?,
+        Trail_Stop_ATR = 0
     WHERE
         Bot = ? 
         AND Symbol = ? ;        
@@ -790,6 +846,7 @@ def set_position_buy(bot: str, symbol: str, qty: float, buy_price: float, date: 
                                                   ema_fast,
                                                   ema_slow, 
                                                   buy_order_id, 
+                                                  buy_price,
                                                   bot, 
                                                   symbol))
 
@@ -810,7 +867,9 @@ sql_set_position_sell = """
         Take_Profit_1 = 0,
         Take_Profit_2 = 0,
         Take_Profit_3 = 0,
-        Take_Profit_4 = 0
+        Take_Profit_4 = 0,
+        Highest_Price_Since_Entry = 0,
+        Trail_Stop_ATR = 0
     WHERE
         Bot = ? 
         AND Symbol = ? ;        
@@ -833,6 +892,34 @@ def set_position_qty(bot: str, symbol: str, qty: float):
     connection = _get_conn()
     with connection:
         connection.execute(sql_set_position_qty, (qty, bot, symbol))
+
+sql_update_position_risk = """
+    UPDATE Positions
+    SET
+        Highest_Price_Since_Entry = ?,
+        Trail_Stop_ATR = ?
+    WHERE
+        Bot = ?
+        AND Symbol = ?
+        AND Position = 1;
+"""
+def update_position_risk(
+    bot: str,
+    symbol: str,
+    highest_price_since_entry: float,
+    trail_stop_atr: float,
+):
+    connection = _get_conn()
+    with connection:
+        connection.execute(
+            sql_update_position_risk,
+            (
+                float(highest_price_since_entry),
+                float(trail_stop_atr),
+                bot,
+                symbol,
+            ),
+        )
 
 sql_set_position_take_profit_1 = """
     UPDATE Positions
@@ -1022,6 +1109,7 @@ sql_strategies_add_default_strategies = """
 INSERT OR IGNORE INTO Strategies (Id, Name) VALUES ('ema_cross_with_market_phases', 'EMA Cross with Market Phases');
 INSERT OR IGNORE INTO Strategies (Id, Name, BTC_Strategy) VALUES ('ema_cross', 'EMA Cross', 1);
 INSERT OR IGNORE INTO Strategies (Id, Name, Backtest_Optimize, BTC_Strategy) VALUES ('market_phases', 'Market Phases', 0, 1);
+INSERT OR IGNORE INTO Strategies (Id, Name, Backtest_Optimize, BTC_Strategy) VALUES ('hma_rsi_linreg', 'HMA RSI LINREG', 1, 1);
 """
 
 sql_get_all_strategies = "SELECT * FROM Strategies;"
@@ -1080,6 +1168,9 @@ sql_create_backtesting_results_table = """
         Kelly_Criterion REAL,
         Trading_Approved INTEGER NOT NULL DEFAULT 0,
         Trading_Rejection_Reasons TEXT,
+        Quality_Score REAL,
+        Quality_Grade TEXT,
+        Backtest_Config_JSON TEXT,
         Strategy_Id TEXT,
         CONSTRAINT symbol_time_frame_strategy_unique UNIQUE (Symbol, Time_Frame, Strategy_Id)
     );
@@ -1104,6 +1195,8 @@ sql_get_all_backtesting_results = """
            br.Expectancy_Perc,
            br.SQN,
            br.Kelly_Criterion,
+           br.Quality_Score,
+           br.Quality_Grade,
            br.Strategy_Id,
            st.Name as Strategy_Name,
            br.Ema_Fast,
@@ -1156,9 +1249,9 @@ sql_add_backtesting_results = """
     INSERT OR REPLACE INTO Backtesting_Results (
         Symbol, Ema_Fast, Ema_Slow, Time_Frame, Return_Perc, BuyHold_Return_Perc, Backtest_Start_Date, Backtest_End_Date,
         Max_Drawdown_Perc, Trades, Win_Rate_Perc, Best_Trade_Perc, Worst_Trade_Perc, Avg_Trade_Perc, Max_Trade_Duration, Avg_Trade_Duration,
-        Profit_Factor, Expectancy_Perc, SQN, Kelly_Criterion, Trading_Approved, Trading_Rejection_Reasons, Strategy_Id
+        Profit_Factor, Expectancy_Perc, SQN, Kelly_Criterion, Trading_Approved, Trading_Rejection_Reasons, Quality_Score, Quality_Grade, Backtest_Config_JSON, Strategy_Id
         ) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 """
 def add_backtesting_results(timeframe: str,
                             symbol: str,
@@ -1182,7 +1275,10 @@ def add_backtesting_results(timeframe: str,
                             kelly_criterion: float,
                             strategy_Id: str,
                             trading_approved: bool = False,
-                            trading_rejection_reasons: str = ""):
+                            trading_rejection_reasons: str = "",
+                            quality_score: float = None,
+                            quality_grade: str = "",
+                            backtest_config_json: str = ""):
     connection = _get_conn()
     with connection:
         connection.execute(sql_add_backtesting_results, (str(symbol), 
@@ -1207,6 +1303,9 @@ def add_backtesting_results(timeframe: str,
                                               float(kelly_criterion) if kelly_criterion is not None else None,
                                               1 if trading_approved else 0,
                                               str(trading_rejection_reasons) if trading_rejection_reasons is not None else "",
+                                              float(quality_score) if quality_score is not None else None,
+                                              str(quality_grade) if quality_grade is not None else "",
+                                              str(backtest_config_json) if backtest_config_json is not None else "",
                                               str(strategy_Id)
                                               )
                             )
@@ -1257,6 +1356,10 @@ sql_create_backtesting_trades_table = """
         "EntryTime"	TIMESTAMP,
         "ExitTime"	TIMESTAMP,
         "Duration"	TEXT,
+        "Exit_Reason"	TEXT,
+        "Hard_Stop_Loss"	REAL,
+        "ATR_Stop_Loss"	REAL,
+        "Active_Stop_Loss"	REAL,
         CONSTRAINT "bt_symbol__timeframe_strategy_entrytime_exittime" UNIQUE("Symbol","Time_Frame","Strategy_Id","EntryTime","ExitTime")
 );
 """
@@ -1264,7 +1367,8 @@ sql_create_backtesting_trades_table = """
 sql_get_all_backtesting_trades = """
     SELECT bt.Symbol, bt.Time_Frame, bt.ReturnPct, 
     bt.Strategy_Id, st.Name as Strategy_Name, 
-    bt.EntryTime, bt.ExitTime, bt.EntryPrice, bt.ExitPrice, bt.PnL, bt.Duration  
+    bt.EntryTime, bt.ExitTime, bt.EntryPrice, bt.ExitPrice, bt.PnL, bt.Duration, bt.Exit_Reason,
+    bt.Hard_Stop_Loss, bt.ATR_Stop_Loss, bt.Active_Stop_Loss
     FROM Backtesting_Trades AS bt
     JOIN Strategies AS st ON bt.Strategy_Id = st.Id
     ORDER BY bt.Symbol, st.Name;
@@ -1275,12 +1379,30 @@ def get_all_backtesting_trades():
 
 sql_add_backtesting_trade = """
     INSERT OR REPLACE INTO Backtesting_Trades (
-        Symbol, Time_Frame, Strategy_Id, EntryBar, ExitBar, EntryPrice, ExitPrice, PnL, ReturnPct, EntryTime, ExitTime, Duration
+        Symbol, Time_Frame, Strategy_Id, EntryBar, ExitBar, EntryPrice, ExitPrice, PnL, ReturnPct, EntryTime, ExitTime, Duration, Exit_Reason,
+        Hard_Stop_Loss, ATR_Stop_Loss, Active_Stop_Loss
         ) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 """
-def add_backtesting_trade(symbol: str, timeframe: str, strategy_id: str, entry_bar: int, exit_bar: int, entry_price: float, exit_price: float, pnl: float, return_pct: float, entry_time: str, exit_time: str, duration: str):
+def add_backtesting_trade(symbol: str, timeframe: str, strategy_id: str, entry_bar: int, exit_bar: int, entry_price: float, exit_price: float, pnl: float, return_pct: float, entry_time: str, exit_time: str, duration: str, exit_reason: str = "", hard_stop_loss=None, atr_stop_loss=None, active_stop_loss=None):
     connection = _get_conn()
+    def _nullable_float(value):
+        if value is None:
+            return None
+        try:
+            if pd.isna(value):
+                return None
+        except Exception:
+            pass
+        if value == "":
+            return None
+        try:
+            if math.isnan(float(value)):
+                return None
+        except Exception:
+            return None
+        return float(value)
+
     with connection:
         connection.execute(sql_add_backtesting_trade, (
             str(symbol),
@@ -1294,7 +1416,11 @@ def add_backtesting_trade(symbol: str, timeframe: str, strategy_id: str, entry_b
             float(return_pct),
             str(entry_time),
             str(exit_time),
-            str(duration)
+            str(duration),
+            str(exit_reason),
+            _nullable_float(hard_stop_loss),
+            _nullable_float(atr_stop_loss),
+            _nullable_float(active_stop_loss),
         ))
 
 def delete_backtesting_trades_symbol_timeframe_strategy(symbol, timeframe, strategy_id):
@@ -1906,7 +2032,20 @@ sql_create_backtesting_settings_table = """
         Id INTEGER PRIMARY KEY,
         Commission_Value REAL NOT NULL,
         Cash_Value REAL NOT NULL,
-        Maximize TEXT NOT NULL
+        Maximize TEXT NOT NULL,
+        Use_Intraday_Current_Timeframe_Market_Phase_Filter INTEGER NOT NULL DEFAULT 1,
+        Market_Phase_1h_SMA_Fast INTEGER NOT NULL DEFAULT 50,
+        Market_Phase_1h_SMA_Slow INTEGER NOT NULL DEFAULT 200,
+        Market_Phase_4h_SMA_Fast INTEGER NOT NULL DEFAULT 50,
+        Market_Phase_4h_SMA_Slow INTEGER NOT NULL DEFAULT 200,
+        Market_Phase_1d_SMA_Fast INTEGER NOT NULL DEFAULT 50,
+        Market_Phase_1d_SMA_Slow INTEGER NOT NULL DEFAULT 200,
+        Buy_Hold_Start_Mode TEXT NOT NULL DEFAULT 'indicator_warmup',
+        Strategy_Quality_Return_Weight REAL NOT NULL DEFAULT 20,
+        Strategy_Quality_Risk_Weight REAL NOT NULL DEFAULT 25,
+        Strategy_Quality_Risk_Adjusted_Weight REAL NOT NULL DEFAULT 20,
+        Strategy_Quality_Trade_Quality_Weight REAL NOT NULL DEFAULT 20,
+        Strategy_Quality_Robustness_Weight REAL NOT NULL DEFAULT 15
     );
 """
 
@@ -2030,6 +2169,19 @@ DEFAULT_BACKTESTING_SETTINGS = {
     "Commission_Value": 0.005,
     "Cash_Value": 10000.0,
     "Maximize": "SQN",
+    "Use_Intraday_Current_Timeframe_Market_Phase_Filter": 1,
+    "Market_Phase_1h_SMA_Fast": 50,
+    "Market_Phase_1h_SMA_Slow": 200,
+    "Market_Phase_4h_SMA_Fast": 50,
+    "Market_Phase_4h_SMA_Slow": 200,
+    "Market_Phase_1d_SMA_Fast": 50,
+    "Market_Phase_1d_SMA_Slow": 200,
+    "Buy_Hold_Start_Mode": "indicator_warmup",
+    "Strategy_Quality_Return_Weight": 20.0,
+    "Strategy_Quality_Risk_Weight": 25.0,
+    "Strategy_Quality_Risk_Adjusted_Weight": 20.0,
+    "Strategy_Quality_Trade_Quality_Weight": 20.0,
+    "Strategy_Quality_Robustness_Weight": 15.0,
 }
 
 sql_create_job_schedules_table = """
@@ -2133,11 +2285,14 @@ def create_tables():
     with connection:
 
         connection.execute(create_orders_table)
+        _ensure_orders_columns(connection)
         connection.execute(sql_create_positions_table)
+        _ensure_positions_columns(connection)
         connection.execute(sql_create_blacklist_table)
         connection.execute(sql_create_backtesting_results_table)
         _ensure_backtesting_results_columns(connection)
         connection.execute(sql_create_backtesting_trades_table)
+        _ensure_backtesting_trades_columns(connection)
         connection.execute(sql_create_strategies_table)
         # Split the SQL statements and execute them one by one
         for statement in sql_strategies_add_default_strategies.split(';'):
@@ -2166,6 +2321,7 @@ def create_tables():
         connection.execute(sql_create_settings_table)
         # backtesting settings
         connection.execute(sql_create_backtesting_settings_table)
+        _ensure_backtesting_settings_columns(connection)
         # approval rules
         connection.execute(sql_create_Approval_Rule_Definitions_table)
         connection.execute(sql_create_Backtest_Approval_Rules_table)
@@ -2213,12 +2369,84 @@ def _ensure_backtesting_results_columns(connection):
         "Max_Drawdown_Perc": "REAL",
         "Trading_Approved": "INTEGER NOT NULL DEFAULT 0",
         "Trading_Rejection_Reasons": "TEXT",
+        "Quality_Score": "REAL",
+        "Quality_Grade": "TEXT",
+        "Backtest_Config_JSON": "TEXT",
     }
 
     for column_name, column_type in required_columns.items():
         if column_name not in existing_cols:
             connection.execute(
                 f"ALTER TABLE Backtesting_Results ADD COLUMN {column_name} {column_type}"
+            )
+
+def _ensure_orders_columns(connection):
+    cursor = connection.execute("PRAGMA table_info(Orders)")
+    existing_cols = {row[1] for row in cursor.fetchall()}
+    required_columns = {
+        "Stop_Type": "TEXT",
+        "Stop_Trigger_Price": "REAL",
+        "Trail_Stop_ATR_At_Exit": "REAL",
+        "Highest_Price_Since_Entry_At_Exit": "REAL",
+        "Atr_Params_At_Exit": "TEXT",
+    }
+    for column_name, column_type in required_columns.items():
+        if column_name not in existing_cols:
+            connection.execute(
+                f"ALTER TABLE Orders ADD COLUMN {column_name} {column_type}"
+            )
+
+def _ensure_backtesting_trades_columns(connection):
+    cursor = connection.execute("PRAGMA table_info(Backtesting_Trades)")
+    existing_cols = {row[1] for row in cursor.fetchall()}
+    required_columns = {
+        "Exit_Reason": "TEXT",
+        "Hard_Stop_Loss": "REAL",
+        "ATR_Stop_Loss": "REAL",
+        "Active_Stop_Loss": "REAL",
+    }
+    for column_name, column_type in required_columns.items():
+        if column_name not in existing_cols:
+            connection.execute(
+                f"ALTER TABLE Backtesting_Trades ADD COLUMN {column_name} {column_type}"
+            )
+
+def _ensure_backtesting_settings_columns(connection):
+    cursor = connection.execute("PRAGMA table_info(Backtesting_Settings)")
+    existing_cols = {row[1] for row in cursor.fetchall()}
+    required_columns = {
+        "Use_Intraday_Current_Timeframe_Market_Phase_Filter": "INTEGER NOT NULL DEFAULT 1",
+        "Market_Phase_1h_SMA_Fast": "INTEGER NOT NULL DEFAULT 50",
+        "Market_Phase_1h_SMA_Slow": "INTEGER NOT NULL DEFAULT 200",
+        "Market_Phase_4h_SMA_Fast": "INTEGER NOT NULL DEFAULT 50",
+        "Market_Phase_4h_SMA_Slow": "INTEGER NOT NULL DEFAULT 200",
+        "Market_Phase_1d_SMA_Fast": "INTEGER NOT NULL DEFAULT 50",
+        "Market_Phase_1d_SMA_Slow": "INTEGER NOT NULL DEFAULT 200",
+        "Buy_Hold_Start_Mode": "TEXT NOT NULL DEFAULT 'indicator_warmup'",
+        "Strategy_Quality_Return_Weight": "REAL NOT NULL DEFAULT 20",
+        "Strategy_Quality_Risk_Weight": "REAL NOT NULL DEFAULT 25",
+        "Strategy_Quality_Risk_Adjusted_Weight": "REAL NOT NULL DEFAULT 20",
+        "Strategy_Quality_Trade_Quality_Weight": "REAL NOT NULL DEFAULT 20",
+        "Strategy_Quality_Robustness_Weight": "REAL NOT NULL DEFAULT 15",
+    }
+    for column_name, column_type in required_columns.items():
+        if column_name not in existing_cols:
+            connection.execute(
+                f"ALTER TABLE Backtesting_Settings ADD COLUMN {column_name} {column_type}"
+            )
+
+def _ensure_positions_columns(connection):
+    cursor = connection.execute("PRAGMA table_info(Positions)")
+    existing_cols = {row[1] for row in cursor.fetchall()}
+    required_columns = {
+        "Highest_Price_Since_Entry": "REAL NOT NULL DEFAULT 0",
+        "Trail_Stop_ATR": "REAL NOT NULL DEFAULT 0",
+    }
+
+    for column_name, column_type in required_columns.items():
+        if column_name not in existing_cols:
+            connection.execute(
+                f"ALTER TABLE Positions ADD COLUMN {column_name} {column_type}"
             )
 
 def apply_database_scripts_updates():
@@ -2340,35 +2568,159 @@ def ensure_backtesting_settings():
     connection = _get_conn()
     with connection:
         connection.execute(sql_create_backtesting_settings_table)
+        _ensure_backtesting_settings_columns(connection)
         cursor = connection.execute("SELECT COUNT(*) FROM Backtesting_Settings")
         count = cursor.fetchone()[0]
         if count == 0:
             connection.execute(
-                "INSERT INTO Backtesting_Settings (Commission_Value, Cash_Value, Maximize) VALUES (?, ?, ?)",
+                """
+                INSERT INTO Backtesting_Settings (
+                    Commission_Value,
+                    Cash_Value,
+                    Maximize,
+                    Use_Intraday_Current_Timeframe_Market_Phase_Filter,
+                    Market_Phase_1h_SMA_Fast,
+                    Market_Phase_1h_SMA_Slow,
+                    Market_Phase_4h_SMA_Fast,
+                    Market_Phase_4h_SMA_Slow,
+                    Market_Phase_1d_SMA_Fast,
+                    Market_Phase_1d_SMA_Slow,
+                    Buy_Hold_Start_Mode,
+                    Strategy_Quality_Return_Weight,
+                    Strategy_Quality_Risk_Weight,
+                    Strategy_Quality_Risk_Adjusted_Weight,
+                    Strategy_Quality_Trade_Quality_Weight,
+                    Strategy_Quality_Robustness_Weight
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
                 (
                     float(DEFAULT_BACKTESTING_SETTINGS["Commission_Value"]),
                     float(DEFAULT_BACKTESTING_SETTINGS["Cash_Value"]),
                     str(DEFAULT_BACKTESTING_SETTINGS["Maximize"]),
+                    int(DEFAULT_BACKTESTING_SETTINGS["Use_Intraday_Current_Timeframe_Market_Phase_Filter"]),
+                    int(DEFAULT_BACKTESTING_SETTINGS["Market_Phase_1h_SMA_Fast"]),
+                    int(DEFAULT_BACKTESTING_SETTINGS["Market_Phase_1h_SMA_Slow"]),
+                    int(DEFAULT_BACKTESTING_SETTINGS["Market_Phase_4h_SMA_Fast"]),
+                    int(DEFAULT_BACKTESTING_SETTINGS["Market_Phase_4h_SMA_Slow"]),
+                    int(DEFAULT_BACKTESTING_SETTINGS["Market_Phase_1d_SMA_Fast"]),
+                    int(DEFAULT_BACKTESTING_SETTINGS["Market_Phase_1d_SMA_Slow"]),
+                    str(DEFAULT_BACKTESTING_SETTINGS["Buy_Hold_Start_Mode"]),
+                    float(DEFAULT_BACKTESTING_SETTINGS["Strategy_Quality_Return_Weight"]),
+                    float(DEFAULT_BACKTESTING_SETTINGS["Strategy_Quality_Risk_Weight"]),
+                    float(DEFAULT_BACKTESTING_SETTINGS["Strategy_Quality_Risk_Adjusted_Weight"]),
+                    float(DEFAULT_BACKTESTING_SETTINGS["Strategy_Quality_Trade_Quality_Weight"]),
+                    float(DEFAULT_BACKTESTING_SETTINGS["Strategy_Quality_Robustness_Weight"]),
                 ),
             )
 
 def get_backtesting_settings():
     connection = _get_conn()
-    df = pd.read_sql("SELECT Commission_Value, Cash_Value, Maximize FROM Backtesting_Settings LIMIT 1", connection)
+    _ensure_backtesting_settings_columns(connection)
+    df = pd.read_sql(
+        """
+        SELECT
+            Commission_Value,
+            Cash_Value,
+            Maximize,
+            Use_Intraday_Current_Timeframe_Market_Phase_Filter,
+            Market_Phase_1h_SMA_Fast,
+            Market_Phase_1h_SMA_Slow,
+            Market_Phase_4h_SMA_Fast,
+            Market_Phase_4h_SMA_Slow,
+            Market_Phase_1d_SMA_Fast,
+            Market_Phase_1d_SMA_Slow,
+            Buy_Hold_Start_Mode,
+            Strategy_Quality_Return_Weight,
+            Strategy_Quality_Risk_Weight,
+            Strategy_Quality_Risk_Adjusted_Weight,
+            Strategy_Quality_Trade_Quality_Weight,
+            Strategy_Quality_Robustness_Weight
+        FROM Backtesting_Settings
+        LIMIT 1
+        """,
+        connection,
+    )
     if df.empty:
         return DEFAULT_BACKTESTING_SETTINGS.copy()
     return {
         "Commission_Value": float(df.iloc[0]["Commission_Value"]),
         "Cash_Value": float(df.iloc[0]["Cash_Value"]),
         "Maximize": str(df.iloc[0]["Maximize"]),
+        "Use_Intraday_Current_Timeframe_Market_Phase_Filter": int(df.iloc[0]["Use_Intraday_Current_Timeframe_Market_Phase_Filter"]),
+        "Market_Phase_1h_SMA_Fast": int(df.iloc[0]["Market_Phase_1h_SMA_Fast"]),
+        "Market_Phase_1h_SMA_Slow": int(df.iloc[0]["Market_Phase_1h_SMA_Slow"]),
+        "Market_Phase_4h_SMA_Fast": int(df.iloc[0]["Market_Phase_4h_SMA_Fast"]),
+        "Market_Phase_4h_SMA_Slow": int(df.iloc[0]["Market_Phase_4h_SMA_Slow"]),
+        "Market_Phase_1d_SMA_Fast": int(df.iloc[0]["Market_Phase_1d_SMA_Fast"]),
+        "Market_Phase_1d_SMA_Slow": int(df.iloc[0]["Market_Phase_1d_SMA_Slow"]),
+        "Buy_Hold_Start_Mode": str(df.iloc[0]["Buy_Hold_Start_Mode"] or "indicator_warmup"),
+        "Strategy_Quality_Return_Weight": float(df.iloc[0]["Strategy_Quality_Return_Weight"]),
+        "Strategy_Quality_Risk_Weight": float(df.iloc[0]["Strategy_Quality_Risk_Weight"]),
+        "Strategy_Quality_Risk_Adjusted_Weight": float(df.iloc[0]["Strategy_Quality_Risk_Adjusted_Weight"]),
+        "Strategy_Quality_Trade_Quality_Weight": float(df.iloc[0]["Strategy_Quality_Trade_Quality_Weight"]),
+        "Strategy_Quality_Robustness_Weight": float(df.iloc[0]["Strategy_Quality_Robustness_Weight"]),
     }
 
-def update_backtesting_settings(commission_value: float, cash_value: float, maximize: str):
+def update_backtesting_settings(
+    commission_value: float,
+    cash_value: float,
+    maximize: str,
+    use_intraday_current_timeframe_market_phase_filter: bool = True,
+    market_phase_1h_sma_fast: int = 50,
+    market_phase_1h_sma_slow: int = 200,
+    market_phase_4h_sma_fast: int = 50,
+    market_phase_4h_sma_slow: int = 200,
+    market_phase_1d_sma_fast: int = 50,
+    market_phase_1d_sma_slow: int = 200,
+    buy_hold_start_mode: str = "indicator_warmup",
+    strategy_quality_return_weight: float = 20.0,
+    strategy_quality_risk_weight: float = 25.0,
+    strategy_quality_risk_adjusted_weight: float = 20.0,
+    strategy_quality_trade_quality_weight: float = 20.0,
+    strategy_quality_robustness_weight: float = 15.0,
+):
     connection = _get_conn()
     with connection:
+        _ensure_backtesting_settings_columns(connection)
         connection.execute(
-            "UPDATE Backtesting_Settings SET Commission_Value = ?, Cash_Value = ?, Maximize = ? WHERE Id = (SELECT Id FROM Backtesting_Settings LIMIT 1)",
-            (float(commission_value), float(cash_value), str(maximize)),
+            """
+            UPDATE Backtesting_Settings
+            SET Commission_Value = ?,
+                Cash_Value = ?,
+                Maximize = ?,
+                Use_Intraday_Current_Timeframe_Market_Phase_Filter = ?,
+                Market_Phase_1h_SMA_Fast = ?,
+                Market_Phase_1h_SMA_Slow = ?,
+                Market_Phase_4h_SMA_Fast = ?,
+                Market_Phase_4h_SMA_Slow = ?,
+                Market_Phase_1d_SMA_Fast = ?,
+                Market_Phase_1d_SMA_Slow = ?,
+                Buy_Hold_Start_Mode = ?,
+                Strategy_Quality_Return_Weight = ?,
+                Strategy_Quality_Risk_Weight = ?,
+                Strategy_Quality_Risk_Adjusted_Weight = ?,
+                Strategy_Quality_Trade_Quality_Weight = ?,
+                Strategy_Quality_Robustness_Weight = ?
+            WHERE Id = (SELECT Id FROM Backtesting_Settings LIMIT 1)
+            """,
+            (
+                float(commission_value),
+                float(cash_value),
+                str(maximize),
+                1 if use_intraday_current_timeframe_market_phase_filter else 0,
+                int(market_phase_1h_sma_fast),
+                int(market_phase_1h_sma_slow),
+                int(market_phase_4h_sma_fast),
+                int(market_phase_4h_sma_slow),
+                int(market_phase_1d_sma_fast),
+                int(market_phase_1d_sma_slow),
+                str(buy_hold_start_mode),
+                float(strategy_quality_return_weight),
+                float(strategy_quality_risk_weight),
+                float(strategy_quality_risk_adjusted_weight),
+                float(strategy_quality_trade_quality_weight),
+                float(strategy_quality_robustness_weight),
+            ),
         )
 
 # Approval rules

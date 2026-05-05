@@ -2,6 +2,7 @@ import pandas as pd
 import time
 import os
 import calendar
+import json
 from datetime import datetime
 
 import streamlit as st
@@ -95,7 +96,12 @@ def realized_pnl():
             column_config = {
                 "PnL_Perc": st.column_config.NumberColumn(format="%.2f"),
                 "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"),
-                "Exit_Reason": st.column_config.TextColumn(width="large")
+                "Exit_Reason": st.column_config.TextColumn(width="large"),
+                "Stop_Details": st.column_config.JsonColumn(
+                    "Stop_Details",
+                    width="large",
+                    help="Structured stop metadata saved at trade exit.",
+                ),
                 }
         )
         
@@ -106,7 +112,12 @@ def realized_pnl():
             column_config = {
                 "PnL_Perc": st.column_config.NumberColumn(format="%.2f"),
                 "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"),
-                "Exit_Reason": st.column_config.TextColumn(width="large")
+                "Exit_Reason": st.column_config.TextColumn(width="large"),
+                "Stop_Details": st.column_config.JsonColumn(
+                    "Stop_Details",
+                    width="large",
+                    help="Structured stop metadata saved at trade exit.",
+                ),
                 }
         )
         
@@ -117,7 +128,12 @@ def realized_pnl():
             column_config = {
                 "PnL_Perc": st.column_config.NumberColumn(format="%.2f"),
                 "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"),
-                "Exit_Reason": st.column_config.TextColumn(width="large")
+                "Exit_Reason": st.column_config.TextColumn(width="large"),
+                "Stop_Details": st.column_config.JsonColumn(
+                    "Stop_Details",
+                    width="large",
+                    help="Structured stop metadata saved at trade exit.",
+                ),
                 }
         )
 
@@ -186,9 +202,11 @@ def unrealized_pnl():
         st.header(f"Unrealized PnL - Detail")
         
         st.subheader("Positions 1d")
+        atr_trailing_enabled = bool(config.read_setting("atr_trailing_enabled"))
 
         col_config = {
             "Id": None,
+            "Highest_Price_Since_Entry": None,
             "PnL_Perc": st.column_config.NumberColumn(format="%.2f"),
             "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"),
             "TP1": st.column_config.CheckboxColumn(),
@@ -199,6 +217,8 @@ def unrealized_pnl():
                                             #    format="%.2f",
                                                 )
         }
+        if atr_trailing_enabled:
+            col_config["Trail_Stop_ATR"] = st.column_config.NumberColumn(format="%.8f")
         
         event_positions_1d = st.dataframe(
             positions_df_1d.style.map(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
@@ -605,7 +625,8 @@ def settings():
                               **:red[Disabled]**: Will not buy new positions but will continue to attempt to sell existing positions based on sell strategy conditions.
                           """)
     
-        st.space()
+        # st.space()
+        st.divider()
 
         st.markdown("### Position Sizing")
         with st.container(horizontal=True):
@@ -637,8 +658,8 @@ def settings():
                 # width=200,
                 )
 
-            # Min size & Stop loss
-            # c3, c4 = st.columns(2)
+            # Min size
+            # c3 = st.columns(1)
             if "min_position_size" not in st.session_state:
                 st.session_state.min_position_size = float(config.read_setting("min_position_size"))
             def on_min():
@@ -657,18 +678,6 @@ def settings():
                 on_change=on_min,
                 # width=200, 
                 **min_kwargs)
-            
-            if "stop_loss" not in st.session_state:
-                st.session_state.stop_loss = config.read_setting("stop_loss")
-            def on_sl(): config.update_setting("stop_loss", st.session_state.stop_loss)
-            st.number_input(
-                label="Stop Loss %", 
-                min_value=0, 
-                step=1, 
-                key="stop_loss", 
-                on_change=on_sl, 
-                # width=200,
-                )
 
         # Top performers & Tradable ratio
         with st.container(horizontal=False):
@@ -694,12 +703,87 @@ def settings():
                 # width=400
             )
 
-        st.space()
+        # st.space()
+        st.divider()
+
+        st.markdown("### Risk Management")
+        with st.container(horizontal=True):
+            if "stop_loss" not in st.session_state:
+                st.session_state.stop_loss = float(config.read_setting("stop_loss"))
+            st.number_input(
+                label="Hard Stop Loss %",
+                min_value=0.0,
+                step=0.5,
+                width=130,
+                key="stop_loss",
+                on_change=lambda: config.update_setting("stop_loss", float(st.session_state.stop_loss)),
+                help="Fixed stop-loss percentage used as hard protection.",
+            )
+
+        st.markdown("#### Average True Range Trailing Stop-Loss")
+
+        with st.container(horizontal=True):
+            if "atr_trailing_enabled" not in st.session_state:
+                st.session_state.atr_trailing_enabled = bool(config.read_setting("atr_trailing_enabled"))
+            st.checkbox(
+                "Enable ATR Trailing",
+                key="atr_trailing_enabled",
+                on_change=lambda: config.update_setting(
+                    "atr_trailing_enabled", st.session_state.atr_trailing_enabled
+                ),
+                help="Enable/disable ATR trailing stop-loss globally.",
+            )
+
+        with st.container(horizontal=True):
+            if "atr_period" not in st.session_state:
+                st.session_state.atr_period = int(config.read_setting("atr_period"))
+            st.number_input(
+                label="ATR Period",
+                min_value=1,
+                step=1,
+                width=130,
+                key="atr_period",
+                on_change=lambda: config.update_setting("atr_period", st.session_state.atr_period),
+                help="Lookback period for ATR calculation (default: 14).",
+                disabled=not st.session_state.atr_trailing_enabled,
+            )
+
+            if "atr_multiplier" not in st.session_state:
+                st.session_state.atr_multiplier = float(config.read_setting("atr_multiplier"))
+            st.number_input(
+                label="ATR Multiplier",
+                min_value=0.1,
+                step=0.1,
+                width=130,
+                format="%.2f",
+                key="atr_multiplier",
+                on_change=lambda: config.update_setting("atr_multiplier", st.session_state.atr_multiplier),
+                help="ATR multiplier (k) used to set trailing stop distance.",
+                disabled=not st.session_state.atr_trailing_enabled,
+            )
+
+            if "atr_activation_pnl" not in st.session_state:
+                st.session_state.atr_activation_pnl = float(config.read_setting("atr_activation_pnl"))
+            st.number_input(
+                label="Trailing Activation PnL %",
+                min_value=0.0,
+                step=0.5,
+                width=170,
+                format="%.2f",
+                key="atr_activation_pnl",
+                on_change=lambda: config.update_setting("atr_activation_pnl", st.session_state.atr_activation_pnl),
+                help="Minimum PnL% required to activate ATR trailing stop.",
+                disabled=not st.session_state.atr_trailing_enabled,
+            )
+
+        st.caption("Suggested ATR Multiplier starting points: 2.2 (1h), 1.8 (4h), 1.5 (1d).")
+
+        # st.space()
+        st.divider()
 
         st.markdown("### Take-Profit Levels")
         with st.container(border=False):
             def _tp_num(label, key_perc, key_amt, rps_value, rps_key):
-                st.session_state[rps_key] = rps_value
                 with st.container(horizontal=True):
                     st.number_input(
                         f"{label} (%)",
@@ -758,7 +842,8 @@ def settings():
             _tp_num("TP3", "take_profit_3", "take_profit_3_amount", rps3, "rps3_widget")
             _tp_num("TP4", "take_profit_4", "take_profit_4_amount", rps4, "rps4_widget")
 
-        st.space()
+        # st.space()
+        st.divider()
 
         st.markdown("### Locked Values")
         with st.container(border=False):
@@ -787,7 +872,7 @@ def settings():
                         database.release_locked_value_by_id(_id)
                 st.rerun()
 
-        st.space()
+        st.divider()
         
         with st.container(border=False):
             st.markdown("### Telegram")
@@ -918,6 +1003,74 @@ def calculate_realized_pnl(year: str, month: str):
         if df.empty:
             return df
         df = df.copy()
+
+        def _fmt8(value) -> str:
+            try:
+                if pd.isna(value):
+                    return ""
+                val = float(value)
+                return f"{val:.8f}"
+            except (TypeError, ValueError):
+                return ""
+
+        def _fmt_compact(value) -> str:
+            raw = _fmt8(value)
+            if raw == "":
+                return ""
+            # Keep precision while reducing visual noise.
+            return raw.rstrip("0").rstrip(".")
+
+        def _parse_atr_params(raw_params: str):
+            if not raw_params:
+                return None
+            try:
+                return json.loads(raw_params)
+            except Exception:
+                return None
+
+        def _build_stop_details(row: pd.Series):
+            stop_type = str(row.get("Stop_Type", "") or "").strip().lower()
+            trigger = row.get("Stop_Trigger_Price", None)
+            trail = row.get("Trail_Stop_ATR_At_Exit", None)
+            high = row.get("Highest_Price_Since_Entry_At_Exit", None)
+            atr_params = str(row.get("Atr_Params_At_Exit", "") or "").strip()
+            atr = _parse_atr_params(atr_params)
+            details = {"type": stop_type} if stop_type else {}
+
+            if stop_type == "atr_trailing":
+                details["trigger_price"] = _fmt_compact(trigger)
+                details["trail_stop_at_exit"] = _fmt_compact(trail)
+                details["high_since_entry"] = _fmt_compact(high)
+                if atr:
+                    details["atr"] = atr
+                elif atr_params:
+                    details["atr_raw"] = atr_params
+                return details
+
+            if stop_type == "hard_sl":
+                details["trigger_price"] = _fmt_compact(trigger)
+                if atr:
+                    details["atr"] = atr
+                elif atr_params:
+                    details["atr_raw"] = atr_params
+                return details
+
+            if stop_type == "tp":
+                details["label"] = "Take Profit"
+                return details
+
+            if stop_type == "forced_sale":
+                details["label"] = "Forced Sale"
+                return details
+
+            if stop_type == "strategy":
+                details["label"] = "Strategy Exit"
+                return details
+
+            if stop_type:
+                return details
+            return None
+
         # Keep 8-decimal formatting for price/value columns (for readability in UI tables)
         if 'Buy_Price' in df.columns:
             df['Buy_Price'] = df['Buy_Price'].apply(lambda x: f'{float(x):.8f}')
@@ -932,6 +1085,29 @@ def calculate_realized_pnl(year: str, month: str):
             df['PnL_Perc'] = df['PnL_Perc'].apply(lambda x: '{:.2f}'.format(float(x)))
         if 'PnL_Value' in df.columns:
             df['PnL_Value'] = df['PnL_Value'].apply(lambda x: f'{{:.{num_decimals}f}}'.format(float(x)))
+
+        if "Stop_Type" in df.columns:
+            df["Stop_Details"] = df.apply(_build_stop_details, axis=1)
+        else:
+            df["Stop_Details"] = None
+
+        if "Exit_Reason" in df.columns and "Stop_Details" in df.columns:
+            cols = [c for c in df.columns if c != "Stop_Details"]
+            insert_at = cols.index("Exit_Reason") + 1
+            cols.insert(insert_at, "Stop_Details")
+            df = df[cols]
+
+        # Hide raw stop metadata columns; keep only aggregated Stop_Details in the grid.
+        drop_cols = [
+            "Stop_Type",
+            "Stop_Trigger_Price",
+            "Trail_Stop_ATR_At_Exit",
+            "Highest_Price_Since_Entry_At_Exit",
+            "Atr_Params_At_Exit",
+        ]
+        existing_drop_cols = [c for c in drop_cols if c in df.columns]
+        if existing_drop_cols:
+            df = df.drop(columns=existing_drop_cols)
         return df
 
     df_1d = _fmt_detail(df_1d)

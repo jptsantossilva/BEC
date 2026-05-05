@@ -201,6 +201,7 @@ def set_pages():
         "pages/backtesting_results.py",
         title="Backtesting Results",
         icon=":material/query_stats:",
+        url_path="backtesting_results",
         default=False,
     )
 

@@ -5,6 +5,7 @@ import time
 import timeit
 from datetime import date, datetime, timezone
 
+import numpy as np
 import pandas as pd
 from backtesting.lib import crossover
 from dateutil.relativedelta import relativedelta
@@ -119,10 +120,12 @@ def get_data(symbol, timeframe):
     start_ms = int(pastdate.timestamp() * 1000)
 
     # Trading uses only fully closed candles; drop the in-progress bar.
-    df = binance.get_close_df(
+    df = binance.get_ohlcv(
         symbol=symbol,
         interval=timeframe,
         start_date=start_ms,
+        drop_incomplete=True,
+        keep_time_col=False,
     )
 
     if df.empty:
@@ -138,10 +141,104 @@ def get_data(symbol, timeframe):
 
 # calculates moving averages
 def apply_technicals(df, fast_ema=0, slow_ema=0):
-    df["FastEMA"] = df["Close"].ewm(span=fast_ema, adjust=False).mean()
-    df["SlowEMA"] = df["Close"].ewm(span=slow_ema, adjust=False).mean()
+    df["FastEMA"] = df["Close"].ewm(span=fast_ema, adjust=False).mean() if fast_ema > 0 else np.nan
+    df["SlowEMA"] = df["Close"].ewm(span=slow_ema, adjust=False).mean() if slow_ema > 0 else np.nan
     df["SMA50"] = df["Close"].rolling(50).mean()
     df["SMA200"] = df["Close"].rolling(200).mean()
+
+
+def calculate_wma(values, period):
+    period = max(int(period), 1)
+    weights = np.arange(1, period + 1)
+    return pd.Series(values).rolling(period).apply(
+        lambda prices: np.dot(prices, weights) / weights.sum(),
+        raw=True,
+    )
+
+
+def calculate_hma(values, period):
+    period = max(int(period), 1)
+    half_period = max(int(period / 2), 1)
+    sqrt_period = max(int(np.sqrt(period)), 1)
+    values = pd.Series(values)
+    return calculate_wma(
+        2 * calculate_wma(values, half_period) - calculate_wma(values, period),
+        sqrt_period,
+    )
+
+
+def calculate_rsi(values, period):
+    period = max(int(period), 1)
+    close = pd.Series(values)
+    delta = close.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    rsi = 100 - (100 / (1 + rs))
+    return rsi.fillna(100).where(avg_loss != 0, 100)
+
+
+def calculate_linreg(values, period):
+    period = max(int(period), 1)
+    x = np.arange(period, dtype=float)
+    x_mean = x.mean()
+    denominator = ((x - x_mean) ** 2).sum()
+
+    def _linreg_endpoint(y):
+        y_mean = y.mean()
+        slope = ((x - x_mean) * (y - y_mean)).sum() / denominator if denominator else 0.0
+        intercept = y_mean - slope * x_mean
+        return intercept + slope * (period - 1)
+
+    return pd.Series(values).rolling(period).apply(_linreg_endpoint, raw=True)
+
+
+def apply_hma_rsi_linreg_technicals(df, fast_hma=16, slow_hma=65):
+    df["HMAFast"] = calculate_hma(df["Close"], fast_hma)
+    df["HMASlow"] = calculate_hma(df["Close"], slow_hma)
+    df["RSI14"] = calculate_rsi(df["Close"], 14)
+
+
+def get_daily_linreg_condition(symbol):
+    df_daily = get_data(symbol=symbol, timeframe="1d")
+    if df_daily.empty:
+        return False, "Daily dataframe empty"
+
+    df_daily["LINREG50"] = calculate_linreg(df_daily["Close"], 50)
+    last_daily = df_daily.iloc[-1]
+    if pd.isna(last_daily.LINREG50):
+        return False, "Daily LINREG50 not ready"
+
+    condition = float(last_daily.Close) > float(last_daily.LINREG50)
+    detail = (
+        f"Daily Close: {float(last_daily.Close):.8f} | "
+        f"LINREG50: {float(last_daily.LINREG50):.8f} | Close>LINREG50: {condition}"
+    )
+    return condition, detail
+
+
+def calculate_atr(df: pd.DataFrame, period: int) -> float:
+    if period <= 0 or df.empty:
+        return 0.0
+    if not {"High", "Low", "Close"}.issubset(df.columns):
+        return 0.0
+
+    prev_close = df["Close"].shift(1)
+    tr = pd.concat(
+        [
+            (df["High"] - df["Low"]).abs(),
+            (df["High"] - prev_close).abs(),
+            (df["Low"] - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+
+    atr_series = tr.rolling(period, min_periods=period).mean()
+    if atr_series.empty or pd.isna(atr_series.iloc[-1]):
+        return 0.0
+    return float(atr_series.iloc[-1])
 
 
 # calc current pnl
@@ -202,13 +299,14 @@ def trade(timeframe, run_mode, settings=None):
         slow_ema = 0
 
         # get best backtesting results for the strategy
-        if settings.strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
+        if settings.strategy_id in ["ema_cross_with_market_phases", "ema_cross", "hma_rsi_linreg"]:
             fast_ema, slow_ema = get_backtesting_results(
                 strategy_id=settings.strategy_id, symbol=symbol, time_frame=timeframe
             )
 
             if fast_ema == 0 or slow_ema == 0:
-                msg = f"{symbol} - {settings.strategy_name} - Best EMA values missing"
+                parameter_name = "HMA" if settings.strategy_id == "hma_rsi_linreg" else "EMA"
+                msg = f"{symbol} - {settings.strategy_name} - Best {parameter_name} values missing"
                 msg = telegram_prefix_sl + msg
                 print(msg)
                 telegram.send_telegram_message(
@@ -224,6 +322,8 @@ def trade(timeframe, run_mode, settings=None):
             continue  # Skip to the next iteration
 
         apply_technicals(df, fast_ema, slow_ema)
+        if settings.strategy_id == "hma_rsi_linreg":
+            apply_hma_rsi_linreg_technicals(df, fast_hma=fast_ema, slow_hma=slow_ema)
 
         # last row
         lastrow = df.iloc[-1]
@@ -234,19 +334,75 @@ def trade(timeframe, run_mode, settings=None):
         # Current PnL
         current_pnl = get_current_pnl(symbol, current_price, timeframe)
 
-        # if using stop loss
+        df_pos_symbol = df_sell.loc[df_sell["Symbol"] == symbol]
+        if df_pos_symbol.empty:
+            continue
+        pos_row = df_pos_symbol.iloc[0]
+
+        buy_price_raw = pos_row.get("Buy_Price", 0)
+        highest_raw = pos_row.get("Highest_Price_Since_Entry", 0)
+        trail_stop_raw = pos_row.get("Trail_Stop_ATR", 0)
+
+        buy_price = 0.0 if pd.isna(buy_price_raw) else float(buy_price_raw)
+        existing_highest = 0.0 if pd.isna(highest_raw) else float(highest_raw)
+        existing_trail_stop = 0.0 if pd.isna(trail_stop_raw) else float(trail_stop_raw)
+
+        atr_trailing_enabled = bool(settings.atr_trailing_enabled)
+        atr_period = int(settings.atr_period)
+        atr_multiplier = float(settings.atr_multiplier)
+        atr_activation_pnl = float(settings.atr_activation_pnl)
+        atr_value = calculate_atr(df, atr_period=atr_period)
+
+        base_highest = existing_highest if existing_highest > 0 else buy_price
+        highest_price_since_entry = max(base_highest, float(current_price))
+
+        hard_stop_price = (
+            float(buy_price) * (1 - (float(settings.stop_loss) / 100))
+            if float(settings.stop_loss) > 0 and float(buy_price) > 0
+            else 0.0
+        )
+
+        trailing_started = existing_trail_stop > 0
+        can_enable_trailing = (
+            atr_trailing_enabled
+            and atr_multiplier > 0
+            and atr_value > 0
+            and (trailing_started or current_pnl >= atr_activation_pnl)
+        )
+
+        trail_stop_atr = existing_trail_stop if can_enable_trailing else 0.0
+        if can_enable_trailing:
+            calc_trail_stop = highest_price_since_entry - (atr_multiplier * atr_value)
+            calc_trail_stop = max(0.0, float(calc_trail_stop))
+            trail_stop_atr = max(float(trail_stop_atr), float(calc_trail_stop))
+
+        active_stop_price = hard_stop_price
+        if trail_stop_atr > 0:
+            active_stop_price = max(float(active_stop_price), float(trail_stop_atr))
+
+        database.update_position_risk(
+            bot=timeframe,
+            symbol=symbol,
+            highest_price_since_entry=highest_price_since_entry,
+            trail_stop_atr=trail_stop_atr,
+        )
+
+        # if using stop loss (hard SL and/or ATR trailing stop)
         sell_stop_loss = False
-        if settings.stop_loss > 0:
-            sell_stop_loss = current_pnl <= -settings.stop_loss
+        stop_loss_reason = f"Stop loss {settings.stop_loss}%"
+        if active_stop_price > 0:
+            sell_stop_loss = float(current_price) <= float(active_stop_price)
+            if sell_stop_loss and trail_stop_atr > 0 and abs(active_stop_price - trail_stop_atr) < 1e-12:
+                stop_loss_reason = (
+                    f"ATR Trailing Stop - ATR({atr_period}) x {atr_multiplier:.2f} "
+                    f"| Trigger: {active_stop_price:.8f}"
+                )
 
         # if using take profit 1
         sell_tp_1 = False
         if settings.take_profit_1 > 0:
-            # check if tp1 occurred already
-            # Filter
-            df_tp1 = df_sell.loc[df_sell["Symbol"] == symbol, "Take_Profit_1"]
-            # Extract the single value from the result (assuming only one row matches)
-            tp1_occurred = df_tp1.values[0]
+            tp1_raw = pos_row.get("Take_Profit_1", 0)
+            tp1_occurred = 0 if pd.isna(tp1_raw) else int(tp1_raw)
             # if not occurred
             if tp1_occurred == 0:
                 sell_tp_1 = current_pnl >= settings.take_profit_1
@@ -254,11 +410,8 @@ def trade(timeframe, run_mode, settings=None):
         # if using take profit 2
         sell_tp_2 = False
         if settings.take_profit_2 > 0:
-            # check if tp2 occurred already
-            # Filter
-            df_tp2 = df_sell.loc[df_sell["Symbol"] == symbol, "Take_Profit_2"]
-            # Extract the single value from the result (assuming only one row matches)
-            tp2_occurred = df_tp2.values[0]
+            tp2_raw = pos_row.get("Take_Profit_2", 0)
+            tp2_occurred = 0 if pd.isna(tp2_raw) else int(tp2_raw)
             # if not occurred
             if tp2_occurred == 0:
                 sell_tp_2 = current_pnl >= settings.take_profit_2
@@ -266,11 +419,8 @@ def trade(timeframe, run_mode, settings=None):
         # if using take profit 3
         sell_tp_3 = False
         if settings.take_profit_3 > 0:
-            # check if tp3 occurred already
-            # Filter
-            df_tp3 = df_sell.loc[df_sell["Symbol"] == symbol, "Take_Profit_3"]
-            # Extract the single value from the result (assuming only one row matches)
-            tp3_occurred = df_tp3.values[0]
+            tp3_raw = pos_row.get("Take_Profit_3", 0)
+            tp3_occurred = 0 if pd.isna(tp3_raw) else int(tp3_raw)
             # if not occurred
             if tp3_occurred == 0:
                 sell_tp_3 = current_pnl >= settings.take_profit_3
@@ -278,11 +428,8 @@ def trade(timeframe, run_mode, settings=None):
         # if using take profit 3
         sell_tp_4 = False
         if settings.take_profit_4 > 0:
-            # check if tp4 occurred already
-            # Filter
-            df_tp4 = df_sell.loc[df_sell["Symbol"] == symbol, "Take_Profit_4"]
-            # Extract the single value from the result (assuming only one row matches)
-            tp4_occurred = df_tp4.values[0]
+            tp4_raw = pos_row.get("Take_Profit_4", 0)
+            tp4_occurred = 0 if pd.isna(tp4_raw) else int(tp4_raw)
             # if not occurred
             if tp4_occurred == 0:
                 sell_tp_4 = current_pnl >= settings.take_profit_4
@@ -296,6 +443,8 @@ def trade(timeframe, run_mode, settings=None):
             sell_condition = (lastrow.Close < lastrow.SMA50) or (
                 lastrow.Close < lastrow.SMA200
             )
+        elif settings.strategy_id == "hma_rsi_linreg":
+            sell_condition = crossover(df.HMASlow, df.HMAFast)
 
         # set current PnL
         current_price = lastrow.Close
@@ -320,7 +469,7 @@ def trade(timeframe, run_mode, settings=None):
                     bot=timeframe,
                     fast_ema=fast_ema,
                     slow_ema=slow_ema,
-                    reason=f"Stop loss {settings.stop_loss}%",
+                    reason=stop_loss_reason,
                 )
                 continue
 
@@ -402,6 +551,11 @@ def trade(timeframe, run_mode, settings=None):
                     f" | FastEMA: {fast_ema_value:.8f} | SlowEMA: {slow_ema_value:.8f} "
                     f"| Slow>Fast: {slow_ema_value > fast_ema_value}"
                 )
+            elif settings.strategy_id == "hma_rsi_linreg":
+                ema_debug = (
+                    f" | HMA{fast_ema}: {float(lastrow.HMAFast):.8f} | HMA{slow_ema}: {float(lastrow.HMASlow):.8f} "
+                    f"| HMA{fast_ema}<HMA{slow_ema} cross: {crossover(df.HMASlow, df.HMAFast)}"
+                )
 
             msg = (
                 f"{symbol} - {best_emas} {settings.strategy_name} - Sell condition not fulfilled"
@@ -419,13 +573,14 @@ def trade(timeframe, run_mode, settings=None):
         slow_ema = 0
 
         # get best backtesting results for the strategy
-        if settings.strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
+        if settings.strategy_id in ["ema_cross_with_market_phases", "ema_cross", "hma_rsi_linreg"]:
             fast_ema, slow_ema = get_backtesting_results(
                 strategy_id=settings.strategy_id, symbol=symbol, time_frame=timeframe
             )
 
             if fast_ema == 0 or slow_ema == 0:
-                msg = f"{symbol} - {settings.strategy_name} - Best EMA values missing"
+                parameter_name = "HMA" if settings.strategy_id == "hma_rsi_linreg" else "EMA"
+                msg = f"{symbol} - {settings.strategy_name} - Best {parameter_name} values missing"
                 msg = telegram_prefix_sl + msg
                 print(msg)
                 telegram.send_telegram_message(
@@ -444,6 +599,8 @@ def trade(timeframe, run_mode, settings=None):
             continue
 
         apply_technicals(df, fast_ema, slow_ema)
+        if settings.strategy_id == "hma_rsi_linreg":
+            apply_hma_rsi_linreg_technicals(df, fast_hma=fast_ema, slow_hma=slow_ema)
 
         # last row
         lastrow = df.iloc[-1]
@@ -484,6 +641,14 @@ def trade(timeframe, run_mode, settings=None):
         elif settings.strategy_id in ["ema_cross"]:
             buy_condition = crossover(df.FastEMA, df.SlowEMA)
 
+        elif settings.strategy_id == "hma_rsi_linreg":
+            daily_linreg_condition, daily_linreg_detail = get_daily_linreg_condition(symbol)
+            buy_condition = (
+                crossover(df.HMAFast, df.HMASlow)
+                and float(lastrow.RSI14) > 52
+                and daily_linreg_condition
+            )
+
         if buy_condition:
             binance.create_buy_order(
                 symbol=symbol, bot=timeframe, fast_ema=fast_ema, slow_ema=slow_ema
@@ -494,6 +659,13 @@ def trade(timeframe, run_mode, settings=None):
             )
 
             msg = f"{symbol} - {best_emas} {settings.strategy_name} - Buy condition not fulfilled"
+            if settings.strategy_id == "hma_rsi_linreg":
+                msg = (
+                    f"{symbol} - {fast_ema}/{slow_ema} {settings.strategy_name} - Buy condition not fulfilled"
+                    f" | HMA{fast_ema}>HMA{slow_ema} cross: {crossover(df.HMAFast, df.HMASlow)}"
+                    f" | RSI14: {float(lastrow.RSI14):.2f} > 52: {float(lastrow.RSI14) > 52}"
+                    f" | {daily_linreg_detail}"
+                )
             msg = telegram_prefix_sl + msg
             print(msg)
             telegram.send_telegram_message(telegram_token, "", msg)

@@ -4,8 +4,11 @@ import sys
 import logging
 from html import escape as _html_escape
 
+from utils.env_loader import load_env_file
 import utils.database as database
 # from utils.database import get_setting
+
+load_env_file(override=True)
 
 # log file to store error messages
 log_filename = "main.log"

@@ -49,6 +49,7 @@ pip-log.txt
 pip-delete-this-directory.txt
 
 # Unit test / coverage reports
+tests/
 htmlcov/
 .tox/
 .nox/
@@ -147,3 +148,4 @@ utils/db_scripts/db_scripts_2023-09-15_20230919154650.sql
 
 Top_performers_USDT.txt
 /static/backtest_results
+Top_performers_USDC.txt

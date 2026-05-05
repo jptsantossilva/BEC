@@ -265,7 +265,11 @@ def create_buy_order(symbol: str, bot: str, fast_ema: int = 0, slow_ema: int = 0
         
             if settings.strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
                 strategy_name = str(fast_ema)+"/"+str(slow_ema)+" "+settings.strategy_name
+            elif settings.strategy_id == "hma_rsi_linreg":
+                strategy_name = str(fast_ema)+"/"+str(slow_ema)+" "+settings.strategy_name
             elif settings.strategy_id in ["market_phases"]:
+                strategy_name = settings.strategy_name
+            else:
                 strategy_name = settings.strategy_name
 
             if convert_all_balance:
@@ -321,6 +325,7 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percenta
 
     try:
         symbol_only, symbol_trade_against = separate_symbol_and_trade_against(symbol)
+        df_pos = pd.DataFrame()
         # get balance
         balance_qty = get_symbol_balance(symbol=symbol_only)  
         
@@ -415,6 +420,48 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percenta
                                 amount=order_avg_price*order_qty
                             )
     
+            stop_type = "other"
+            if reason.startswith("ATR Trailing Stop"):
+                stop_type = "atr_trailing"
+            elif reason.startswith("Stop loss"):
+                stop_type = "hard_sl"
+            elif reason.startswith("Take-Profit Level"):
+                stop_type = "tp"
+            elif reason.startswith("Forced Sale"):
+                stop_type = "forced_sale"
+            elif reason == "":
+                stop_type = "strategy"
+
+            trail_stop_atr_at_exit = 0.0
+            highest_price_since_entry_at_exit = 0.0
+            stop_trigger_price = 0.0
+            atr_params_at_exit = ""
+            buy_price_for_stop = 0.0
+
+            if not df_pos.empty:
+                if "Trail_Stop_ATR" in df_pos.columns:
+                    trail_raw = df_pos["Trail_Stop_ATR"].iloc[0]
+                    trail_stop_atr_at_exit = 0.0 if pd.isna(trail_raw) else float(trail_raw)
+                if "Highest_Price_Since_Entry" in df_pos.columns:
+                    high_raw = df_pos["Highest_Price_Since_Entry"].iloc[0]
+                    highest_price_since_entry_at_exit = 0.0 if pd.isna(high_raw) else float(high_raw)
+                if "Buy_Price" in df_pos.columns:
+                    buy_raw = df_pos["Buy_Price"].iloc[0]
+                    buy_price_for_stop = 0.0 if pd.isna(buy_raw) else float(buy_raw)
+
+            if stop_type in {"hard_sl", "atr_trailing"}:
+                atr_params_at_exit = (
+                    f'{{"period":{int(settings.atr_period)},'
+                    f'"multiplier":{float(settings.atr_multiplier)},'
+                    f'"activation_pnl":{float(settings.atr_activation_pnl)}}}'
+                )
+                if stop_type == "atr_trailing" and trail_stop_atr_at_exit > 0:
+                    stop_trigger_price = trail_stop_atr_at_exit
+                elif stop_type == "hard_sl" and buy_price_for_stop > 0 and float(settings.stop_loss) > 0:
+                    stop_trigger_price = buy_price_for_stop * (1 - (float(settings.stop_loss) / 100))
+                if stop_trigger_price <= 0:
+                    stop_trigger_price = order_avg_price
+
             # add to orders database table
             pnl_value, pnl_perc = database.add_order_sell(
                 sell_order_id = sell_order_id,
@@ -427,7 +474,12 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percenta
                 ema_fast = fast_ema,
                 ema_slow = slow_ema,
                 exit_reason = reason,
-                sell_percentage = percentage
+                sell_percentage = percentage,
+                stop_type = stop_type,
+                stop_trigger_price = stop_trigger_price,
+                trail_stop_atr_at_exit = trail_stop_atr_at_exit,
+                highest_price_since_entry_at_exit = highest_price_since_entry_at_exit,
+                atr_params_at_exit = atr_params_at_exit,
             )            
 
             # determine the alert type based on the value of pnl_value
@@ -438,7 +490,11 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percenta
 
             if settings.strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
                 strategy_name = str(fast_ema)+"/"+str(slow_ema)+" "+settings.strategy_name
+            elif settings.strategy_id == "hma_rsi_linreg":
+                strategy_name = str(fast_ema)+"/"+str(slow_ema)+" "+settings.strategy_name
             elif settings.strategy_id in ["market_phases"]:
+                strategy_name = settings.strategy_name
+            else:
                 strategy_name = settings.strategy_name
             
             if convert_all_balance:

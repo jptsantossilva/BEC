@@ -18,7 +18,7 @@ curl -fsSL https://raw.githubusercontent.com/jptsantossilva/BEC/main/.env.exampl
 
 nano .env
 ```
-Fill `.env` with your Binance and Telegram credentials.
+Fill `.env` with your Binance, Telegram, and OpenAI credentials.
 
 ```ini
 # Binance API
@@ -31,7 +31,13 @@ telegram_token_closed_positions=
 telegram_token_errors=
 telegram_token_main=
 telegram_token_signals=
+
+# OpenAI
+OPENAI_API_KEY=
+BEC_OPENAI_MODEL="gpt-5.5"
 ```
+
+`OPENAI_API_KEY` is required for AI analysis in Backtesting Results. `BEC_OPENAI_MODEL` is optional and defaults to `gpt-5.5`.
 ```bash
 sudo docker compose pull
 sudo docker compose up -d
@@ -101,12 +107,22 @@ Security note:
 - Trades against stable pairs (USDT/USDC) or BTC.
 - Daily market-phase ranking to select symbols in accumulation or bullish conditions.
 - Backtesting across all available strategies and timeframes to select the best performers.
+- Backtesting approval rules, Strategy Quality Score, and AI analysis for selected backtests using stats, config, trades, and quality score context.
+- Backtesting reports with performance charts, detailed statistics, configuration, trades, HTML download, and PDF export.
+- Backtesting risk controls including hard stop, ATR trailing stop, take-profit configuration, and exit reason tracking.
 - Auto-scheduling of jobs (bot runs, market phase rebuilds, signals) via the built-in scheduler.
 - Web dashboard with realized/unrealized PnL, balances, top performers, backtesting results, and settings.
 - Telegram notifications for bot execution, position changes, and warnings.
 - Blacklist management to exclude symbols from trading.
 
 ![dashboard](https://raw.githubusercontent.com/jptsantossilva/BEC/main/docs/dashboard.png)
+
+Backtesting report (BTCUSDC, 1d):
+
+![backtesting report](https://raw.githubusercontent.com/jptsantossilva/BEC/main/docs/backtesting-report.png)
+
+Open the full interactive example:
+[BTCUSDC-ema_cross_with_market_phases-1d.html](https://raw.githubusercontent.com/jptsantossilva/BEC/main/docs/BTCUSDC-ema_cross_with_market_phases-1d.html)
 
 ## Disclaimer
 This software is for educational purposes only. Use the software at **your own risk**. The authors and all affiliates assume **no responsibility for your trading results**. **Do not risk money that you are afraid to lose**. There might be **bugs** in the code. This software does not come with **any warranty**.
