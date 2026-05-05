@@ -351,7 +351,7 @@ def trade(timeframe, run_mode, settings=None):
         atr_period = int(settings.atr_period)
         atr_multiplier = float(settings.atr_multiplier)
         atr_activation_pnl = float(settings.atr_activation_pnl)
-        atr_value = calculate_atr(df, atr_period=atr_period)
+        atr_value = calculate_atr(df, period=atr_period)
 
         base_highest = existing_highest if existing_highest > 0 else buy_price
         highest_price_since_entry = max(base_highest, float(current_price))
