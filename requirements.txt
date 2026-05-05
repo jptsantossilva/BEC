@@ -108,7 +108,7 @@ pandas==2.3.3
     #   bokeh
     #   streamlit
     #   ta
-pillow==12.1.0
+pillow==12.2.0
     # via
     #   bokeh
     #   captcha
