@@ -122,7 +122,7 @@ Backtesting report (BTCUSDC, 1d):
 ![backtesting report](https://raw.githubusercontent.com/jptsantossilva/BEC/main/docs/backtesting-report.png)
 
 Open the full interactive example:
-[BTCUSDC-ema_cross_with_market_phases-1d.html](https://raw.githubusercontent.com/jptsantossilva/BEC/main/docs/BTCUSDC-ema_cross_with_market_phases-1d.html)
+[BTCUSDC-ema_cross_with_market_phases-1d.html](https://jptsantossilva.github.io/BEC/BTCUSDC-ema_cross_with_market_phases-1d.html)
 
 ## Disclaimer
 This software is for educational purposes only. Use the software at **your own risk**. The authors and all affiliates assume **no responsibility for your trading results**. **Do not risk money that you are afraid to lose**. There might be **bugs** in the code. This software does not come with **any warranty**.
