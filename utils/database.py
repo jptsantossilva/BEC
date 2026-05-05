@@ -1,5 +1,6 @@
 import math
 import os
+import secrets
 import shutil
 import sqlite3
 import threading
@@ -213,6 +214,29 @@ def set_setting(name, value):
         )
         connection.commit()
 
+    except sqlite3.Error as e:
+        print(f"Database error: {e}")
+        raise
+
+
+def get_or_create_secret_setting(name, length=48, comment=""):
+    connection = _get_conn()
+
+    try:
+        cursor = connection.cursor()
+        cursor.execute("SELECT value FROM Settings WHERE name = ?", (name,))
+        row = cursor.fetchone()
+        if row and row[0]:
+            return str(row[0])
+
+        value = secrets.token_urlsafe(length)
+        cursor.execute(
+            "INSERT INTO Settings (name, value, comment) VALUES (?, ?, ?) "
+            "ON CONFLICT(name) DO UPDATE SET value = excluded.value, comment = excluded.comment",
+            (name, value, comment),
+        )
+        connection.commit()
+        return value
     except sqlite3.Error as e:
         print(f"Database error: {e}")
         raise

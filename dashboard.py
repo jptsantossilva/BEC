@@ -1,6 +1,7 @@
 
 import os
 import time
+import hashlib
 
 import streamlit as st
 
@@ -12,8 +13,11 @@ from streamlit_authenticator.utilities.exceptions import LoginError
 import update
 import utils.config as config
 import utils.database as database
+from utils.env_loader import load_env_file
 import utils.general as general
 import utils.telegram as telegram
+
+load_env_file(override=True)
 
 st.set_page_config(
     page_title="BEC App",
@@ -56,8 +60,13 @@ if "logout" not in st.session_state:
 ROLES = [None, "Trading", "Market Analysis", "Admin"]
 
 # constants (put near the top, once)
-COOKIE_NAME = "dashboard_cookie_name"
-COOKIE_KEY = "dashboard_cookie_key"
+COOKIE_NAME = os.getenv("BEC_DASHBOARD_COOKIE_NAME", "dashboard_cookie_name")
+COOKIE_KEY = database.get_or_create_secret_setting(
+    "dashboard_cookie_key",
+    length=48,
+    comment="Auto-generated secret used to sign dashboard login cookies.",
+)
+COOKIE_SIGNING_KEY = hashlib.sha256(COOKIE_KEY.encode("utf-8")).hexdigest()
 
 
 def logout():
@@ -97,8 +106,14 @@ def check_app_version():
         app_version = last_date
     else:
         app_version = "App version not found"
-    st.sidebar.caption(
-        f"**BEC** - {trade_against} - Version {app_version}"
+    st.sidebar.markdown(
+        f"""
+        <div style="line-height:1.15; margin-top:0.15rem;">
+            <div style="font-size:0.82rem; color:rgba(49, 51, 63, 0.6);">BEC - {trade_against}</div>
+            <div style="font-size:0.78rem; color:rgba(49, 51, 63, 0.6); margin-top:0.08rem;">Version {app_version}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
     def _running_in_docker() -> bool:
@@ -342,7 +357,7 @@ def set_authentication():
     authenticator = stauth.Authenticate(
         credentials=st.session_state["credentials"],
         cookie_name=COOKIE_NAME,
-        key=COOKIE_KEY,
+        cookie_key=COOKIE_SIGNING_KEY,
         cookie_expiry_days=30,
     )
 
@@ -355,7 +370,10 @@ def set_authentication():
             authenticator.cookie_manager.delete(COOKIE_NAME, path="/")  # extra safety
         except Exception:
             pass
+        for key in ("authentication_status", "username", "name", "role"):
+            st.session_state[key] = None
         st.session_state["logout"] = False
+        st.rerun()
 
     # Centered login column for better UX
     left_col, center_col, right_col = st.columns([1, 1, 1])

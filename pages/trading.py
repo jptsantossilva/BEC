@@ -642,7 +642,7 @@ def settings():
                 options=["USDC","USDT","BTC"], 
                 key="trade_against", 
                 on_change=on_ta, 
-                # width=200,
+                width=200,
                 )
             
             # Max open positions
@@ -655,7 +655,7 @@ def settings():
                 step=1, 
                 key="max_number_of_open_positions", 
                 on_change=on_max, 
-                # width=200,
+                width=200,
                 )
 
             # Min size
@@ -676,7 +676,7 @@ def settings():
                 label="Minimum Position Size", 
                 key="min_position_size", 
                 on_change=on_min,
-                # width=200, 
+                width=200, 
                 **min_kwargs)
 
         # Top performers & Tradable ratio
@@ -688,7 +688,7 @@ def settings():
                 min_value=0, max_value=500, step=5,
                 key="trade_top_performance",
                 on_change=lambda: config.update_setting("trade_top_performance", st.session_state.trade_top_performance),
-                # width=400
+                width=635
             )
             
             if "tradable_balance_ratio" not in st.session_state:
@@ -700,7 +700,7 @@ def settings():
                 step=1, 
                 format="%d%%", key="tradable_balance_ratio",
                 on_change=lambda: config.update_setting("tradable_balance_ratio", st.session_state.tradable_balance_ratio/100),
-                # width=400
+                width=635
             )
 
         # st.space()
@@ -862,9 +862,12 @@ def settings():
             df = database.get_all_locked_values()
             df_sel = df.copy()
             df_sel.insert(0, "Select", False)
-            edited = st.data_editor(df_sel, hide_index=True,
-                                    column_config={"Select": st.column_config.CheckboxColumn(), "Id": None},
-                                    disabled=["Bot","Symbol","Locked_Amount","Locked_At"])
+            edited = st.data_editor(
+                    df_sel, hide_index=True,
+                    width="content",
+                    column_config={"Select": st.column_config.CheckboxColumn(), "Id": None},
+                    disabled=["Bot","Symbol","Locked_Amount","Locked_At"]
+                )
             picked = edited[edited.Select]
             if st.button("Unlock Selected", disabled=picked.empty):
                 for _id in picked.Id.to_list():
