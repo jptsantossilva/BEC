@@ -63,15 +63,37 @@ def get_backtest_filename(row, file_type):
     return f"{strategy_id} - {time_frame} - {symbol}.{file_type}"
 
 
+def get_backtest_filename_candidates(row, file_type):
+    strategy_id = str(row["Strategy_Id"])
+    time_frame = row["Time_Frame"]
+    symbol = row["Symbol"]
+    strategy_ids = [strategy_id, strategy_id[:12], strategy_id[:11]]
+    candidates = []
+    for candidate_strategy_id in strategy_ids:
+        if not candidate_strategy_id:
+            continue
+        filename = f"{candidate_strategy_id} - {time_frame} - {symbol}.{file_type}"
+        if filename not in candidates:
+            candidates.append(filename)
+    return candidates
+
+
 def get_backtest_file_path(row, file_type):
-    return os.path.join(FOLDER_BACKTEST_RESULTS, get_backtest_filename(row, file_type))
+    canonical_path = os.path.join(
+        FOLDER_BACKTEST_RESULTS, get_backtest_filename(row, file_type)
+    )
+    for filename in get_backtest_filename_candidates(row, file_type):
+        file_path = os.path.join(FOLDER_BACKTEST_RESULTS, filename)
+        if os.path.exists(file_path):
+            return file_path
+    return canonical_path
 
 
 def get_backtest_static_url(row, file_type):
     file_path = get_backtest_file_path(row, file_type)
     if os.path.exists(file_path):
         return os.path.join(
-            "app", FOLDER_BACKTEST_RESULTS, get_backtest_filename(row, file_type)
+            "app", FOLDER_BACKTEST_RESULTS, os.path.basename(file_path)
         )
     return ""
 
@@ -822,6 +844,183 @@ def build_selected_backtest_row(strategy_id, symbol, timeframe):
     )
 
 
+def get_strategy_backtest_optimize(strategy_id):
+    df_strategy = database.get_strategy_by_id(str(strategy_id).strip())
+    if df_strategy.empty:
+        return False
+    return bool(int(df_strategy.iloc[0]["Backtest_Optimize"]))
+
+
+def build_backtesting_job(row):
+    return {
+        "strategy_id": str(row["Strategy_Id"]).strip(),
+        "symbol": str(row["Symbol"]).strip().upper(),
+        "timeframe": str(row["Time_Frame"]).strip(),
+        "optimize": get_strategy_backtest_optimize(row["Strategy_Id"]),
+    }
+
+
+def enqueue_backtesting_rows(rows):
+    jobs = [build_backtesting_job(row) for row in rows]
+    return database.enqueue_backtesting_jobs(jobs)
+
+
+def get_static_log_url(log_path):
+    if not log_path:
+        return ""
+    normalized = str(log_path).replace("\\", "/")
+    if os.path.exists(normalized):
+        return os.path.join("app", normalized)
+    return ""
+
+
+def tail_text_file(file_path, max_chars=12000):
+    if not file_path or not os.path.exists(file_path):
+        return ""
+    with open(file_path, "r", encoding="utf-8", errors="replace") as file:
+        content = file.read()
+    return content[-max_chars:]
+
+
+@st.fragment(run_every=3)
+def render_backtesting_jobs_status():
+    counts = database.get_backtesting_job_counts()
+    count_map = (
+        dict(zip(counts["status"], counts["count"])) if not counts.empty else {}
+    )
+    jobs = database.get_backtesting_jobs(limit=50)
+    queued = int(count_map.get("queued", 0))
+    running = int(count_map.get("running", 0))
+    completed = int(count_map.get("completed", 0))
+    failed = int(count_map.get("failed", 0))
+    queue_summary = (
+        f"Backtesting Queue: {queued} queued | {running} running | "
+        f"{completed} completed | {failed} failed"
+    )
+
+    st.subheader("Backtesting Queue")
+
+    if jobs.empty:
+        st.caption(queue_summary.replace("Backtesting Queue: ", ""))
+        return
+
+    running_jobs = jobs[jobs["status"] == "running"]
+    if not running_jobs.empty:
+        current_job = running_jobs.iloc[0]
+        st.status(
+            f"Running backtest job #{current_job['id']}: "
+            f"{current_job['strategy_id']} - {current_job['symbol']} - {current_job['timeframe']}",
+            state="running",
+            expanded=False,
+        )
+    elif queued > 0:
+        st.status(
+            f"Waiting for jobs_runner to start {queued} queued backtesting job(s)...",
+            state="running",
+            expanded=False,
+        )
+
+    has_active_jobs = queued > 0 or running > 0 or failed > 0
+    with st.expander(queue_summary.replace("Backtesting Queue: ", ""), expanded=has_active_jobs):
+        progress_batch_id = None
+        if not running_jobs.empty:
+            progress_batch_id = str(running_jobs.iloc[0]["batch_id"])
+        elif queued > 0:
+            queued_jobs = jobs[jobs["status"] == "queued"].copy()
+            if not queued_jobs.empty:
+                queued_jobs = queued_jobs.sort_values(["created_at", "id"], ascending=[True, True])
+                progress_batch_id = str(queued_jobs.iloc[0]["batch_id"])
+
+        if progress_batch_id:
+            batch_counts = database.get_backtesting_job_counts_by_batch(progress_batch_id)
+            batch_count_map = (
+                dict(zip(batch_counts["status"], batch_counts["count"]))
+                if not batch_counts.empty
+                else {}
+            )
+            progress_queued = int(batch_count_map.get("queued", 0))
+            progress_running = int(batch_count_map.get("running", 0))
+            progress_completed = int(batch_count_map.get("completed", 0))
+            progress_failed = int(batch_count_map.get("failed", 0))
+        else:
+            progress_queued = queued
+            progress_running = running
+            progress_completed = completed
+            progress_failed = failed
+
+        total_jobs = progress_queued + progress_running + progress_completed + progress_failed
+        processed_jobs = progress_completed + progress_failed
+        progress_value = processed_jobs / total_jobs if total_jobs else 0
+        progress_label = (
+            f"{processed_jobs}/{total_jobs} processed "
+            f"({progress_value:.0%})"
+        )
+        if progress_batch_id:
+            progress_label = f"{progress_label} for current batch"
+        st.progress(
+            progress_value,
+            text=progress_label,
+        )
+        st.caption("Most recent 50 queued, running and completed backtesting jobs.")
+
+        jobs_display = jobs.copy()
+        jobs_display["Target"] = (
+            jobs_display["strategy_id"].astype(str)
+            + " - "
+            + jobs_display["symbol"].astype(str)
+            + " - "
+            + jobs_display["timeframe"].astype(str)
+        )
+        jobs_display["optimize"] = jobs_display["optimize"].astype(bool)
+        jobs_display["Log"] = jobs_display["log_path"].apply(get_static_log_url)
+        jobs_display = jobs_display[
+            [
+                "id",
+                "batch_id",
+                "Target",
+                "optimize",
+                "status",
+                "created_at",
+                "started_at",
+                "finished_at",
+                "return_code",
+                "Log",
+                "error_message",
+            ]
+        ]
+
+        st.dataframe(
+            jobs_display,
+            width="content",
+            hide_index=True,
+            height=260,
+            column_config={
+                "id": st.column_config.NumberColumn("Job", format="%d"),
+                "batch_id": st.column_config.TextColumn("Batch"),
+                "Target": st.column_config.TextColumn("Backtest"),
+                "optimize": st.column_config.CheckboxColumn("Optimize"),
+                "status": st.column_config.TextColumn("Status"),
+                "created_at": st.column_config.TextColumn("Created"),
+                "started_at": st.column_config.TextColumn("Started"),
+                "finished_at": st.column_config.TextColumn("Finished"),
+                "return_code": st.column_config.NumberColumn("Return", format="%d"),
+                "Log": st.column_config.LinkColumn("Log", display_text="Open"),
+                "error_message": st.column_config.TextColumn("Error"),
+            },
+        )
+
+        active_jobs = jobs[jobs["status"].isin(["running", "failed"])].copy()
+        active_jobs = active_jobs[active_jobs["log_path"].fillna("") != ""]
+        if not active_jobs.empty:
+            latest_job = active_jobs.iloc[0]
+            with st.expander(f"Latest job log: #{latest_job['id']} {latest_job['status']}", expanded=False):
+                st.code(
+                    tail_text_file(str(latest_job["log_path"]))
+                    or "Log file not available yet.",
+                    language="text",
+                )
+
+
 def build_ai_analysis_export_payload(row, model, selected_csv_path, context, analysis):
     return {
         "exported_at": datetime.now().isoformat(timespec="seconds"),
@@ -1063,32 +1262,34 @@ def restore_multiselect_filter(
     restore_filter_widget(state_key, widget_key, saved_values)
 
 
-def set_top_performer_symbols():
-    persist_filter_widget(
-        "bt_results_saved_use_top_performers", "_bt_results_use_top_performers"
-    )
-    if not st.session_state.get("bt_results_saved_use_top_performers"):
-        return
-
+def load_top_performer_symbols():
     df_top_perf = database.get_all_symbols_by_market_phase()
     top_perf_symbol_list = (
         df_top_perf["Symbol"].dropna().astype(str).str.upper().to_list()
     )
+    if not top_perf_symbol_list:
+        st.session_state["bt_results_top_performers_message"] = (
+            "info",
+            "No top performers found.",
+        )
+        return
+
     st.session_state["bt_results_saved_symbol"] = top_perf_symbol_list
     st.session_state["_bt_results_symbol"] = top_perf_symbol_list
+    st.session_state["bt_results_top_performers_message"] = (
+        "success",
+        f"Loaded {len(top_perf_symbol_list)} top performer symbol(s).",
+    )
 
 
 migrate_filter_state("bt_results_strategy", "bt_results_saved_strategy")
 migrate_filter_state("bt_results_timeframe", "bt_results_saved_timeframe")
 migrate_filter_state("bt_results_symbol", "bt_results_saved_symbol")
-migrate_filter_state(
-    "bt_results_use_top_performers", "bt_results_saved_use_top_performers"
-)
 
+df_bt_results = database.get_all_backtesting_results()
 
-col_br1, col_br2, col_br3 = st.columns(3)
-
-with col_br1:
+primary_filter_col1, primary_filter_col2 = st.columns(2)
+with primary_filter_col1:
     strategy_options = list(dict_strategies.keys())
     restore_multiselect_filter(
         "bt_results_saved_strategy",
@@ -1106,12 +1307,7 @@ with col_br1:
         ),
     )
 
-df_bt_results = database.get_all_backtesting_results()
-
-with col_br3:
-    pass
-
-with col_br2:
+with primary_filter_col2:
     list_timeframe = ["1d", "4h", "1h"]
     restore_multiselect_filter(
         "bt_results_saved_timeframe",
@@ -1131,32 +1327,31 @@ with col_br2:
 # search by symbol
 list_symbols = sorted(df_bt_results["Symbol"].dropna().astype(str).unique().tolist())
 
-col_br_symbol1, col_br_symbol2 = st.columns([0.25, 0.5])
-with col_br_symbol2:
+symbol_filter_col, top_performers_col = st.columns([0.5, 0.5])
+with top_performers_col:
     st.write('<div style="height: 35px;"></div>', unsafe_allow_html=True)
-    restore_filter_widget(
-        "bt_results_saved_use_top_performers",
-        "_bt_results_use_top_performers",
-        False,
-    )
-
-    if st.checkbox(
-        "Use Top Performers",
-        key="_bt_results_use_top_performers",
-        on_change=set_top_performer_symbols,
+    if st.button(
+        "Load Top Performers",
+        key="bt_results_load_top_performers",
+        icon=":material/add:",
     ):
-        df_top_perf = database.get_all_symbols_by_market_phase()
-        top_perf_symbol_list = (
-            df_top_perf["Symbol"].dropna().astype(str).str.upper().to_list()
-        )
-        list_symbols = sorted(set(list_symbols).union(top_perf_symbol_list))
+        load_top_performer_symbols()
+        st.rerun()
 
     if "bt_results_saved_symbol" in st.session_state:
         list_symbols = sorted(
             set(list_symbols).union(st.session_state["bt_results_saved_symbol"])
         )
 
-with col_br_symbol1:
+top_performers_message = st.session_state.pop("bt_results_top_performers_message", None)
+if top_performers_message:
+    message_type, message_text = top_performers_message
+    if message_type == "success":
+        st.success(message_text)
+    else:
+        st.info(message_text)
+
+with symbol_filter_col:
     restore_multiselect_filter(
         "bt_results_saved_symbol",
         "_bt_results_symbol",
@@ -1174,15 +1369,14 @@ with col_br_symbol1:
         ),
     )
 
-col_br4, col_br5, col_br6 = st.columns(3)
-
 today = datetime.now()
 four_years_ago = today.replace(year=today.year - 4)
 
-with col_br4:
-    col_br41, col_br42 = st.columns(2)
-
-    with col_br41:
+with st.expander("Advanced filters", expanded=False):
+    date_filter_col, result_filter_col = st.columns([0.42, 0.58])
+    with date_filter_col:
+        date_start_col, date_end_col = st.columns(2)
+    with date_start_col:
         search_date_ini = st.date_input(
             label="Start date",
             value=four_years_ago,
@@ -1192,7 +1386,7 @@ with col_br4:
             key="bt_results_start_date",
         )
 
-    with col_br42:
+    with date_end_col:
         search_date_end = st.date_input(
             label="End date",
             value=today,
@@ -1202,11 +1396,30 @@ with col_br4:
             key="bt_results_end_date",
         )
 
-search_return_pct = st.checkbox(
-    "Return Percentage > 0",
-    value=False,
-    key="bt_results_return_positive",
-)
+    with result_filter_col:
+        quality_col, approved_col, return_col = st.columns([0.38, 0.38, 0.24])
+    with quality_col:
+        quality_grade_options = ["A", "B", "C", "D", "F"]
+        search_quality_grade = st.multiselect(
+            "Quality Grade",
+            options=quality_grade_options,
+            key="bt_results_quality_grade",
+        )
+
+    with approved_col:
+        search_trading_approved = st.selectbox(
+            "Trading Approved",
+            options=["All", "Approved", "Rejected"],
+            key="bt_results_trading_approved",
+        )
+
+    with return_col:
+        st.write('<div style="height: 35px;"></div>', unsafe_allow_html=True)
+        search_return_pct = st.checkbox(
+            "Return % > 0",
+            value=False,
+            key="bt_results_return_positive",
+        )
 
 df_bt_results["Backtest_Start_Date"] = pd.to_datetime(
     df_bt_results["Backtest_Start_Date"]
@@ -1221,6 +1434,15 @@ if search_timeframe:
     df_bt_results = df_bt_results[df_bt_results["Time_Frame"].isin(search_timeframe)]
 if search_return_pct:
     df_bt_results = df_bt_results[df_bt_results["Return_Perc"] > 0]
+if search_quality_grade and "Quality_Grade" in df_bt_results.columns:
+    df_bt_results = df_bt_results[
+        df_bt_results["Quality_Grade"].astype(str).str.upper().isin(search_quality_grade)
+    ]
+if search_trading_approved != "All" and "Trading_Approved" in df_bt_results.columns:
+    approved_value = 1 if search_trading_approved == "Approved" else 0
+    df_bt_results = df_bt_results[
+        df_bt_results["Trading_Approved"].fillna(0).astype(int) == approved_value
+    ]
 if search_date_ini and search_date_end:
     start_date = datetime(
         search_date_ini.year, search_date_ini.month, search_date_ini.day
@@ -1246,14 +1468,118 @@ df_bt_results["Return_Drawdown_Ratio"] = (
     df_bt_results["Return_Perc"] / df_bt_results["Max_Drawdown_Perc"].abs()
 ).replace([float("inf"), -float("inf")], pd.NA)
 
+
+def format_backtest_strategy_params(row):
+    def _int_label(value):
+        try:
+            if pd.isna(value):
+                return None
+        except TypeError:
+            pass
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return None
+        return str(int(numeric)) if numeric.is_integer() else f"{numeric:g}"
+
+    def _pair_label(prefix, fast, slow):
+        fast_label = _int_label(fast)
+        slow_label = _int_label(slow)
+        if fast_label is None or slow_label is None:
+            return ""
+        return f"{prefix} {fast_label}/{slow_label}"
+
+    config = {}
+    try:
+        raw_config = row.get("Backtest_Config_JSON", "")
+        config = json.loads(raw_config or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        config = {}
+
+    strategy_params = (
+        config.get("strategy_parameters", {})
+        if isinstance(config, dict)
+        else {}
+    )
+    parts = []
+
+    moving_averages = (
+        strategy_params.get("moving_averages", {})
+        if isinstance(strategy_params, dict)
+        else {}
+    )
+    if moving_averages:
+        ema_label = _pair_label(
+            "EMA",
+            moving_averages.get("ema_fast"),
+            moving_averages.get("ema_slow"),
+        )
+        if ema_label:
+            parts.append(ema_label)
+
+    hma_params = (
+        strategy_params.get("hma_rsi_linreg", {})
+        if isinstance(strategy_params, dict)
+        else {}
+    )
+    if hma_params:
+        hma_label = _pair_label(
+            "HMA",
+            hma_params.get("hma_fast"),
+            hma_params.get("hma_slow"),
+        )
+        if hma_label:
+            parts.append(hma_label)
+        rsi_period = _int_label(hma_params.get("rsi_period"))
+        if rsi_period:
+            parts.append(f"RSI {rsi_period}")
+        linreg_period = _int_label(hma_params.get("daily_linreg_period"))
+        if linreg_period:
+            parts.append(f"LINREG {linreg_period}")
+
+    market_phase = (
+        strategy_params.get("market_phase_filter", {})
+        if isinstance(strategy_params, dict)
+        else {}
+    )
+    if market_phase:
+        phase_label = _pair_label(
+            "Phase SMA",
+            market_phase.get("sma_fast"),
+            market_phase.get("sma_slow"),
+        )
+        if phase_label:
+            parts.append(phase_label)
+
+    if parts:
+        return " | ".join(parts)
+
+    fallback_label = _pair_label(
+        "Fast/Slow",
+        row.get("Ema_Fast"),
+        row.get("Ema_Slow"),
+    )
+    return fallback_label or "n/a"
+
+
+df_bt_results["Strategy_Params"] = df_bt_results.apply(
+    format_backtest_strategy_params,
+    axis=1,
+)
+if "Trading_Approved" in df_bt_results.columns:
+    df_bt_results["Trading_Approved"] = (
+        df_bt_results["Trading_Approved"].fillna(0).astype(int).astype(bool)
+    )
+
 results_columns_order = [
     "Symbol",
     "Strategy_Name",
     "Time_Frame",
+    "Strategy_Params",
     "Quality_Score",
     "Quality_Grade",
-    "Ema_Fast",
-    "Ema_Slow",
+    "Trading_Approved",
+    "Trading_Rejection_Reasons",
     "Return_Perc",
     "BuyHold_Return_Perc",
     "Return_vs_BuyHold_Perc",
@@ -1322,22 +1648,43 @@ if "Quality_Grade" in df_bt_results_display.columns:
         subset=["Quality_Grade"],
     )
 
+grid_key_columns = [
+    column
+    for column in ["Strategy_Id", "Symbol", "Time_Frame"]
+    if column in df_bt_results_display.columns
+]
+if grid_key_columns and not df_bt_results_display.empty:
+    grid_signature = int(
+        pd.util.hash_pandas_object(
+            df_bt_results_display[grid_key_columns].astype(str),
+            index=False,
+        ).sum()
+    )
+else:
+    grid_signature = 0
+
 dataframe_event = st.dataframe(
     styled_bt_results_display,
     width="content",
+    key=f"bt_results_grid_{len(df_bt_results_display)}_{grid_signature}",
     on_select="rerun",
-    selection_mode="single-row",
+    selection_mode="multi-row",
     column_config={
         "Strategy_Id": None,
         "Symbol": st.column_config.TextColumn("Symbol", pinned=True),
         "Strategy_Name": st.column_config.TextColumn("Strategy", pinned=True),
         "Time_Frame": st.column_config.TextColumn("TF"),
-        "Ema_Fast": st.column_config.NumberColumn("EMA Fast", format="%d"),
-        "Ema_Slow": st.column_config.NumberColumn("EMA Slow", format="%d"),
+        "Strategy_Params": st.column_config.TextColumn("Params"),
         "Quality_Score": st.column_config.NumberColumn(
             "Quality", format="%.1f", width="small"
         ),
         "Quality_Grade": st.column_config.TextColumn("Grade", width="small"),
+        "Trading_Approved": st.column_config.CheckboxColumn(
+            "Approved", width="small"
+        ),
+        "Trading_Rejection_Reasons": st.column_config.TextColumn(
+            "Rejection Reasons"
+        ),
         "Return_Perc": st.column_config.NumberColumn("Return %", format="%.2f"),
         "BuyHold_Return_Perc": st.column_config.NumberColumn(
             "Buy & Hold %", format="%.2f"
@@ -1370,11 +1717,24 @@ dataframe_event = st.dataframe(
     },
 )
 
+row_count = len(df_bt_results_display)
+row_label = "row" if row_count == 1 else "rows"
+st.caption(f"{row_count} backtesting result {row_label}.")
+
 selected_row = None
 selected_html_path = None
 selected_rows = dataframe_event.selection.rows
-if selected_rows:
-    selected_row = df_bt_results_display.iloc[selected_rows[0]]
+selected_target_rows = []
+valid_selected_rows = [
+    row_index
+    for row_index in selected_rows
+    if 0 <= row_index < len(df_bt_results_display)
+]
+if valid_selected_rows:
+    selected_target_rows = [
+        df_bt_results_display.iloc[row_index] for row_index in valid_selected_rows
+    ]
+    selected_row = selected_target_rows[0]
     selected_html_path = get_backtest_file_path(selected_row, "html")
 else:
     pending_selection = st.session_state.get("bt_results_pending_selection")
@@ -1388,16 +1748,21 @@ else:
             selected_row = df_bt_results_display[pending_mask].iloc[0]
             selected_html_path = get_backtest_file_path(selected_row, "html")
 
+if selected_target_rows:
+    st.caption(f"{len(selected_target_rows)} result row(s) selected for backtesting.")
+
 can_run_from_filters = (
     len(search_strategy) == 1 and len(search_timeframe) == 1 and len(search_symbol) == 1
 )
-run_target_row = selected_row
-if run_target_row is None and can_run_from_filters:
-    run_target_row = build_selected_backtest_row(
+run_target_rows = selected_target_rows
+if not run_target_rows and can_run_from_filters:
+    run_target_rows = [
+        build_selected_backtest_row(
         strategy_id=search_strategy[0],
         symbol=search_symbol[0],
         timeframe=search_timeframe[0],
-    )
+        )
+    ]
 
 cont_buttons = st.container(horizontal=True)
 if cont_buttons.button(
@@ -1405,26 +1770,50 @@ if cont_buttons.button(
 ):
     st.rerun()
 
-run_help = "Requires exactly one Strategy, one Time-Frame and one Symbol when no result row is selected."
+queue_message = st.session_state.pop("bt_results_queue_message", None)
+if queue_message:
+    message_type, message_text = queue_message
+    if message_type == "success":
+        st.success(message_text)
+    else:
+        st.info(message_text)
+
+run_help = "Select one or more result rows, or choose exactly one Strategy, one Time-Frame and one Symbol with filters."
 if cont_buttons.button(
-    "Run Backtesting",
-    key="run_selected_backtest",
+    "Run Selected Backtests",
+    key="enqueue_selected_backtests",
     icon=":material/play_arrow:",
-    disabled=run_target_row is None,
+    disabled=not run_target_rows,
     help=run_help,
 ):
-    if run_selected_backtest(run_target_row):
+    enqueue_result = enqueue_backtesting_rows(run_target_rows)
+    queued_count = len(enqueue_result["queued"])
+    skipped_count = len(enqueue_result["skipped"])
+    if queued_count:
+        first_job = enqueue_result["queued"][0]
         st.session_state["bt_results_pending_selection"] = {
-            "strategy_id": str(run_target_row["Strategy_Id"]),
-            "symbol": str(run_target_row["Symbol"]),
-            "timeframe": str(run_target_row["Time_Frame"]),
+            "strategy_id": str(first_job["strategy_id"]),
+            "symbol": str(first_job["symbol"]),
+            "timeframe": str(first_job["timeframe"]),
         }
-        st.rerun()
+        st.session_state["bt_results_queue_message"] = (
+            "success",
+            f"Queued {queued_count} backtesting job(s). "
+            f"Skipped {skipped_count} already queued/running job(s).",
+        )
+    elif skipped_count:
+        st.session_state["bt_results_queue_message"] = (
+            "info",
+            "All selected backtests are already queued or running.",
+        )
+    st.rerun()
 
-if run_target_row is None:
+if not run_target_rows:
     st.caption(
         "To run a new backtest without existing results, select exactly one Strategy, one Time-Frame and one Symbol."
     )
+
+render_backtesting_jobs_status()
 
 if selected_row is not None:
     st.subheader("Backtest Report")

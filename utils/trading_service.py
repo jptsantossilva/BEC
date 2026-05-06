@@ -4,18 +4,24 @@ import utils.database as database
 import utils.telegram as telegram
 
 
-def delete_position(symbol, bot, unit_price: float = 0.0, reason: str = "Symbol delisted from exchange"):
+def delete_position(symbol, bot, unit_price: float = 0.0, reason: str = "Symbol delisted from exchange", position_id: int | None = None):
     telegram_token = telegram.get_telegram_token()
 
-    df_pos = database.get_positions_by_bot_symbol_position(bot=bot, symbol=symbol, position=1)
+    df_pos = database.get_position_by_id(position_id) if position_id is not None else database.get_positions_by_bot_symbol_position(bot=bot, symbol=symbol, position=1)
 
     # get Buy_Order_Id from positions table
     if not df_pos.empty:
         buy_order_id = str(df_pos["Buy_Order_Id"].iloc[0])
         qty = df_pos["Qty"].iloc[0]
+        strategy_id = str(df_pos.get("Strategy_Id", "").iloc[0] or "")
+        strategy_name = str(df_pos.get("Strategy_Name", "").iloc[0] or "")
+        strategy_params_json = str(df_pos.get("Strategy_Params_JSON", "").iloc[0] or "")
     else:
         buy_order_id = str(0)
         qty = 0
+        strategy_id = ""
+        strategy_name = ""
+        strategy_params_json = ""
 
     # Get the current date and time
     current_datetime = datetime.now()
@@ -37,10 +43,12 @@ def delete_position(symbol, bot, unit_price: float = 0.0, reason: str = "Symbol 
         ema_fast=fast_ema,
         ema_slow=slow_ema,
         exit_reason=reason,
+        strategy_id=strategy_id,
+        strategy_params_json=strategy_params_json,
     )
 
     # update position as closed position
-    database.set_position_sell(bot=bot, symbol=symbol)
+    database.set_position_sell(bot=bot, symbol=symbol, position_id=position_id)
 
     # release all locked values from position
     if not df_pos.empty:
@@ -65,7 +73,7 @@ def delete_position(symbol, bot, unit_price: float = 0.0, reason: str = "Symbol 
         date=current_datetime,
         symbol=symbol,
         timeframe=bot,
-        strategy="",
+        strategy=strategy_name,
         ordertype=order_side,
         unitValue=order_avg_price,
         amount=qty,

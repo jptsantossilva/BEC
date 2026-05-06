@@ -242,13 +242,16 @@ def calculate_atr(df: pd.DataFrame, period: int) -> float:
 
 
 # calc current pnl
-def get_current_pnl(symbol, current_price, timeframe):
+def get_current_pnl(symbol, current_price, timeframe, position_id=None):
 
     try:
         # get buy price
-        df_buy_price = database.get_positions_by_bot_symbol_position(
-            bot=timeframe, symbol=symbol, position=1
-        )
+        if position_id is not None:
+            df_buy_price = database.get_position_by_id(position_id)
+        else:
+            df_buy_price = database.get_positions_by_bot_symbol_position(
+                bot=timeframe, symbol=symbol, position=1
+            )
         buy_price = 0
         pnl_perc = 0
 
@@ -270,6 +273,103 @@ def get_current_pnl(symbol, current_price, timeframe):
         telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
 
 
+def get_strategy_display_name(strategy_id: str) -> str:
+    strategy_name = database.get_strategy_name(strategy_id)
+    return strategy_name or strategy_id
+
+
+def strategy_uses_tuned_parameters(strategy_id: str) -> bool:
+    return strategy_id in ["ema_cross_with_market_phases", "ema_cross", "hma_rsi_linreg"]
+
+
+def get_strategy_parameters(strategy_id: str, symbol: str, timeframe: str, pos_row=None, prefer_position_params: bool = False):
+    fast_ema = 0
+    slow_ema = 0
+    if strategy_uses_tuned_parameters(strategy_id):
+        if prefer_position_params and pos_row is not None:
+            params = database.parse_strategy_params(pos_row.get("Strategy_Params_JSON", ""))
+            if strategy_id in ["ema_cross", "ema_cross_with_market_phases"]:
+                fast_raw = params.get("ema_fast", 0)
+                slow_raw = params.get("ema_slow", 0)
+            elif strategy_id == "hma_rsi_linreg":
+                fast_raw = params.get("hma_fast", 0)
+                slow_raw = params.get("hma_slow", 0)
+            else:
+                fast_raw = params.get("fast", 0)
+                slow_raw = params.get("slow", 0)
+            fast_ema = 0 if pd.isna(fast_raw) else int(fast_raw)
+            slow_ema = 0 if pd.isna(slow_raw) else int(slow_raw)
+        if fast_ema == 0 or slow_ema == 0:
+            fast_ema, slow_ema = get_backtesting_results(
+                strategy_id=strategy_id, symbol=symbol, time_frame=timeframe
+            )
+        if (fast_ema == 0 or slow_ema == 0) and pos_row is not None:
+            fast_raw = pos_row.get("Ema_Fast", 0)
+            slow_raw = pos_row.get("Ema_Slow", 0)
+            fast_ema = 0 if pd.isna(fast_raw) else int(fast_raw)
+            slow_ema = 0 if pd.isna(slow_raw) else int(slow_raw)
+    return fast_ema, slow_ema
+
+
+def apply_strategy_technicals(df, strategy_id: str, fast_ema: int, slow_ema: int):
+    apply_technicals(df, fast_ema, slow_ema)
+    if strategy_id == "hma_rsi_linreg":
+        apply_hma_rsi_linreg_technicals(df, fast_hma=fast_ema, slow_hma=slow_ema)
+
+
+def get_strategy_sell_condition(strategy_id: str, df, lastrow):
+    if strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
+        return lastrow.SlowEMA > lastrow.FastEMA
+    if strategy_id in ["market_phases"]:
+        return (lastrow.Close < lastrow.SMA50) or (lastrow.Close < lastrow.SMA200)
+    if strategy_id == "hma_rsi_linreg":
+        return crossover(df.HMASlow, df.HMAFast)
+    return False
+
+
+def get_strategy_buy_condition(strategy_id: str, symbol: str, df, lastrow):
+    detail = ""
+    if strategy_id in ["ema_cross_with_market_phases"]:
+        accumulation_phase = (
+            (lastrow.Close > lastrow.SMA50)
+            and (lastrow.Close > lastrow.SMA200)
+            and (lastrow.SMA50 < lastrow.SMA200)
+        )
+        bullish_phase = (
+            (lastrow.Close > lastrow.SMA50)
+            and (lastrow.Close > lastrow.SMA200)
+            and (lastrow.SMA50 > lastrow.SMA200)
+        )
+        condition_phase = accumulation_phase or bullish_phase
+        return condition_phase and crossover(df.FastEMA, df.SlowEMA), detail
+
+    if strategy_id in ["market_phases"]:
+        accumulation_phase = (
+            (lastrow.Close > lastrow.SMA50)
+            and (lastrow.Close > lastrow.SMA200)
+            and (lastrow.SMA50 < lastrow.SMA200)
+        )
+        bullish_phase = (
+            (lastrow.Close > lastrow.SMA50)
+            and (lastrow.Close > lastrow.SMA200)
+            and (lastrow.SMA50 > lastrow.SMA200)
+        )
+        return accumulation_phase or bullish_phase, detail
+
+    if strategy_id in ["ema_cross"]:
+        return crossover(df.FastEMA, df.SlowEMA), detail
+
+    if strategy_id == "hma_rsi_linreg":
+        daily_linreg_condition, daily_linreg_detail = get_daily_linreg_condition(symbol)
+        return (
+            crossover(df.HMAFast, df.HMASlow)
+            and float(lastrow.RSI14) > 52
+            and daily_linreg_condition
+        ), daily_linreg_detail
+
+    return False, detail
+
+
 def trade(timeframe, run_mode, settings=None):
     if settings is None:
         settings = config.load_settings(refresh=True)
@@ -279,34 +379,40 @@ def trade(timeframe, run_mode, settings=None):
 
     # list of symbols in position - SELL
     df_sell = database.get_positions_by_bot_position(bot=timeframe, position=1)
-    list_to_sell = df_sell.Symbol.tolist()
 
     # list of symbols in position - BUY
     df_buy = database.get_positions_by_bot_position(bot=timeframe, position=0)
-    list_to_buy = df_buy.Symbol.tolist()
 
     # if trading by time frame is
     # Enabled: Buy new positions and sell existing ones.
     # Disabled: Will not buy new positions but will continue to attempt to sell existing positions based on sell strategy conditions.disabled => Will not buy new positions but will continue to attempt to sell existing positions based on sell strategy conditions.
     if not database.is_trade_main_timeframe_enabled(timeframe):
-        list_to_buy = []
+        df_buy = df_buy.iloc[0:0].copy()
 
     # check open positions and SELL if conditions are fulfilled
-    for symbol in list_to_sell:
+    for _, pos_row in df_sell.iterrows():
+        symbol = str(pos_row["Symbol"])
+        position_id = int(pos_row["Id"])
+        strategy_id = str(pos_row.get("Strategy_Id") or settings.strategy_id)
+        strategy_name = str(pos_row.get("Strategy_Name") or get_strategy_display_name(strategy_id))
 
         # initialize vars
         fast_ema = 0
         slow_ema = 0
 
         # get best backtesting results for the strategy
-        if settings.strategy_id in ["ema_cross_with_market_phases", "ema_cross", "hma_rsi_linreg"]:
-            fast_ema, slow_ema = get_backtesting_results(
-                strategy_id=settings.strategy_id, symbol=symbol, time_frame=timeframe
+        if strategy_uses_tuned_parameters(strategy_id):
+            fast_ema, slow_ema = get_strategy_parameters(
+                strategy_id,
+                symbol,
+                timeframe,
+                pos_row=pos_row,
+                prefer_position_params=True,
             )
 
             if fast_ema == 0 or slow_ema == 0:
-                parameter_name = "HMA" if settings.strategy_id == "hma_rsi_linreg" else "EMA"
-                msg = f"{symbol} - {settings.strategy_name} - Best {parameter_name} values missing"
+                parameter_name = "HMA" if strategy_id == "hma_rsi_linreg" else "EMA"
+                msg = f"{symbol} - {strategy_name} - Best {parameter_name} values missing"
                 msg = telegram_prefix_sl + msg
                 print(msg)
                 telegram.send_telegram_message(
@@ -321,9 +427,7 @@ def trade(timeframe, run_mode, settings=None):
         if df.empty:
             continue  # Skip to the next iteration
 
-        apply_technicals(df, fast_ema, slow_ema)
-        if settings.strategy_id == "hma_rsi_linreg":
-            apply_hma_rsi_linreg_technicals(df, fast_hma=fast_ema, slow_hma=slow_ema)
+        apply_strategy_technicals(df, strategy_id, fast_ema, slow_ema)
 
         # last row
         lastrow = df.iloc[-1]
@@ -332,12 +436,7 @@ def trade(timeframe, run_mode, settings=None):
         current_price = lastrow.Close
 
         # Current PnL
-        current_pnl = get_current_pnl(symbol, current_price, timeframe)
-
-        df_pos_symbol = df_sell.loc[df_sell["Symbol"] == symbol]
-        if df_pos_symbol.empty:
-            continue
-        pos_row = df_pos_symbol.iloc[0]
+        current_pnl = get_current_pnl(symbol, current_price, timeframe, position_id=position_id)
 
         buy_price_raw = pos_row.get("Buy_Price", 0)
         highest_raw = pos_row.get("Highest_Price_Since_Entry", 0)
@@ -385,6 +484,7 @@ def trade(timeframe, run_mode, settings=None):
             symbol=symbol,
             highest_price_since_entry=highest_price_since_entry,
             trail_stop_atr=trail_stop_atr,
+            position_id=position_id,
         )
 
         # if using stop loss (hard SL and/or ATR trailing stop)
@@ -435,21 +535,12 @@ def trade(timeframe, run_mode, settings=None):
                 sell_tp_4 = current_pnl >= settings.take_profit_4
 
         # check sell condition for the strategy
-        sell_condition = False
-        if settings.strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
-            condition_crossover = lastrow.SlowEMA > lastrow.FastEMA
-            sell_condition = condition_crossover
-        elif settings.strategy_id in ["market_phases"]:
-            sell_condition = (lastrow.Close < lastrow.SMA50) or (
-                lastrow.Close < lastrow.SMA200
-            )
-        elif settings.strategy_id == "hma_rsi_linreg":
-            sell_condition = crossover(df.HMASlow, df.HMAFast)
+        sell_condition = get_strategy_sell_condition(strategy_id, df, lastrow)
 
         # set current PnL
         current_price = lastrow.Close
         database.update_position_pnl(
-            bot=timeframe, symbol=symbol, curr_price=current_price
+            bot=timeframe, symbol=symbol, curr_price=current_price, position_id=position_id
         )
 
         # Execute exactly one sell action by priority
@@ -469,6 +560,9 @@ def trade(timeframe, run_mode, settings=None):
                     bot=timeframe,
                     fast_ema=fast_ema,
                     slow_ema=slow_ema,
+                    strategy_id=strategy_id,
+                    strategy_name=strategy_name,
+                    position_id=position_id,
                     reason=stop_loss_reason,
                 )
                 continue
@@ -480,6 +574,9 @@ def trade(timeframe, run_mode, settings=None):
                     bot=timeframe,
                     fast_ema=fast_ema,
                     slow_ema=slow_ema,
+                    strategy_id=strategy_id,
+                    strategy_name=strategy_name,
+                    position_id=position_id,
                 )
                 continue
 
@@ -525,6 +622,9 @@ def trade(timeframe, run_mode, settings=None):
                     bot=timeframe,
                     fast_ema=fast_ema,
                     slow_ema=slow_ema,
+                    strategy_id=strategy_id,
+                    strategy_name=strategy_name,
+                    position_id=position_id,
                     reason=f"Take-Profit Level {tp_num} - {tp_pnl}% PnL - {tp_amount}% Amount",
                     percentage=tp_amount,
                     take_profit_num=tp_num,
@@ -544,21 +644,21 @@ def trade(timeframe, run_mode, settings=None):
                 "" if fast_ema == 0 or slow_ema == 0 else f"{fast_ema}/{slow_ema}"
             )
             ema_debug = ""
-            if settings.strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
+            if strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
                 fast_ema_value = float(lastrow.FastEMA)
                 slow_ema_value = float(lastrow.SlowEMA)
                 ema_debug = (
                     f" | FastEMA: {fast_ema_value:.8f} | SlowEMA: {slow_ema_value:.8f} "
                     f"| Slow>Fast: {slow_ema_value > fast_ema_value}"
                 )
-            elif settings.strategy_id == "hma_rsi_linreg":
+            elif strategy_id == "hma_rsi_linreg":
                 ema_debug = (
                     f" | HMA{fast_ema}: {float(lastrow.HMAFast):.8f} | HMA{slow_ema}: {float(lastrow.HMASlow):.8f} "
                     f"| HMA{fast_ema}<HMA{slow_ema} cross: {crossover(df.HMASlow, df.HMAFast)}"
                 )
 
             msg = (
-                f"{symbol} - {best_emas} {settings.strategy_name} - Sell condition not fulfilled"
+                f"{symbol} - {best_emas} {strategy_name} - Sell condition not fulfilled"
                 f"{ema_debug}"
             )
             msg = telegram_prefix_sl + msg
@@ -566,21 +666,23 @@ def trade(timeframe, run_mode, settings=None):
             telegram.send_telegram_message(telegram_token, "", msg)
 
     # check symbols not in positions and BUY if conditions are fulfilled
-    for symbol in list_to_buy:
+    for _, pos_row in df_buy.iterrows():
+        symbol = str(pos_row["Symbol"])
+        position_id = int(pos_row["Id"])
+        strategy_id = str(pos_row.get("Strategy_Id") or settings.strategy_id)
+        strategy_name = str(pos_row.get("Strategy_Name") or get_strategy_display_name(strategy_id))
 
         # initialize vars
         fast_ema = 0
         slow_ema = 0
 
         # get best backtesting results for the strategy
-        if settings.strategy_id in ["ema_cross_with_market_phases", "ema_cross", "hma_rsi_linreg"]:
-            fast_ema, slow_ema = get_backtesting_results(
-                strategy_id=settings.strategy_id, symbol=symbol, time_frame=timeframe
-            )
+        if strategy_uses_tuned_parameters(strategy_id):
+            fast_ema, slow_ema = get_strategy_parameters(strategy_id, symbol, timeframe, pos_row=pos_row)
 
             if fast_ema == 0 or slow_ema == 0:
-                parameter_name = "HMA" if settings.strategy_id == "hma_rsi_linreg" else "EMA"
-                msg = f"{symbol} - {settings.strategy_name} - Best {parameter_name} values missing"
+                parameter_name = "HMA" if strategy_id == "hma_rsi_linreg" else "EMA"
+                msg = f"{symbol} - {strategy_name} - Best {parameter_name} values missing"
                 msg = telegram_prefix_sl + msg
                 print(msg)
                 telegram.send_telegram_message(
@@ -592,79 +694,41 @@ def trade(timeframe, run_mode, settings=None):
 
         # skip if no data
         if df.empty:
-            msg = f"{symbol} - {settings.strategy_name} - Empty dataframe on BUY loop"
+            msg = f"{symbol} - {strategy_name} - Empty dataframe on BUY loop"
             msg = telegram_prefix_sl + msg
             print(msg)
             telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
             continue
 
-        apply_technicals(df, fast_ema, slow_ema)
-        if settings.strategy_id == "hma_rsi_linreg":
-            apply_hma_rsi_linreg_technicals(df, fast_hma=fast_ema, slow_hma=slow_ema)
+        apply_strategy_technicals(df, strategy_id, fast_ema, slow_ema)
 
         # last row
         lastrow = df.iloc[-1]
 
-        # check buy condition for the strategy
-        if settings.strategy_id in ["ema_cross_with_market_phases"]:
-
-            accumulation_phase = (
-                (lastrow.Close > lastrow.SMA50)
-                and (lastrow.Close > lastrow.SMA200)
-                and (lastrow.SMA50 < lastrow.SMA200)
-            )
-            bullish_phase = (
-                (lastrow.Close > lastrow.SMA50)
-                and (lastrow.Close > lastrow.SMA200)
-                and (lastrow.SMA50 > lastrow.SMA200)
-            )
-
-            condition_phase = accumulation_phase or bullish_phase
-            condition_crossover = crossover(df.FastEMA, df.SlowEMA)
-            buy_condition = condition_phase and condition_crossover
-
-        elif settings.strategy_id in ["market_phases"]:
-
-            accumulation_phase = (
-                (lastrow.Close > lastrow.SMA50)
-                and (lastrow.Close > lastrow.SMA200)
-                and (lastrow.SMA50 < lastrow.SMA200)
-            )
-            bullish_phase = (
-                (lastrow.Close > lastrow.SMA50)
-                and (lastrow.Close > lastrow.SMA200)
-                and (lastrow.SMA50 > lastrow.SMA200)
-            )
-
-            buy_condition = accumulation_phase or bullish_phase
-
-        elif settings.strategy_id in ["ema_cross"]:
-            buy_condition = crossover(df.FastEMA, df.SlowEMA)
-
-        elif settings.strategy_id == "hma_rsi_linreg":
-            daily_linreg_condition, daily_linreg_detail = get_daily_linreg_condition(symbol)
-            buy_condition = (
-                crossover(df.HMAFast, df.HMASlow)
-                and float(lastrow.RSI14) > 52
-                and daily_linreg_condition
-            )
+        buy_condition, buy_detail = get_strategy_buy_condition(strategy_id, symbol, df, lastrow)
 
         if buy_condition:
             binance.create_buy_order(
-                symbol=symbol, bot=timeframe, fast_ema=fast_ema, slow_ema=slow_ema
+                symbol=symbol,
+                bot=timeframe,
+                fast_ema=fast_ema,
+                slow_ema=slow_ema,
+                strategy_id=strategy_id,
+                strategy_name=strategy_name,
+                position_id=position_id,
             )
         else:
             best_emas = (
                 "" if fast_ema == 0 or slow_ema == 0 else f"{fast_ema}/{slow_ema}"
             )
 
-            msg = f"{symbol} - {best_emas} {settings.strategy_name} - Buy condition not fulfilled"
-            if settings.strategy_id == "hma_rsi_linreg":
+            msg = f"{symbol} - {best_emas} {strategy_name} - Buy condition not fulfilled"
+            if strategy_id == "hma_rsi_linreg":
                 msg = (
-                    f"{symbol} - {fast_ema}/{slow_ema} {settings.strategy_name} - Buy condition not fulfilled"
+                    f"{symbol} - {fast_ema}/{slow_ema} {strategy_name} - Buy condition not fulfilled"
                     f" | HMA{fast_ema}>HMA{slow_ema} cross: {crossover(df.HMAFast, df.HMASlow)}"
                     f" | RSI14: {float(lastrow.RSI14):.2f} > 52: {float(lastrow.RSI14) > 52}"
-                    f" | {daily_linreg_detail}"
+                    f" | {buy_detail}"
                 )
             msg = telegram_prefix_sl + msg
             print(msg)

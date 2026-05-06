@@ -17,6 +17,17 @@ import utils.trading_service as trading_service
 
 from my_backtesting import FOLDER_BACKTEST_RESULTS
 
+TRADING_TAB_OPTIONS = [
+    "Unrealized PnL",
+    "Realized PnL",
+    "Signals",
+    "Top Performers",
+    "Blacklist",
+    "Settings",
+]
+TRADING_ACTIVE_TAB_KEY = "trading_active_tab_saved"
+TRADING_ACTIVE_TAB_WIDGET_KEY = "_trading_active_tab_widget"
+
 # st.set_page_config(
 #     page_title="BEC App",
 #     page_icon="random",
@@ -140,9 +151,10 @@ def realized_pnl():
         # print('\n----------------------------\n')
 
 @st.dialog("Delete Position")
-def delete_position(symbol, timeframe):
+def delete_position(symbol, timeframe, position_id=None, strategy_name=""):
     st.info("As an example, use this to close a position when a symbol is delisted and you need to mark it as sold.")
-    st.write(f"Are you sure you want to delete **{symbol}** from **{timeframe}** timeframe?")
+    strategy_label = f" using **{strategy_name}**" if strategy_name else ""
+    st.write(f"Are you sure you want to delete **{symbol}** from **{timeframe}** timeframe{strategy_label}?")
     unit_price = st.number_input("Unit value", min_value=0.0, value=0.0, step=0.0001, format="%.8f", width=200)
     reason = st.text_input("Reason", value="Symbol delisted from exchange", max_chars=100, help="Reason for deleting the position.")
     if st.button("Delete", key="delete_position"):
@@ -150,7 +162,8 @@ def delete_position(symbol, timeframe):
             symbol=symbol,
             bot=timeframe,
             unit_price=float(unit_price),
-            reason=reason
+            reason=reason,
+            position_id=position_id,
         ) 
         st.rerun()
         
@@ -166,8 +179,10 @@ def unrealized_pnl():
             ]
 
         result_open_positions, positions_df_1d, positions_df_4h, positions_df_1h = calculate_unrealized_pnl()
-        strategy_id = config.load_settings().strategy_id
-        df_trading_status_all = database.get_top_performers_trading_status(strategy_id=strategy_id)
+        settings_snapshot = config.load_settings()
+        df_trading_status_all = database.get_top_performers_trading_status(
+            strategy_id=getattr(settings_snapshot, "main_strategies", [settings_snapshot.strategy_id])
+        )
 
         def _prepare_trading_status_for_tf(tf: str):
             if df_trading_status_all.empty:
@@ -206,9 +221,17 @@ def unrealized_pnl():
 
         col_config = {
             "Id": None,
+            "Bot": None,
+            "Strategy_Id": None,
+            "Strategy_Name": None,
+            "Strategy_Params_JSON": None,
+            "Ema_Fast": None,
+            "Ema_Slow": None,
             "Highest_Price_Since_Entry": None,
             "PnL_Perc": st.column_config.NumberColumn(format="%.2f"),
             "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"),
+            "Strategy": st.column_config.TextColumn("Strategy"),
+            "Signal_Setup": st.column_config.TextColumn("Signal Setup", width=None),
             "TP1": st.column_config.CheckboxColumn(),
             "TP2": st.column_config.CheckboxColumn(),
             "TP3": st.column_config.CheckboxColumn(),
@@ -219,6 +242,8 @@ def unrealized_pnl():
         }
         if atr_trailing_enabled:
             col_config["Trail_Stop_ATR"] = st.column_config.NumberColumn(format="%.8f")
+        else:
+            col_config["Trail_Stop_ATR"] = None
         
         event_positions_1d = st.dataframe(
             positions_df_1d.style.map(set_pnl_color, subset=['PnL_Perc','PnL_Value']),
@@ -247,12 +272,14 @@ def unrealized_pnl():
             selected_row_index = event_positions_1d.selection.rows[0]  # Get the index of the selected row
             selected_symbol = positions_df_1d.loc[selected_row_index, 'Symbol']
             selected_bot = positions_df_1d.loc[selected_row_index, 'Bot']  
+            selected_position_id = int(positions_df_1d.loc[selected_row_index, 'Id'])
+            selected_strategy_name = str(positions_df_1d.loc[selected_row_index].get('Strategy_Name', ''))
 
             # Show the selected Name
             # st.write(f"Selected Symbol {selected_symbol} and bot {selected_bot}")
 
             if st.button("Delete Position", key="delete_1d"):
-                delete_position(symbol=selected_symbol, timeframe=selected_bot)
+                delete_position(symbol=selected_symbol, timeframe=selected_bot, position_id=selected_position_id, strategy_name=selected_strategy_name)
         
         
         #########################
@@ -286,12 +313,14 @@ def unrealized_pnl():
             selected_row_index = event_positions_4h.selection.rows[0]  # Get the index of the selected row
             selected_symbol = positions_df_4h.loc[selected_row_index, 'Symbol']
             selected_bot = positions_df_4h.loc[selected_row_index, 'Bot']  
+            selected_position_id = int(positions_df_4h.loc[selected_row_index, 'Id'])
+            selected_strategy_name = str(positions_df_4h.loc[selected_row_index].get('Strategy_Name', ''))
 
             # Show the selected Name
             # st.write(f"Selected Symbol {selected_symbol} and bot {selected_bot}")
 
             if st.button("Delete Position", key="delete_4h"):
-                delete_position(symbol=selected_symbol, timeframe=selected_bot)
+                delete_position(symbol=selected_symbol, timeframe=selected_bot, position_id=selected_position_id, strategy_name=selected_strategy_name)
 
         #########################
         
@@ -324,12 +353,14 @@ def unrealized_pnl():
             selected_row_index = event_positions_1h.selection.rows[0]  # Get the index of the selected row
             selected_symbol = positions_df_1h.loc[selected_row_index, 'Symbol']
             selected_bot = positions_df_1h.loc[selected_row_index, 'Bot']  
+            selected_position_id = int(positions_df_1h.loc[selected_row_index, 'Id'])
+            selected_strategy_name = str(positions_df_1h.loc[selected_row_index].get('Strategy_Name', ''))
 
             # Show the selected Name
             # st.write(f"Selected Symbol {selected_symbol} and bot {selected_bot}")
 
             if st.button("Delete Position", key="delete_1h"):
-                delete_position(symbol=selected_symbol, timeframe=selected_bot)
+                delete_position(symbol=selected_symbol, timeframe=selected_bot, position_id=selected_position_id, strategy_name=selected_strategy_name)
 
         #----------------------
         # Force Close Position
@@ -355,29 +386,43 @@ def unrealized_pnl():
             )
             
             if st.session_state.sell_bot == "1d":
-                list_positions = positions_df_1d.Symbol.to_list()
+                sell_positions_df = positions_df_1d
             elif st.session_state.sell_bot == "4h":
-                list_positions = positions_df_4h.Symbol.to_list()
+                sell_positions_df = positions_df_4h
             elif st.session_state.sell_bot == "1h":
-                list_positions = positions_df_1h.Symbol.to_list()
+                sell_positions_df = positions_df_1h
             else:
-                list_positions = []
+                sell_positions_df = pd.DataFrame()
+
+            position_options = []
+            position_labels = {}
+            if not sell_positions_df.empty:
+                for _, row in sell_positions_df.iterrows():
+                    option_id = int(row["Id"])
+                    strategy_label = row.get("Strategy_Name") or row.get("Strategy_Id") or ""
+                    position_options.append(option_id)
+                    position_labels[option_id] = f"{row['Symbol']} - {strategy_label}"
 
             if "sell_symbol" not in st.session_state:
                 st.session_state.sell_symbol = None
 
-            sell_symbol = st.selectbox(
-                label="Symbol",
-                options=(list_positions),
+            sell_position_id = st.selectbox(
+                label="Position",
+                options=(position_options),
                 # label_visibility="collapsed",
                 key="sell_symbol",
-                disabled=len(list_positions) == 0
+                format_func=lambda option: position_labels.get(option, str(option)),
+                disabled=len(position_options) == 0
             )
 
-            disable_sell_confirmation1 = sell_symbol == None    
+            disable_sell_confirmation1 = sell_position_id == None
                     
             # get balance
             if not disable_sell_confirmation1:
+                selected_sell_pos = sell_positions_df.loc[sell_positions_df["Id"].astype(int) == int(sell_position_id)].iloc[0]
+                sell_symbol = str(selected_sell_pos["Symbol"])
+                sell_strategy_id = str(selected_sell_pos.get("Strategy_Id") or "")
+                sell_strategy_name = str(selected_sell_pos.get("Strategy_Name") or "")
                 sell_amount_perc = st.slider(
                     label='Amount', 
                     min_value=10, 
@@ -389,7 +434,7 @@ def unrealized_pnl():
                 )
                 
                 # get current position balance
-                df_pos = database.get_positions_by_bot_symbol_position( bot=sell_bot, symbol=sell_symbol, position=1)
+                df_pos = database.get_position_by_id(int(sell_position_id))
                 if not df_pos.empty:
                     balance_qty = df_pos['Qty'].iloc[0]
                 else:
@@ -418,7 +463,10 @@ def unrealized_pnl():
                             symbol=sell_symbol,
                             bot=sell_bot,
                             reason=f"Forced Sale of {sell_amount_perc}%",
-                            percentage=sell_amount_perc
+                            percentage=sell_amount_perc,
+                            strategy_id=sell_strategy_id,
+                            strategy_name=sell_strategy_name,
+                            position_id=int(sell_position_id),
                         ) 
 
                         if result:
@@ -556,20 +604,35 @@ def settings():
         with st.container(border=False):
             st.markdown("Main Strategy")
             st.caption(
-                "Primary strategy used by the trading bots (1d/4h/1h) for buy/sell decisions. "
+                "Primary strategy used by the trading timeframes (1d/4h/1h) for buy/sell decisions. "
                 "Also used in the daily refresh to apply approved backtesting results and update the symbols in Positions."
             )
-            if "main_strategy" not in st.session_state:
-                st.session_state.main_strategy = config.read_setting("main_strategy")
-            st.selectbox(
-                "Main Strategy", 
-                list(dict_strategies_main.keys()), 
-                key="main_strategy",
-                on_change=lambda: config.update_setting("main_strategy", 
-                st.session_state.main_strategy),
-                format_func=format_func_strategies_main, 
+            if "main_strategies" not in st.session_state:
+                try:
+                    current_main_strategies = json.loads(config.read_setting("main_strategies"))
+                except Exception:
+                    current_main_strategies = [config.read_setting("main_strategy")]
+                valid_main_strategies = [
+                    strategy_id
+                    for strategy_id in current_main_strategies
+                    if strategy_id in dict_strategies_main
+                ]
+                st.session_state.main_strategies = valid_main_strategies or [config.read_setting("main_strategy")]
+
+            def _save_main_strategies():
+                selected = st.session_state.main_strategies or [config.read_setting("main_strategy")]
+                patch = {"main_strategies": json.dumps(selected)}
+                if selected:
+                    patch["main_strategy"] = selected[0]
+                config.update_settings(patch)
+
+            st.multiselect(
+                "Main Strategies",
+                list(dict_strategies_main.keys()),
+                key="main_strategies",
+                on_change=_save_main_strategies,
+                format_func=format_func_strategies_main,
                 label_visibility="collapsed",
-                width=400
             )
         
         with st.container(border=False):
@@ -809,7 +872,6 @@ def settings():
                         value=rps_value,
                         step=0.01,
                         disabled=True,
-                        key=rps_key,
                         help="Remaining position size after selling TP Amount% of the remainder.",
                         width=80,
                     )
@@ -832,11 +894,18 @@ def settings():
             a2 = float(st.session_state.get("take_profit_2_amount", 0) or 0)
             a3 = float(st.session_state.get("take_profit_3_amount", 0) or 0)
             a4 = float(st.session_state.get("take_profit_4_amount", 0) or 0)
-            def rps_seq(amounts):
+            p1 = float(st.session_state.get("take_profit_1", 0) or 0)
+            p2 = float(st.session_state.get("take_profit_2", 0) or 0)
+            p3 = float(st.session_state.get("take_profit_3", 0) or 0)
+            p4 = float(st.session_state.get("take_profit_4", 0) or 0)
+            def rps_seq(levels):
                 r=100.0; out=[]
-                for a in amounts: r*= (1-a/100.0); out.append(round(r,2))
+                for pnl, amount in levels:
+                    if pnl > 0:
+                        r*= (1-amount/100.0)
+                    out.append(round(r,2))
                 return out
-            rps1,rps2,rps3,rps4 = rps_seq([a1,a2,a3,a4])
+            rps1,rps2,rps3,rps4 = rps_seq([(p1,a1),(p2,a2),(p3,a3),(p4,a4)])
             _tp_num("TP1", "take_profit_1", "take_profit_1_amount", rps1, "rps1_widget")
             _tp_num("TP2", "take_profit_2", "take_profit_2_amount", rps2, "rps2_widget")
             _tp_num("TP3", "take_profit_3", "take_profit_3_amount", rps3, "rps3_widget")
@@ -898,17 +967,46 @@ def show_main_page():
     num_decimals = 8 if trade_against == "BTC" else 2
     
     global tab_upnl, tab_rpnl, tab_top_perf, tab_signals, tab_blacklist, tab_settings
-    tab_upnl, tab_rpnl, tab_signals, tab_top_perf, tab_blacklist, tab_settings = st.tabs(["Unrealized PnL", "Realized PnL", "Signals", "Top Performers", "Blacklist", "Settings"])
+    if st.session_state.get(TRADING_ACTIVE_TAB_KEY) not in TRADING_TAB_OPTIONS:
+        legacy_tab = st.session_state.get("trading_active_tab")
+        st.session_state[TRADING_ACTIVE_TAB_KEY] = (
+            legacy_tab if legacy_tab in TRADING_TAB_OPTIONS else TRADING_TAB_OPTIONS[0]
+        )
 
-    realized_pnl()
-    unrealized_pnl()
-    signals()
-    top_performers()
+    saved_tab = st.session_state[TRADING_ACTIVE_TAB_KEY]
 
-    with tab_blacklist:
-        blacklist()
-    
-    settings()
+    active_tab = st.segmented_control(
+        "Trading tab",
+        TRADING_TAB_OPTIONS,
+        default=saved_tab,
+        key=TRADING_ACTIVE_TAB_WIDGET_KEY,
+        label_visibility="collapsed",
+    )
+    if active_tab not in TRADING_TAB_OPTIONS:
+        active_tab = saved_tab
+    st.session_state[TRADING_ACTIVE_TAB_KEY] = active_tab
+
+    tab_container = st.container()
+    tab_upnl = tab_container
+    tab_rpnl = tab_container
+    tab_signals = tab_container
+    tab_top_perf = tab_container
+    tab_blacklist = tab_container
+    tab_settings = tab_container
+
+    if active_tab == "Unrealized PnL":
+        unrealized_pnl()
+    elif active_tab == "Realized PnL":
+        realized_pnl()
+    elif active_tab == "Signals":
+        signals()
+    elif active_tab == "Top Performers":
+        top_performers()
+    elif active_tab == "Blacklist":
+        with tab_blacklist:
+            blacklist()
+    elif active_tab == "Settings":
+        settings()
 
 # Get years from orders
 def get_years():
@@ -1192,12 +1290,90 @@ def calculate_unrealized_pnl():
     # Format detail DataFrames
     for df_ref in (df_positions_1d, df_positions_4h, df_positions_1h):
         if not df_ref.empty:
+            df_ref["Strategy"] = df_ref.apply(_format_position_strategy, axis=1)
+            df_ref["Signal_Setup"] = df_ref.apply(_format_position_signal_setup, axis=1)
             df_ref['Buy_Price'] = df_ref['Buy_Price'].apply(lambda x: f'{{:.{8}f}}'.format(x))
             df_ref['Position_Value'] = df_ref['Position_Value'].apply(lambda x: f'{{:.{8}f}}'.format(x))
             df_ref['PnL_Perc'] = df_ref['PnL_Perc'].apply(lambda x: '{:.2f}'.format(float(x)))
             df_ref['PnL_Value'] = df_ref['PnL_Value'].apply(lambda x: f'{{:.{num_decimals}f}}'.format(float(x)))
+            for target_index, column in enumerate(
+                [
+                    "Id",
+                    "Bot",
+                    "Symbol",
+                    "PnL_Perc",
+                    "PnL_Value",
+                    "TP1",
+                    "TP2",
+                    "TP3",
+                    "TP4",
+                    "RPQ%",
+                    "Qty",
+                    "Buy_Price",
+                    "Position_Value",
+                    "Date",
+                    "Duration",
+                    "Trail_Stop_ATR",
+                    "Highest_Price_Since_Entry",
+                    "Strategy",
+                    "Signal_Setup",
+                    "Strategy_Id",
+                    "Strategy_Name",
+                    "Strategy_Params_JSON",
+                    "Ema_Fast",
+                    "Ema_Slow",
+                ]
+            ):
+                if column in df_ref.columns:
+                    values = df_ref.pop(column)
+                    df_ref.insert(target_index, column, values)
     
     return results_df, df_positions_1d, df_positions_4h, df_positions_1h
+
+
+def _format_position_strategy(row):
+    strategy_name = str(row.get("Strategy_Name") or "").strip()
+    strategy_id = str(row.get("Strategy_Id") or "").strip()
+    return strategy_name or strategy_id
+
+
+def _format_position_signal_setup(row):
+    strategy_id = str(row.get("Strategy_Id") or "").strip()
+    params = database.parse_strategy_params(row.get("Strategy_Params_JSON", ""))
+    fast = row.get("Ema_Fast", 0)
+    slow = row.get("Ema_Slow", 0)
+
+    try:
+        fast = int(float(fast))
+    except (TypeError, ValueError):
+        fast = 0
+    try:
+        slow = int(float(slow))
+    except (TypeError, ValueError):
+        slow = 0
+
+    if strategy_id in {"ema_cross", "ema_cross_with_market_phases"}:
+        fast = params.get("ema_fast", fast)
+        slow = params.get("ema_slow", slow)
+        setup = f"EMA {fast}/{slow}" if fast and slow else "EMA"
+        if strategy_id == "ema_cross_with_market_phases":
+            setup = f"{setup} | Phase filter"
+        return setup
+
+    if strategy_id == "hma_rsi_linreg":
+        fast = params.get("hma_fast", fast)
+        slow = params.get("hma_slow", slow)
+        rsi_min = params.get("rsi_min", 52)
+        linreg_period = params.get("daily_linreg_period", 50)
+        setup = f"HMA {fast}/{slow}" if fast and slow else "HMA"
+        return f"{setup} | RSI14>{rsi_min} | Daily LINREG{linreg_period}"
+
+    if strategy_id == "market_phases":
+        sma_fast = params.get("sma_fast", 50)
+        sma_slow = params.get("sma_slow", 200)
+        return f"SMA{sma_fast}/{sma_slow} phase"
+
+    return ""
 
 # define a function to set the background color of the rows based on pnl_value
 def set_pnl_color(val):

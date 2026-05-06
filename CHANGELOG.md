@@ -2,6 +2,18 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-05-06]
+- Trading - Added support for multiple main trading strategies. Settings now allow selecting multiple main strategies and trading/backtesting refresh flows keep strategy-specific candidates separated.
+- Trading - Positions and orders now track strategy metadata (`Strategy_Id`, `Strategy_Name`, `Strategy_Params_JSON`) so buys, sells, forced sells, deleted positions and PnL updates target the correct strategy-specific position.
+- Trading Dashboard - Unrealized PnL now shows strategy and signal setup details per open position, and manual sell/delete actions use the selected position id instead of only symbol/timeframe.
+- Trading Dashboard - Reworked dashboard tab navigation to use a stateful segmented control intended to preserve the selected section when navigating away and back.
+- Trading Logic - Live buy/sell evaluation now reads strategy-specific parameters from the position/backtest result and supports strategy-specific conditions, including `hma_rsi_linreg`.
+- Backtesting Results - Added a backtesting queue workflow, including queuing selected result rows, queue status, batch progress, recent job list and latest job log display.
+- Jobs Runner - Added background execution for queued backtesting jobs, with per-job log files, status updates, failure handling and reset of interrupted running jobs on restart.
+- Backtesting Results - Improved report file lookup to handle strategy id filename variants and static log/report links.
+- Backtesting Settings - Added quality score/grade approval rule guidance and validation, including `Quality_Grade_Min`.
+- Database - Added automatic schema support for strategy metadata on `Positions` and `Orders`, plus the new `Backtesting_Jobs` queue table and helper APIs.
+
 ## [2026-05-05]
 - Backtesting - Added Strategy Quality Score to backtest results, including score, grade, components, penalties and summary details.
 - Backtesting Settings - Added Buy & Hold benchmark start mode, allowing users to choose between indicator warm-up and first data candle.

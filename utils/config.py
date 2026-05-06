@@ -1,5 +1,6 @@
 import sys
 import importlib
+import json
 from dataclasses import dataclass
 
 import pandas as pd
@@ -23,6 +24,7 @@ _UPDATABLE_SETTING_KEYS = {
     "atr_activation_pnl",
     "trade_top_performance",
     "main_strategy",
+    "main_strategies",
     "btc_strategy",
     "trade_against_switch",
     "take_profit_1",
@@ -61,6 +63,8 @@ class AppSettings:
     main_strategy: str
     main_strategy_name: str
     main_strategy_backtest_optimize: bool
+    main_strategies: list
+    main_strategy_configs: list
     btc_strategy: str
     btc_strategy_name: str
     btc_strategy_backtest_optimize: bool
@@ -108,6 +112,30 @@ def update_settings(patch: dict, *, refresh: bool = True) -> AppSettings:
 def update_setting(name: str, value, *, refresh: bool = True) -> AppSettings:
     """Persist one setting and return updated settings snapshot."""
     return update_settings({name: value}, refresh=refresh)
+
+
+def _parse_main_strategies(raw_value, fallback_strategy: str) -> list[str]:
+    if raw_value in (None, ""):
+        return [fallback_strategy] if fallback_strategy else []
+
+    if isinstance(raw_value, list):
+        values = raw_value
+    else:
+        try:
+            parsed = json.loads(str(raw_value))
+            values = parsed if isinstance(parsed, list) else [str(parsed)]
+        except (TypeError, ValueError, json.JSONDecodeError):
+            values = [part.strip() for part in str(raw_value).split(",")]
+
+    result = []
+    for value in values:
+        strategy_id = str(value).strip()
+        if strategy_id and strategy_id not in result:
+            result.append(strategy_id)
+
+    if not result and fallback_strategy:
+        result.append(fallback_strategy)
+    return result
 
 def read_setting(name: str):
     """Read setting value from the current settings snapshot."""
@@ -166,6 +194,35 @@ def load_settings(refresh: bool = False) -> AppSettings:
         main_strategy_name = str(df_main_strategy.Name.values[0])
         main_strategy_backtest_optimize = bool(df_main_strategy.Backtest_Optimize.values[0])
 
+    main_strategies_raw = database.get_setting("main_strategies")
+    main_strategies = _parse_main_strategies(main_strategies_raw, main_strategy)
+    default_main_strategies = '["ema_cross_with_market_phases"]'
+    if (
+        main_strategy
+        and main_strategy not in main_strategies
+        and str(main_strategies_raw) == default_main_strategies
+    ):
+        main_strategies = [main_strategy]
+    # Persist the migrated list so future reads do not depend on the legacy value.
+    normalized_main_strategies = json.dumps(main_strategies)
+    if str(main_strategies_raw) != normalized_main_strategies:
+        database.set_setting("main_strategies", normalized_main_strategies)
+
+    main_strategy_configs = []
+    strategy_module = importlib.import_module('my_backtesting')
+    for selected_strategy_id in main_strategies:
+        df_selected_strategy = database.get_strategy_by_id(selected_strategy_id)
+        if df_selected_strategy.empty:
+            continue
+        main_strategy_configs.append(
+            {
+                "id": selected_strategy_id,
+                "name": str(df_selected_strategy.Name.values[0]),
+                "backtest_optimize": bool(df_selected_strategy.Backtest_Optimize.values[0]),
+                "strategy": getattr(strategy_module, selected_strategy_id, None),
+            }
+        )
+
     btc_strategy_name = ""
     btc_strategy_backtest_optimize = False
     df_btc_strategy = database.get_strategy_by_id(btc_strategy)
@@ -186,8 +243,6 @@ def load_settings(refresh: bool = False) -> AppSettings:
     strategy_name = main_strategy_name
     strategy_backtest_optimize = main_strategy_backtest_optimize
 
-    # Dynamically import the entire strategies module
-    strategy_module = importlib.import_module('my_backtesting')
     # Dynamically get the strategy class
     strategy = getattr(strategy_module, strategy_id, None)
     btc_strategy_impl = getattr(strategy_module, btc_strategy, None)
@@ -214,6 +269,8 @@ def load_settings(refresh: bool = False) -> AppSettings:
         main_strategy=main_strategy,
         main_strategy_name=main_strategy_name,
         main_strategy_backtest_optimize=main_strategy_backtest_optimize,
+        main_strategies=main_strategies,
+        main_strategy_configs=main_strategy_configs,
         btc_strategy=btc_strategy,
         btc_strategy_name=btc_strategy_name,
         btc_strategy_backtest_optimize=btc_strategy_backtest_optimize,

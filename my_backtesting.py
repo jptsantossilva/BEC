@@ -1569,14 +1569,22 @@ def save_backtesting_to_csv(csv_file_path, df_stats, backtest_config, df_trades)
             file.write("\n# TRADES\n")
             trades_display.to_csv(file, index=False)
 
-def save_backtesting_to_html(bt, stats, strategy, timeframe, symbol, backtest_config=None):
+def save_backtesting_to_html(
+        bt,
+        stats,
+        strategy,
+        timeframe,
+        symbol,
+        backtest_config=None,
+        report_strategy_name=None,
+):
         # stats
         df_stats = pd.DataFrame(stats)
         # trades
         df_trades = build_backtesting_trades_df(stats, strategy=strategy)
         quality_score = (backtest_config or {}).get("strategy_quality_score_result")
 
-        strategy_name = get_base_strategy_name(strategy)
+        strategy_name = report_strategy_name or get_base_strategy_name(strategy)
         filename=f"{strategy_name} - {timeframe} - {symbol}"
 
         # Create the folder if it doesn't exist
@@ -3018,7 +3026,15 @@ def run_backtest(symbol, timeframe, strategy, optimize):
 
     
     # save results as html file
-    save_backtesting_to_html(bt, stats, result_strategy, timeframe, symbol, backtest_config=backtest_config)
+    save_backtesting_to_html(
+        bt,
+        stats,
+        result_strategy,
+        timeframe,
+        symbol,
+        backtest_config=backtest_config,
+        report_strategy_name=strategy_name,
+    )
 
     database.add_backtesting_results(
                                     timeframe=timeframe,

@@ -1,5 +1,6 @@
 import math
 import os
+import json
 import secrets
 import shutil
 import sqlite3
@@ -11,6 +12,59 @@ import pandas as pd
 import yaml
 
 from utils import general
+
+
+def build_strategy_params_json(strategy_id: str, fast_value=0, slow_value=0) -> str:
+    strategy_id = str(strategy_id or "").strip()
+
+    def _int_or_zero(value):
+        try:
+            if pd.isna(value):
+                return 0
+        except TypeError:
+            pass
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return 0
+
+    fast = _int_or_zero(fast_value)
+    slow = _int_or_zero(slow_value)
+
+    if strategy_id in {"ema_cross", "ema_cross_with_market_phases"}:
+        params = {"ema_fast": fast, "ema_slow": slow}
+        if strategy_id == "ema_cross_with_market_phases":
+            params["phase_filter"] = True
+    elif strategy_id == "hma_rsi_linreg":
+        params = {
+            "hma_fast": fast,
+            "hma_slow": slow,
+            "rsi_period": 14,
+            "rsi_min": 52,
+            "daily_linreg_period": 50,
+        }
+    elif strategy_id == "market_phases":
+        params = {"sma_fast": 50, "sma_slow": 200}
+    else:
+        params = {}
+        if fast:
+            params["fast"] = fast
+        if slow:
+            params["slow"] = slow
+
+    return json.dumps(params, separators=(",", ":"))
+
+
+def parse_strategy_params(value) -> dict:
+    if value in (None, ""):
+        return {}
+    if isinstance(value, dict):
+        return value
+    try:
+        parsed = json.loads(str(value))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 # Global connection handle (initialized later)
 conn = None
@@ -72,6 +126,7 @@ def get_setting(setting_name):
     # Default values for settings
     default_values = {
         "main_strategy": "ema_cross_with_market_phases",
+        "main_strategies": '["ema_cross_with_market_phases"]',
         "btc_strategy": "market_phases",
         "trade_against_switch": False,
         "take_profit_1": 0,
@@ -103,6 +158,7 @@ def get_setting(setting_name):
     # Corresponding comments for each setting
     setting_comments = {
         "main_strategy": "Primary strategy used for trading.",
+        "main_strategies": "Primary strategies used for trading, stored as a JSON list.",
         "btc_strategy": "Strategy for trading BTC.",
         "trade_against_switch": "Toggle trading against BTC or USDT/USDC (True/False).",
         "take_profit_1": "First take profit percentage.",
@@ -254,6 +310,8 @@ create_orders_table = """
         Qty REAL,
         Ema_Fast INTEGER,
         Ema_Slow INTEGER,
+        Strategy_Id TEXT,
+        Strategy_Params_JSON TEXT,
         PnL_Perc REAL,
         PnL_Value REAL,
         Buy_Order_Id TEXT,
@@ -341,17 +399,21 @@ sql_add_order_buy = """
         Price,
         Qty,
         Ema_Fast,
-        Ema_Slow)
+        Ema_Slow,
+        Strategy_Id,
+        Strategy_Params_JSON)
     VALUES (
-        ?,?,?,?,?,?,?,?,?        
-        );        
+        ?,?,?,?,?,?,?,?,?,?,?
+        );
 """
-def add_order_buy(exchange_order_id: str, date: str, bot: str, symbol: str, price: float, qty: float, ema_fast: int, ema_slow: int):
+def add_order_buy(exchange_order_id: str, date: str, bot: str, symbol: str, price: float, qty: float, ema_fast: int, ema_slow: int, strategy_id: str = "", strategy_params_json: str = ""):
     connection = _get_conn()
 
     side = "BUY"
+    if not strategy_params_json:
+        strategy_params_json = build_strategy_params_json(strategy_id, ema_fast, ema_slow)
     with connection:
-        connection.execute(sql_add_order_buy, (exchange_order_id, date, bot, symbol, side, price, qty, ema_fast, ema_slow))
+        connection.execute(sql_add_order_buy, (exchange_order_id, date, bot, symbol, side, price, qty, ema_fast, ema_slow, strategy_id, strategy_params_json))
 
 sql_add_order_sell = """
     INSERT INTO Orders (
@@ -364,6 +426,8 @@ sql_add_order_sell = """
         Qty,
         Ema_Fast,
         Ema_Slow,
+        Strategy_Id,
+        Strategy_Params_JSON,
         PnL_Perc,
         PnL_Value,
         Buy_Order_Id,
@@ -374,7 +438,7 @@ sql_add_order_sell = """
         Trail_Stop_ATR_At_Exit,
         Highest_Price_Since_Entry_At_Exit,
         Atr_Params_At_Exit)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);        
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);
 """
 def add_order_sell(
     sell_order_id: str,
@@ -387,6 +451,8 @@ def add_order_sell(
     ema_fast: int,
     ema_slow: int,
     exit_reason: str,
+    strategy_id: str = "",
+    strategy_params_json: str = "",
     sell_percentage: int = 100,
     stop_type: str = "",
     stop_trigger_price: float = 0.0,
@@ -444,6 +510,8 @@ def add_order_sell(
             pnl_value = 0
   
     side = "SELL"
+    if not strategy_params_json:
+        strategy_params_json = build_strategy_params_json(strategy_id, ema_fast, ema_slow)
 
     with connection:
         connection.execute(sql_add_order_sell, (sell_order_id, 
@@ -455,6 +523,8 @@ def add_order_sell(
                                                 qty, 
                                                 ema_fast, 
                                                 ema_slow, 
+                                                strategy_id,
+                                                strategy_params_json,
                                                 pnl_perc, 
                                                 pnl_value, 
                                                 order_id, 
@@ -518,6 +588,8 @@ sql_get_orders_by_bot_side_year_month = """
         (os.Qty*os.Price) Sell_Position_Value,
         os.Ema_Fast,
         os.Ema_Slow,
+        os.Strategy_Id,
+        os.Strategy_Params_JSON,
         os.Exit_Reason,
         os.Stop_Type,
         os.Stop_Trigger_Price,
@@ -568,6 +640,9 @@ sql_create_positions_table = """
         Qty REAL,
         Ema_Fast INTEGER,
         Ema_Slow INTEGER,
+        Strategy_Id TEXT,
+        Strategy_Name TEXT,
+        Strategy_Params_JSON TEXT,
         PnL_Perc REAL,
         PnL_Value REAL,
         Duration TEXT,
@@ -582,14 +657,16 @@ sql_create_positions_table = """
 """
 
 sql_insert_position = """
-    INSERT INTO Positions (Bot, Symbol, Position, Rank, Ema_Fast, Ema_Slow)
-        VALUES (?,?,0,?,?,?);        
+    INSERT INTO Positions (Bot, Symbol, Position, Rank, Ema_Fast, Ema_Slow, Strategy_Id, Strategy_Name, Strategy_Params_JSON)
+        VALUES (?,?,0,?,?,?,?,?,?);
 """
-def insert_position(bot: str, symbol: str, ema_fast: int, ema_slow: int):
+def insert_position(bot: str, symbol: str, ema_fast: int, ema_slow: int, strategy_id: str = "", strategy_name: str = "", strategy_params_json: str = ""):
     connection = _get_conn()
     rank = get_rank_from_symbols_by_market_phase_by_symbol(symbol)
+    if not strategy_params_json:
+        strategy_params_json = build_strategy_params_json(strategy_id, ema_fast, ema_slow)
     with connection:
-        connection.execute(sql_insert_position, (bot, symbol, rank, ema_fast, ema_slow))
+        connection.execute(sql_insert_position, (bot, symbol, rank, ema_fast, ema_slow, strategy_id, strategy_name, strategy_params_json))
 
 sql_get_positions_by_position = """
     SELECT *
@@ -614,7 +691,7 @@ def get_positions_by_bot_position(bot: str, position: int):
     return pd.read_sql(sql_get_positions_by_bot_position, connection, params=(bot, position))
 
 sql_get_unrealized_pnl_by_bot = """
-    SELECT pos.Id, pos.Bot, pos.Symbol, pos.PnL_Perc, pos.PnL_Value, pos.Take_Profit_1 as TP1, pos.Take_Profit_2 as TP2, pos.Take_Profit_3 as TP3, pos.Take_Profit_4 as TP4, ROUND((pos.Qty/ord.Qty)*100,2) as "RPQ%", pos.Qty, pos.Buy_Price, (pos.Qty*pos.Buy_Price) Position_Value, pos.Date, pos.Duration, pos.Ema_Fast, pos.Ema_Slow, pos.Trail_Stop_ATR, pos.Highest_Price_Since_Entry
+    SELECT pos.Id, pos.Bot, pos.Symbol, pos.Strategy_Id, pos.Strategy_Name, pos.Strategy_Params_JSON, pos.PnL_Perc, pos.PnL_Value, pos.Take_Profit_1 as TP1, pos.Take_Profit_2 as TP2, pos.Take_Profit_3 as TP3, pos.Take_Profit_4 as TP4, ROUND((pos.Qty/ord.Qty)*100,2) as "RPQ%", pos.Qty, pos.Buy_Price, (pos.Qty*pos.Buy_Price) Position_Value, pos.Date, pos.Duration, pos.Ema_Fast, pos.Ema_Slow, pos.Trail_Stop_ATR, pos.Highest_Price_Since_Entry
     FROM Positions pos
     JOIN Orders ord ON pos.Buy_Order_Id = ord.Exchange_Order_Id 
     WHERE 
@@ -633,8 +710,8 @@ def get_unrealized_pnl_by_bot(bot: str):
     df['Position_Value'] = df['Position_Value'].astype(float)
     df['RPQ%'] = df['RPQ%'].astype(str)
     df['Buy_Price'] = df['Buy_Price'].astype(float)
-    df['Ema_Fast'] = df['Ema_Fast'].astype(int)
-    df['Ema_Slow'] = df['Ema_Slow'].astype(int)
+    df['Ema_Fast'] = df['Ema_Fast'].fillna(0).astype(int)
+    df['Ema_Slow'] = df['Ema_Slow'].fillna(0).astype(int)
     df['Trail_Stop_ATR'] = df['Trail_Stop_ATR'].astype(float)
     df['Highest_Price_Since_Entry'] = df['Highest_Price_Since_Entry'].astype(float)
     return df
@@ -651,6 +728,24 @@ def get_positions_by_bot_symbol_position(bot: str, symbol: str, position: int):
     connection = _get_conn()
     return pd.read_sql(sql_get_positions_by_bot_symbol_position, connection, params=(bot, symbol, position))
 
+sql_get_positions_by_bot_symbol_strategy_position = """
+    SELECT *
+    FROM Positions
+    WHERE
+        Bot = ?
+        AND Symbol = ?
+        AND Strategy_Id = ?
+        AND Position = ?
+"""
+def get_positions_by_bot_symbol_strategy_position(bot: str, symbol: str, strategy_id: str, position: int):
+    connection = _get_conn()
+    return pd.read_sql(sql_get_positions_by_bot_symbol_strategy_position, connection, params=(bot, symbol, strategy_id, position))
+
+sql_get_position_by_id = "SELECT * FROM Positions WHERE Id = ?;"
+def get_position_by_id(position_id: int):
+    connection = _get_conn()
+    return pd.read_sql(sql_get_position_by_id, connection, params=(position_id,))
+
 sql_get_all_positions_by_bot_symbol = """
     SELECT COUNT(*)
     FROM Positions 
@@ -663,6 +758,19 @@ def get_all_positions_by_bot_symbol(bot: str, symbol: str):
     df = pd.read_sql(sql_get_all_positions_by_bot_symbol, connection, params=(bot, symbol,))
     result = int(df.iloc[0, 0]) == 1
     return result
+
+sql_get_all_positions_by_bot_symbol_strategy = """
+    SELECT COUNT(*)
+    FROM Positions
+    WHERE
+        Bot = ?
+        AND Symbol = ?
+        AND Strategy_Id = ?
+"""
+def get_all_positions_by_bot_symbol_strategy(bot: str, symbol: str, strategy_id: str):
+    connection = _get_conn()
+    df = pd.read_sql(sql_get_all_positions_by_bot_symbol_strategy, connection, params=(bot, symbol, strategy_id))
+    return int(df.iloc[0, 0]) >= 1
     
     
 sql_get_distinct_symbol_from_positions_where_position1 = """
@@ -711,6 +819,8 @@ sql_get_top_rank_position_candidates = """
         br.Time_Frame AS Bot,
         mp.Symbol AS Symbol,
         mp.Rank AS Rank,
+        br.Strategy_Id AS Strategy_Id,
+        st.Name AS Strategy_Name,
         br.Ema_Fast AS Ema_Fast,
         br.Ema_Slow AS Ema_Slow,
         br.Return_Perc,
@@ -718,22 +828,25 @@ sql_get_top_rank_position_candidates = """
         br.Max_Drawdown_Perc,
         br.Trades,
         br.Profit_Factor,
-        br.SQN
+        br.SQN,
+        br.Quality_Score,
+        br.Quality_Grade
     FROM Symbols_By_Market_Phase mp
     INNER JOIN Backtesting_Results br ON mp.Symbol = br.Symbol
+    LEFT JOIN Strategies st ON st.Id = br.Strategy_Id
     WHERE
         br.Return_Perc > 0
         AND br.Strategy_Id = ?
         AND NOT EXISTS (
             SELECT 1
             FROM Positions
-            WHERE Bot = br.Time_Frame AND Symbol = mp.Symbol
+            WHERE Bot = br.Time_Frame AND Symbol = mp.Symbol AND Strategy_Id = br.Strategy_Id
         );
 """
 
 sql_insert_top_rank_position = """
-    INSERT INTO Positions (Bot, Symbol, Position, Rank, Ema_Fast, Ema_Slow)
-    VALUES (?, ?, 0, ?, ?, ?);
+    INSERT INTO Positions (Bot, Symbol, Position, Rank, Ema_Fast, Ema_Slow, Strategy_Id, Strategy_Name, Strategy_Params_JSON)
+    VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?);
 """
 
 def add_top_rank_to_positions(strategy_id: str):
@@ -751,6 +864,7 @@ def add_top_rank_to_positions(strategy_id: str):
 
         ema_fast = None if pd.isna(row["Ema_Fast"]) else int(row["Ema_Fast"])
         ema_slow = None if pd.isna(row["Ema_Slow"]) else int(row["Ema_Slow"])
+        strategy_id = str(row["Strategy_Id"])
         to_insert.append(
             (
                 timeframe,
@@ -758,6 +872,9 @@ def add_top_rank_to_positions(strategy_id: str):
                 int(row["Rank"]),
                 ema_fast,
                 ema_slow,
+                strategy_id,
+                str(row.get("Strategy_Name") or strategy_id),
+                build_strategy_params_json(strategy_id, ema_fast, ema_slow),
             )
         )
 
@@ -779,6 +896,12 @@ def set_rank_from_positions(symbol: str, rank: int):
     with connection:
         connection.execute(sql_set_rank_from_positions, (rank, symbol,))
 
+sql_set_rank_from_position = "UPDATE Positions SET Rank = ? WHERE Id = ?"
+def set_rank_from_position(position_id: int, rank: int):
+    connection = _get_conn()
+    with connection:
+        connection.execute(sql_set_rank_from_position, (rank, position_id))
+
 sql_set_backtesting_results_from_positions = """
     UPDATE Positions
     SET
@@ -793,6 +916,17 @@ def set_backtesting_results_from_positions(symbol: str, timeframe: str, ema_fast
     with connection:
         connection.execute(sql_set_backtesting_results_from_positions, (ema_fast, ema_slow, symbol, timeframe))
 
+sql_set_backtesting_results_from_position_strategy = """
+    UPDATE Positions
+    SET Ema_Fast = ?, Ema_Slow = ?, Strategy_Params_JSON = ?
+    WHERE Symbol = ? AND Bot = ? AND Strategy_Id = ? AND Position = 0
+"""
+def set_backtesting_results_from_position_strategy(symbol: str, timeframe: str, strategy_id: str, ema_fast: int, ema_slow: int):
+    connection = _get_conn()
+    strategy_params_json = build_strategy_params_json(strategy_id, ema_fast, ema_slow)
+    with connection:
+        connection.execute(sql_set_backtesting_results_from_position_strategy, (ema_fast, ema_slow, strategy_params_json, symbol, timeframe, strategy_id))
+
 sql_update_position_pnl = """
     UPDATE Positions
     SET 
@@ -805,8 +939,10 @@ sql_update_position_pnl = """
         AND Symbol = ? 
         AND Position = 1;        
 """
-def update_position_pnl(bot: str, symbol: str, curr_price: float):
-    df = get_positions_by_bot_symbol_position(bot, symbol, position=1)
+def update_position_pnl(bot: str, symbol: str, curr_price: float, position_id: int | None = None):
+    df = get_position_by_id(position_id) if position_id is not None else get_positions_by_bot_symbol_position(bot, symbol, position=1)
+    if df.empty:
+        return
     buy_price = float(df.loc[0,'Buy_Price'])
     qty = float(df.loc[0,'Qty'])
     date = str(df.loc[0,'Date'])
@@ -837,7 +973,17 @@ def update_position_pnl(bot: str, symbol: str, curr_price: float):
 
     connection = _get_conn()
     with connection:
-        connection.execute(sql_update_position_pnl, (curr_price, pnl_perc, pnl_value, duration, bot, symbol))
+        if position_id is not None:
+            connection.execute(
+                """
+                UPDATE Positions
+                SET Curr_Price = ?, PnL_Perc = ?, PnL_Value = ?, Duration = ?
+                WHERE Id = ? AND Position = 1
+                """,
+                (curr_price, pnl_perc, pnl_value, duration, position_id),
+            )
+        else:
+            connection.execute(sql_update_position_pnl, (curr_price, pnl_perc, pnl_value, duration, bot, symbol))
 
 sql_set_position_buy = """
     UPDATE Positions
@@ -854,25 +1000,44 @@ sql_set_position_buy = """
         PnL_Value = 0,
         Duration = 0,
         Highest_Price_Since_Entry = ?,
-        Trail_Stop_ATR = 0
+        Trail_Stop_ATR = 0,
+        Strategy_Params_JSON = COALESCE(NULLIF(?, ''), Strategy_Params_JSON)
     WHERE
         Bot = ? 
         AND Symbol = ? ;        
 """
-def set_position_buy(bot: str, symbol: str, qty: float, buy_price: float, date: str, ema_fast: int, ema_slow: int, buy_order_id: str):
+def set_position_buy(bot: str, symbol: str, qty: float, buy_price: float, date: str, ema_fast: int, ema_slow: int, buy_order_id: str, position_id: int | None = None, strategy_id: str = "", strategy_name: str = "", strategy_params_json: str = ""):
     connection = _get_conn()
-    curr_price = buy_price    
+    curr_price = buy_price
+    if not strategy_params_json:
+        strategy_params_json = build_strategy_params_json(strategy_id, ema_fast, ema_slow)
     with connection:
-        connection.execute(sql_set_position_buy, (qty, 
-                                                  buy_price, 
-                                                  curr_price, 
-                                                  date,
-                                                  ema_fast,
-                                                  ema_slow, 
-                                                  buy_order_id, 
-                                                  buy_price,
-                                                  bot, 
-                                                  symbol))
+        if position_id is not None:
+            connection.execute(
+                """
+                UPDATE Positions
+                SET Position = 1, Qty = ?, Buy_Price = ?, Curr_Price = ?, Date = ?,
+                    Ema_Fast = ?, Ema_Slow = ?, Buy_Order_Id = ?, PnL_Perc = 0,
+                    PnL_Value = 0, Duration = 0, Highest_Price_Since_Entry = ?,
+                    Trail_Stop_ATR = 0, Strategy_Id = COALESCE(NULLIF(?, ''), Strategy_Id),
+                    Strategy_Name = COALESCE(NULLIF(?, ''), Strategy_Name),
+                    Strategy_Params_JSON = COALESCE(NULLIF(?, ''), Strategy_Params_JSON)
+                WHERE Id = ?
+                """,
+                (qty, buy_price, curr_price, date, ema_fast, ema_slow, buy_order_id, buy_price, strategy_id, strategy_name, strategy_params_json, position_id),
+            )
+        else:
+            connection.execute(sql_set_position_buy, (qty,
+                                                      buy_price,
+                                                      curr_price,
+                                                      date,
+                                                      ema_fast,
+                                                      ema_slow,
+                                                      buy_order_id,
+                                                      buy_price,
+                                                      strategy_params_json,
+                                                      bot,
+                                                      symbol))
 
 sql_set_position_sell = """
     UPDATE Positions
@@ -898,10 +1063,24 @@ sql_set_position_sell = """
         Bot = ? 
         AND Symbol = ? ;        
 """
-def set_position_sell(bot: str, symbol: str):
+def set_position_sell(bot: str, symbol: str, position_id: int | None = None):
     connection = _get_conn()
     with connection:
-        connection.execute(sql_set_position_sell, (bot, symbol))
+        if position_id is not None:
+            connection.execute(
+                """
+                UPDATE Positions
+                SET Date = NULL, Position = 0, Buy_Price = 0, Curr_Price = 0,
+                    Qty = 0, PnL_Perc = 0, PnL_Value = 0, Duration = 0,
+                    Buy_Order_Id = NULL, Take_Profit_1 = 0, Take_Profit_2 = 0,
+                    Take_Profit_3 = 0, Take_Profit_4 = 0,
+                    Highest_Price_Since_Entry = 0, Trail_Stop_ATR = 0
+                WHERE Id = ?
+                """,
+                (position_id,),
+            )
+        else:
+            connection.execute(sql_set_position_sell, (bot, symbol))
 
 sql_set_position_qty = """
     UPDATE Positions
@@ -912,10 +1091,13 @@ sql_set_position_qty = """
         AND Symbol = ? 
         AND Position = 1;        
 """
-def set_position_qty(bot: str, symbol: str, qty: float):
+def set_position_qty(bot: str, symbol: str, qty: float, position_id: int | None = None):
     connection = _get_conn()
     with connection:
-        connection.execute(sql_set_position_qty, (qty, bot, symbol))
+        if position_id is not None:
+            connection.execute("UPDATE Positions SET Qty = ? WHERE Id = ? AND Position = 1", (qty, position_id))
+        else:
+            connection.execute(sql_set_position_qty, (qty, bot, symbol))
 
 sql_update_position_risk = """
     UPDATE Positions
@@ -932,18 +1114,29 @@ def update_position_risk(
     symbol: str,
     highest_price_since_entry: float,
     trail_stop_atr: float,
+    position_id: int | None = None,
 ):
     connection = _get_conn()
     with connection:
-        connection.execute(
-            sql_update_position_risk,
-            (
-                float(highest_price_since_entry),
-                float(trail_stop_atr),
-                bot,
-                symbol,
-            ),
-        )
+        if position_id is not None:
+            connection.execute(
+                """
+                UPDATE Positions
+                SET Highest_Price_Since_Entry = ?, Trail_Stop_ATR = ?
+                WHERE Id = ? AND Position = 1
+                """,
+                (float(highest_price_since_entry), float(trail_stop_atr), position_id),
+            )
+        else:
+            connection.execute(
+                sql_update_position_risk,
+                (
+                    float(highest_price_since_entry),
+                    float(trail_stop_atr),
+                    bot,
+                    symbol,
+                ),
+            )
 
 sql_set_position_take_profit_1 = """
     UPDATE Positions
@@ -954,10 +1147,13 @@ sql_set_position_take_profit_1 = """
         AND Symbol = ? 
         AND Position = 1;        
 """
-def set_position_take_profit_1(bot: str, symbol: str, take_profit_1: int):
+def set_position_take_profit_1(bot: str, symbol: str, take_profit_1: int, position_id: int | None = None):
     connection = _get_conn()
     with connection:
-        connection.execute(sql_set_position_take_profit_1, (take_profit_1, bot, symbol))
+        if position_id is not None:
+            connection.execute("UPDATE Positions SET Take_Profit_1 = ? WHERE Id = ? AND Position = 1", (take_profit_1, position_id))
+        else:
+            connection.execute(sql_set_position_take_profit_1, (take_profit_1, bot, symbol))
 
 sql_set_position_take_profit_2 = """
     UPDATE Positions
@@ -968,10 +1164,13 @@ sql_set_position_take_profit_2 = """
         AND Symbol = ? 
         AND Position = 1;        
 """
-def set_position_take_profit_2(bot: str, symbol: str, take_profit_2: int):
+def set_position_take_profit_2(bot: str, symbol: str, take_profit_2: int, position_id: int | None = None):
     connection = _get_conn()
     with connection:
-        connection.execute(sql_set_position_take_profit_2, (take_profit_2, bot, symbol))
+        if position_id is not None:
+            connection.execute("UPDATE Positions SET Take_Profit_2 = ? WHERE Id = ? AND Position = 1", (take_profit_2, position_id))
+        else:
+            connection.execute(sql_set_position_take_profit_2, (take_profit_2, bot, symbol))
 
 sql_set_position_take_profit_3 = """
     UPDATE Positions
@@ -982,10 +1181,13 @@ sql_set_position_take_profit_3 = """
         AND Symbol = ? 
         AND Position = 1;        
 """
-def set_position_take_profit_3(bot: str, symbol: str, take_profit_3: int):
+def set_position_take_profit_3(bot: str, symbol: str, take_profit_3: int, position_id: int | None = None):
     connection = _get_conn()
     with connection:
-        connection.execute(sql_set_position_take_profit_3, (take_profit_3, bot, symbol))
+        if position_id is not None:
+            connection.execute("UPDATE Positions SET Take_Profit_3 = ? WHERE Id = ? AND Position = 1", (take_profit_3, position_id))
+        else:
+            connection.execute(sql_set_position_take_profit_3, (take_profit_3, bot, symbol))
 
 sql_set_position_take_profit_4 = """
     UPDATE Positions
@@ -996,10 +1198,13 @@ sql_set_position_take_profit_4 = """
         AND Symbol = ? 
         AND Position = 1;        
 """
-def set_position_take_profit_4(bot: str, symbol: str, take_profit_4: int):
+def set_position_take_profit_4(bot: str, symbol: str, take_profit_4: int, position_id: int | None = None):
     connection = _get_conn()
     with connection:
-        connection.execute(sql_set_position_take_profit_4, (take_profit_4, bot, symbol))
+        if position_id is not None:
+            connection.execute("UPDATE Positions SET Take_Profit_4 = ? WHERE Id = ? AND Position = 1", (take_profit_4, position_id))
+        else:
+            connection.execute(sql_set_position_take_profit_4, (take_profit_4, bot, symbol))
 
 sql_delete_all_positions = "DELETE FROM Positions;"
 def delete_all_positions():
@@ -1221,6 +1426,9 @@ sql_get_all_backtesting_results = """
            br.Kelly_Criterion,
            br.Quality_Score,
            br.Quality_Grade,
+           br.Trading_Approved,
+           br.Trading_Rejection_Reasons,
+           br.Backtest_Config_JSON,
            br.Strategy_Id,
            st.Name as Strategy_Name,
            br.Ema_Fast,
@@ -1605,11 +1813,14 @@ sql_get_top_performers_trading_status = """
     SELECT
         mp.Rank,
         mp.Symbol,
+        br.Strategy_Id,
+        st.Name AS Strategy_Name,
         br.Time_Frame,
         br.Trading_Approved,
         br.Trading_Rejection_Reasons
     FROM Symbols_By_Market_Phase mp
     JOIN Backtesting_Results br ON br.Symbol = mp.Symbol
+    LEFT JOIN Strategies st ON st.Id = br.Strategy_Id
     WHERE br.Strategy_Id = ?
     ORDER BY
         mp.Rank ASC,
@@ -1623,6 +1834,16 @@ sql_get_top_performers_trading_status = """
 """
 def get_top_performers_trading_status(strategy_id: str):
     connection = _get_conn()
+    if isinstance(strategy_id, (list, tuple, set)):
+        strategy_ids = [str(value) for value in strategy_id if str(value).strip()]
+        if not strategy_ids:
+            return pd.DataFrame()
+        placeholders = ",".join("?" for _ in strategy_ids)
+        sql = sql_get_top_performers_trading_status.replace(
+            "WHERE br.Strategy_Id = ?",
+            f"WHERE br.Strategy_Id IN ({placeholders})",
+        )
+        return pd.read_sql(sql, connection, params=tuple(strategy_ids))
     return pd.read_sql(sql_get_top_performers_trading_status, connection, params=(strategy_id,))
     
 sql_get_symbols_from_symbols_by_market_phase = "SELECT Symbol FROM Symbols_By_Market_Phase;"
@@ -2101,67 +2322,89 @@ sql_seed_default_approval_rules = """
       ('SQN_min', 'Minimum System Quality Number (SQN). Screens for robustness beyond raw return (higher is better).'),
       ('Return_Min_Pct', 'Minimum total return percentage over the backtest period (floor for profitability).'),
       ('Profit_Factor_min', 'Hard floor for Profit Factor (gross profit / gross loss). Below this, the strategy is rejected.'),
+      ('Quality_Grade_Min', 'Minimum strategy quality grade required for trading approval. Screening profiles: C = baseline, B = quality-focused, A = top-tier only.'),
+      ('Quality_Score_Min', 'Minimum strategy quality score from 0 to 100. Optional numeric alternative to Quality_Grade_Min.'),
       ('Max_Drawdown_Pct', 'Maximum allowed absolute drawdown percentage. Limits worst peak-to-trough equity loss.'),
       ('Require_Drawdown_Limit_When_Underperform_BuyHold',
        'If the strategy underperforms Buy & Hold, enforce the drawdown limit (1=enable, 0=disable).');
 
     INSERT OR IGNORE INTO Backtest_Approval_Rules (rule_id, rule_value, timeframe, enabled)
-    SELECT id, 1.0, NULL, 1
+    SELECT id, 1.0, NULL, 0
     FROM Approval_Rule_Definitions
     WHERE rule_name = 'SQN_min';
 
     UPDATE Backtest_Approval_Rules
-    SET rule_value = 1.0, enabled = 1
+    SET rule_value = 1.0, enabled = 0
     WHERE rule_id = (SELECT id FROM Approval_Rule_Definitions WHERE rule_name = 'SQN_min')
       AND timeframe IS NULL;
 
     INSERT OR IGNORE INTO Backtest_Approval_Rules (rule_id, rule_value, timeframe, enabled)
-    SELECT id, 0.0, NULL, 1
+    SELECT id, 0.0, NULL, 0
     FROM Approval_Rule_Definitions
     WHERE rule_name = 'Return_Min_Pct';
 
     UPDATE Backtest_Approval_Rules
-    SET rule_value = 0.0, enabled = 1
+    SET rule_value = 0.0, enabled = 0
     WHERE rule_id = (SELECT id FROM Approval_Rule_Definitions WHERE rule_name = 'Return_Min_Pct')
       AND timeframe IS NULL;
 
     INSERT OR IGNORE INTO Backtest_Approval_Rules (rule_id, rule_value, timeframe, enabled)
-    SELECT id, 1.0, NULL, 1
+    SELECT id, 1.0, NULL, 0
     FROM Approval_Rule_Definitions
     WHERE rule_name = 'Profit_Factor_min';
 
     UPDATE Backtest_Approval_Rules
-    SET rule_value = 1.0, enabled = 1
+    SET rule_value = 1.0, enabled = 0
     WHERE rule_id = (SELECT id FROM Approval_Rule_Definitions WHERE rule_name = 'Profit_Factor_min')
       AND timeframe IS NULL;
 
     INSERT OR IGNORE INTO Backtest_Approval_Rules (rule_id, rule_value, timeframe, enabled)
-    SELECT id, 60, '1h', 1
+    SELECT id, 'C', NULL, 1
+    FROM Approval_Rule_Definitions
+    WHERE rule_name = 'Quality_Grade_Min';
+
+    UPDATE Backtest_Approval_Rules
+    SET rule_value = 'C', enabled = 1
+    WHERE rule_id = (SELECT id FROM Approval_Rule_Definitions WHERE rule_name = 'Quality_Grade_Min')
+      AND timeframe IS NULL;
+
+    INSERT OR IGNORE INTO Backtest_Approval_Rules (rule_id, rule_value, timeframe, enabled)
+    SELECT id, 70.0, NULL, 0
+    FROM Approval_Rule_Definitions
+    WHERE rule_name = 'Quality_Score_Min';
+
+    UPDATE Backtest_Approval_Rules
+    SET rule_value = 70.0, enabled = 0
+    WHERE rule_id = (SELECT id FROM Approval_Rule_Definitions WHERE rule_name = 'Quality_Score_Min')
+      AND timeframe IS NULL;
+
+    INSERT OR IGNORE INTO Backtest_Approval_Rules (rule_id, rule_value, timeframe, enabled)
+    SELECT id, 60, '1h', 0
     FROM Approval_Rule_Definitions
     WHERE rule_name = 'Min_Trades';
 
     UPDATE Backtest_Approval_Rules
-    SET rule_value = 60, enabled = 1
+    SET rule_value = 60, enabled = 0
     WHERE rule_id = (SELECT id FROM Approval_Rule_Definitions WHERE rule_name = 'Min_Trades')
       AND timeframe = '1h';
 
     INSERT OR IGNORE INTO Backtest_Approval_Rules (rule_id, rule_value, timeframe, enabled)
-    SELECT id, 30, '4h', 1
+    SELECT id, 30, '4h', 0
     FROM Approval_Rule_Definitions
     WHERE rule_name = 'Min_Trades';
 
     UPDATE Backtest_Approval_Rules
-    SET rule_value = 30, enabled = 1
+    SET rule_value = 30, enabled = 0
     WHERE rule_id = (SELECT id FROM Approval_Rule_Definitions WHERE rule_name = 'Min_Trades')
       AND timeframe = '4h';
 
     INSERT OR IGNORE INTO Backtest_Approval_Rules (rule_id, rule_value, timeframe, enabled)
-    SELECT id, 15, '1d', 1
+    SELECT id, 15, '1d', 0
     FROM Approval_Rule_Definitions
     WHERE rule_name = 'Min_Trades';
 
     UPDATE Backtest_Approval_Rules
-    SET rule_value = 15, enabled = 1
+    SET rule_value = 15, enabled = 0
     WHERE rule_id = (SELECT id FROM Approval_Rule_Definitions WHERE rule_name = 'Min_Trades')
       AND timeframe = '1d';
 
@@ -2217,6 +2460,24 @@ sql_create_job_schedules_table = """
         enabled INTEGER NOT NULL DEFAULT 1,
         description TEXT,
         last_run TEXT
+    );
+"""
+
+sql_create_backtesting_jobs_table = """
+    CREATE TABLE IF NOT EXISTS Backtesting_Jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        batch_id TEXT NOT NULL,
+        strategy_id TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        timeframe TEXT NOT NULL,
+        optimize INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'queued',
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        return_code INTEGER,
+        log_path TEXT,
+        error_message TEXT
     );
 """
 
@@ -2310,6 +2571,7 @@ def create_tables():
 
         connection.execute(create_orders_table)
         _ensure_orders_columns(connection)
+        connection.execute(sql_create_settings_table)
         connection.execute(sql_create_positions_table)
         _ensure_positions_columns(connection)
         connection.execute(sql_create_blacklist_table)
@@ -2355,8 +2617,13 @@ def create_tables():
         cursor = connection.execute("SELECT COUNT(*) FROM Approval_Rule_Definitions")
         if cursor.fetchone()[0] == 0:
             connection.executescript(sql_seed_default_approval_rules)
+        ensure_quality_approval_rules()
         # job schedules
         connection.execute(sql_create_job_schedules_table)
+        connection.execute(sql_create_backtesting_jobs_table)
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_backtesting_jobs_status_created ON Backtesting_Jobs(status, created_at)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_backtesting_jobs_batch ON Backtesting_Jobs(batch_id)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_backtesting_jobs_target ON Backtesting_Jobs(strategy_id, symbol, timeframe, status)")
 
         # --------
         # apply database scripts updates
@@ -2465,6 +2732,9 @@ def _ensure_positions_columns(connection):
     required_columns = {
         "Highest_Price_Since_Entry": "REAL NOT NULL DEFAULT 0",
         "Trail_Stop_ATR": "REAL NOT NULL DEFAULT 0",
+        "Strategy_Id": "TEXT",
+        "Strategy_Name": "TEXT",
+        "Strategy_Params_JSON": "TEXT",
     }
 
     for column_name, column_type in required_columns.items():
@@ -2472,6 +2742,65 @@ def _ensure_positions_columns(connection):
             connection.execute(
                 f"ALTER TABLE Positions ADD COLUMN {column_name} {column_type}"
             )
+
+    try:
+        main_strategy = get_setting("main_strategy")
+    except sqlite3.Error:
+        main_strategy = "ema_cross_with_market_phases"
+    try:
+        main_strategy_name = get_strategy_name(main_strategy)
+    except Exception:
+        main_strategy_name = main_strategy
+    connection.execute(
+        "UPDATE Positions SET Strategy_Id = ? WHERE Strategy_Id IS NULL OR Strategy_Id = ''",
+        (main_strategy,),
+    )
+    connection.execute(
+        "UPDATE Positions SET Strategy_Name = ? WHERE Strategy_Name IS NULL OR Strategy_Name = ''",
+        (main_strategy_name,),
+    )
+    rows = connection.execute(
+        """
+        SELECT Id, Strategy_Id, Ema_Fast, Ema_Slow
+        FROM Positions
+        WHERE Strategy_Params_JSON IS NULL OR Strategy_Params_JSON = ''
+        """
+    ).fetchall()
+    for position_id, strategy_id, ema_fast, ema_slow in rows:
+        connection.execute(
+            "UPDATE Positions SET Strategy_Params_JSON = ? WHERE Id = ?",
+            (build_strategy_params_json(strategy_id, ema_fast, ema_slow), position_id),
+        )
+
+def _ensure_orders_columns(connection):
+    cursor = connection.execute("PRAGMA table_info(Orders)")
+    existing_cols = {row[1] for row in cursor.fetchall()}
+    required_columns = {
+        "Stop_Type": "TEXT",
+        "Stop_Trigger_Price": "REAL",
+        "Trail_Stop_ATR_At_Exit": "REAL",
+        "Highest_Price_Since_Entry_At_Exit": "REAL",
+        "Atr_Params_At_Exit": "TEXT",
+        "Strategy_Id": "TEXT",
+        "Strategy_Params_JSON": "TEXT",
+    }
+    for column_name, column_type in required_columns.items():
+        if column_name not in existing_cols:
+            connection.execute(
+                f"ALTER TABLE Orders ADD COLUMN {column_name} {column_type}"
+            )
+    rows = connection.execute(
+        """
+        SELECT Id, Strategy_Id, Ema_Fast, Ema_Slow
+        FROM Orders
+        WHERE Strategy_Params_JSON IS NULL OR Strategy_Params_JSON = ''
+        """
+    ).fetchall()
+    for order_id, strategy_id, ema_fast, ema_slow in rows:
+        connection.execute(
+            "UPDATE Orders SET Strategy_Params_JSON = ? WHERE Id = ?",
+            (build_strategy_params_json(strategy_id, ema_fast, ema_slow), order_id),
+        )
 
 def apply_database_scripts_updates():
     connection = _get_conn()
@@ -2544,6 +2873,215 @@ def ensure_job_schedules():
                 "INSERT OR IGNORE INTO Job_Schedules (name, script, script_args, cadence, enabled, description) VALUES (?, ?, ?, ?, ?, ?)",
                 (name, script, script_args, cadence, enabled, description),
             )
+
+def ensure_backtesting_jobs():
+    connection = _get_conn()
+    with connection:
+        connection.execute(sql_create_backtesting_jobs_table)
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_backtesting_jobs_status_created ON Backtesting_Jobs(status, created_at)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_backtesting_jobs_batch ON Backtesting_Jobs(batch_id)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_backtesting_jobs_target ON Backtesting_Jobs(strategy_id, symbol, timeframe, status)")
+
+def enqueue_backtesting_jobs(jobs, batch_id: str = ""):
+    import uuid
+
+    connection = _get_conn()
+    batch_id = batch_id or uuid.uuid4().hex
+    created_at = datetime.utcnow().isoformat(timespec="seconds")
+    queued = []
+    skipped = []
+
+    with connection:
+        connection.execute(sql_create_backtesting_jobs_table)
+        for job in jobs:
+            strategy_id = str(job["strategy_id"]).strip()
+            symbol = str(job["symbol"]).strip().upper()
+            timeframe = str(job["timeframe"]).strip()
+            optimize = 1 if bool(job.get("optimize")) else 0
+            cursor = connection.execute(
+                """
+                SELECT id
+                FROM Backtesting_Jobs
+                WHERE strategy_id = ?
+                  AND symbol = ?
+                  AND timeframe = ?
+                  AND status IN ('queued', 'running')
+                LIMIT 1
+                """,
+                (strategy_id, symbol, timeframe),
+            )
+            existing = cursor.fetchone()
+            if existing:
+                skipped.append(
+                    {
+                        "id": existing[0],
+                        "strategy_id": strategy_id,
+                        "symbol": symbol,
+                        "timeframe": timeframe,
+                    }
+                )
+                continue
+
+            cursor = connection.execute(
+                """
+                INSERT INTO Backtesting_Jobs (
+                    batch_id, strategy_id, symbol, timeframe, optimize, status, created_at
+                ) VALUES (?, ?, ?, ?, ?, 'queued', ?)
+                """,
+                (batch_id, strategy_id, symbol, timeframe, optimize, created_at),
+            )
+            queued.append(
+                {
+                    "id": cursor.lastrowid,
+                    "strategy_id": strategy_id,
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                }
+            )
+
+    return {"batch_id": batch_id, "queued": queued, "skipped": skipped}
+
+def get_backtesting_jobs(limit: int = 50):
+    connection = _get_conn()
+    connection.execute(sql_create_backtesting_jobs_table)
+    return pd.read_sql(
+        """
+        SELECT
+            id,
+            batch_id,
+            strategy_id,
+            symbol,
+            timeframe,
+            optimize,
+            status,
+            created_at,
+            started_at,
+            finished_at,
+            return_code,
+            log_path,
+            error_message
+        FROM Backtesting_Jobs
+        ORDER BY
+            CASE status
+                WHEN 'running' THEN 0
+                WHEN 'queued' THEN 1
+                WHEN 'failed' THEN 2
+                ELSE 3
+            END,
+            COALESCE(started_at, created_at) DESC,
+            id DESC
+        LIMIT ?
+        """,
+        connection,
+        params=(int(limit),),
+    )
+
+def get_backtesting_job_counts():
+    connection = _get_conn()
+    connection.execute(sql_create_backtesting_jobs_table)
+    return pd.read_sql(
+        """
+        SELECT status, COUNT(*) AS count
+        FROM Backtesting_Jobs
+        GROUP BY status
+        """,
+        connection,
+    )
+
+def get_backtesting_job_counts_by_batch(batch_id: str):
+    connection = _get_conn()
+    connection.execute(sql_create_backtesting_jobs_table)
+    return pd.read_sql(
+        """
+        SELECT status, COUNT(*) AS count
+        FROM Backtesting_Jobs
+        WHERE batch_id = ?
+        GROUP BY status
+        """,
+        connection,
+        params=(str(batch_id),),
+    )
+
+def claim_next_backtesting_job():
+    connection = _get_conn()
+    started_at = datetime.utcnow().isoformat(timespec="seconds")
+    with connection:
+        connection.execute(sql_create_backtesting_jobs_table)
+        cursor = connection.execute(
+            """
+            SELECT id, batch_id, strategy_id, symbol, timeframe, optimize
+            FROM Backtesting_Jobs
+            WHERE status = 'queued'
+            ORDER BY created_at ASC, id ASC
+            LIMIT 1
+            """
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+
+        job_id = row[0]
+        connection.execute(
+            """
+            UPDATE Backtesting_Jobs
+            SET status = 'running',
+                started_at = ?,
+                error_message = NULL,
+                return_code = NULL
+            WHERE id = ? AND status = 'queued'
+            """,
+            (started_at, job_id),
+        )
+
+    return {
+        "id": row[0],
+        "batch_id": row[1],
+        "strategy_id": row[2],
+        "symbol": row[3],
+        "timeframe": row[4],
+        "optimize": bool(row[5]),
+    }
+
+def set_backtesting_job_log_path(job_id: int, log_path: str):
+    connection = _get_conn()
+    with connection:
+        connection.execute(
+            "UPDATE Backtesting_Jobs SET log_path = ? WHERE id = ?",
+            (str(log_path), int(job_id)),
+        )
+
+def complete_backtesting_job(job_id: int, return_code: int, error_message: str = ""):
+    connection = _get_conn()
+    finished_at = datetime.utcnow().isoformat(timespec="seconds")
+    status = "completed" if int(return_code) == 0 else "failed"
+    with connection:
+        connection.execute(
+            """
+            UPDATE Backtesting_Jobs
+            SET status = ?,
+                finished_at = ?,
+                return_code = ?,
+                error_message = ?
+            WHERE id = ?
+            """,
+            (status, finished_at, int(return_code), str(error_message or ""), int(job_id)),
+        )
+
+def reset_running_backtesting_jobs(error_message: str = "Interrupted before completion."):
+    connection = _get_conn()
+    finished_at = datetime.utcnow().isoformat(timespec="seconds")
+    with connection:
+        connection.execute(sql_create_backtesting_jobs_table)
+        connection.execute(
+            """
+            UPDATE Backtesting_Jobs
+            SET status = 'failed',
+                finished_at = ?,
+                error_message = ?
+            WHERE status = 'running'
+            """,
+            (finished_at, error_message),
+        )
 
 def get_job_schedules():
     connection = _get_conn()
@@ -2767,7 +3305,90 @@ def get_Backtest_Approval_Rules():
     """
     return pd.read_sql(sql, connection)
 
-def upsert_backtest_approval_rule(rule_name: str, rule_value: float, timeframe: str | None, enabled: bool):
+QUALITY_GRADE_RANKS = {"F": 1, "D": 2, "C": 3, "B": 4, "A": 5}
+
+
+def _normalize_approval_rule_value(rule_name: str, rule_value):
+    if rule_name == "Quality_Grade_Min":
+        grade = str(rule_value or "").strip().upper()
+        if grade not in QUALITY_GRADE_RANKS:
+            raise ValueError("Quality_Grade_Min must be one of A, B, C, D, or F.")
+        return grade
+    return float(rule_value)
+
+
+def _ensure_global_approval_rule(rule_name: str, description: str, rule_value, enabled: bool):
+    connection = _get_conn()
+    with connection:
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO Approval_Rule_Definitions (rule_name, description)
+            VALUES (?, ?)
+            """,
+            (rule_name, description),
+        )
+        rule_id_row = connection.execute(
+            "SELECT id FROM Approval_Rule_Definitions WHERE rule_name = ?",
+            (rule_name,),
+        ).fetchone()
+        if not rule_id_row:
+            return
+        rule_id = rule_id_row[0]
+        connection.execute(
+            "UPDATE Backtest_Approval_Rules SET timeframe = NULL WHERE rule_id = ? AND timeframe = 'global'",
+            (rule_id,),
+        )
+        connection.execute(
+            """
+            DELETE FROM Backtest_Approval_Rules
+            WHERE rule_id = ?
+              AND timeframe IS NULL
+              AND id NOT IN (
+                  SELECT MAX(id)
+                  FROM Backtest_Approval_Rules
+                  WHERE rule_id = ? AND timeframe IS NULL
+              )
+            """,
+            (rule_id, rule_id),
+        )
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO Backtest_Approval_Rules (rule_id, rule_value, timeframe, enabled)
+            SELECT ?, ?, NULL, ?
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM Backtest_Approval_Rules
+                WHERE rule_id = ? AND timeframe IS NULL
+            )
+            """,
+            (rule_id, _normalize_approval_rule_value(rule_name, rule_value), 1 if enabled else 0, rule_id),
+        )
+
+
+def ensure_quality_approval_rules():
+    _ensure_global_approval_rule(
+        rule_name="Quality_Grade_Min",
+        description="Minimum strategy quality grade required for trading approval. Screening profiles: C = baseline, B = quality-focused, A = top-tier only.",
+        rule_value="C",
+        enabled=True,
+    )
+    _ensure_global_approval_rule(
+        rule_name="Quality_Score_Min",
+        description="Minimum strategy quality score from 0 to 100. Optional numeric alternative to Quality_Grade_Min.",
+        rule_value=70.0,
+        enabled=False,
+    )
+
+
+def reset_backtest_approval_rules_to_defaults():
+    connection = _get_conn()
+    with connection:
+        connection.execute("DELETE FROM Backtest_Approval_Rules")
+        connection.executescript(sql_seed_default_approval_rules)
+        ensure_quality_approval_rules()
+
+
+def upsert_backtest_approval_rule(rule_name: str, rule_value, timeframe: str | None, enabled: bool):
     connection = _get_conn()
     rule_id_row = connection.execute(
         "SELECT id FROM Approval_Rule_Definitions WHERE rule_name = ?",
@@ -2776,6 +3397,7 @@ def upsert_backtest_approval_rule(rule_name: str, rule_value: float, timeframe: 
     if not rule_id_row:
         return False
     rule_id = rule_id_row[0]
+    normalized_rule_value = _normalize_approval_rule_value(rule_name, rule_value)
     with connection:
         # Clean up duplicate global rules (timeframe NULL) keeping the newest row
         connection.execute(
@@ -2802,7 +3424,7 @@ def upsert_backtest_approval_rule(rule_name: str, rule_value: float, timeframe: 
                 SET rule_value = ?, enabled = ?
                 WHERE rule_id = ? AND (timeframe IS NULL OR timeframe = 'global')
                 """,
-                (float(rule_value), 1 if enabled else 0, rule_id),
+                (normalized_rule_value, 1 if enabled else 0, rule_id),
             )
             if cursor.rowcount == 0:
                 connection.execute(
@@ -2810,7 +3432,7 @@ def upsert_backtest_approval_rule(rule_name: str, rule_value: float, timeframe: 
                     INSERT INTO Backtest_Approval_Rules (rule_id, rule_value, timeframe, enabled)
                     VALUES (?, ?, NULL, ?)
                     """,
-                    (rule_id, float(rule_value), 1 if enabled else 0),
+                    (rule_id, normalized_rule_value, 1 if enabled else 0),
                 )
         else:
             cursor = connection.execute(
@@ -2819,7 +3441,7 @@ def upsert_backtest_approval_rule(rule_name: str, rule_value: float, timeframe: 
                 SET rule_value = ?, enabled = ?
                 WHERE rule_id = ? AND timeframe = ?
                 """,
-                (float(rule_value), 1 if enabled else 0, rule_id, timeframe),
+                (normalized_rule_value, 1 if enabled else 0, rule_id, timeframe),
             )
             if cursor.rowcount == 0:
                 connection.execute(
@@ -2827,7 +3449,7 @@ def upsert_backtest_approval_rule(rule_name: str, rule_value: float, timeframe: 
                     INSERT INTO Backtest_Approval_Rules (rule_id, rule_value, timeframe, enabled)
                     VALUES (?, ?, ?, ?)
                     """,
-                    (rule_id, float(rule_value), timeframe, 1 if enabled else 0),
+                    (rule_id, normalized_rule_value, timeframe, 1 if enabled else 0),
                 )
     return True
 
@@ -2863,7 +3485,10 @@ def _load_enabled_rules_by_timeframe(timeframe: str):
           AND r.timeframe = ?
     """
     rows = connection.execute(sql, (timeframe,)).fetchall()
-    return {name: float(value) for name, value in rows}
+    return {
+        name: _normalize_approval_rule_value(name, value)
+        for name, value in rows
+    }
 
 def _load_enabled_rules_global():
     connection = _get_conn()
@@ -2875,7 +3500,10 @@ def _load_enabled_rules_global():
           AND r.timeframe IS NULL
     """
     rows = connection.execute(sql).fetchall()
-    return {name: float(value) for name, value in rows}
+    return {
+        name: _normalize_approval_rule_value(name, value)
+        for name, value in rows
+    }
 
 def resolve_Backtest_Approval_Rules(timeframe: str):
     rules = _load_enabled_rules_global()
@@ -2900,6 +3528,8 @@ def is_backtest_approved(timeframe: str, stats_row):
     profit_factor = _get("Profit_Factor")
     sqn = _get("SQN")
     max_drawdown = _get("Max_Drawdown_Perc")
+    quality_score = _get("Quality_Score")
+    quality_grade = str(stats_row.get("Quality_Grade", "") or "").strip().upper()
 
     if "Return_Min_Pct" in rules and return_perc is not None:
         if return_perc <= rules["Return_Min_Pct"]:
@@ -2913,6 +3543,17 @@ def is_backtest_approved(timeframe: str, stats_row):
     if "Profit_Factor_min" in rules and profit_factor is not None:
         if profit_factor <= rules["Profit_Factor_min"]:
             reasons.append("Profit_Factor_min")
+    if "Quality_Grade_Min" in rules:
+        minimum_grade = str(rules["Quality_Grade_Min"]).strip().upper()
+        if (
+            quality_grade not in QUALITY_GRADE_RANKS
+            or minimum_grade not in QUALITY_GRADE_RANKS
+            or QUALITY_GRADE_RANKS[quality_grade] < QUALITY_GRADE_RANKS[minimum_grade]
+        ):
+            reasons.append("Quality_Grade_Min")
+    if "Quality_Score_Min" in rules:
+        if quality_score is None or quality_score < rules["Quality_Score_Min"]:
+            reasons.append("Quality_Score_Min")
 
     require_dd = rules.get("Require_Drawdown_Limit_When_Underperform_BuyHold")
     if require_dd is not None and int(require_dd) == 1 and "Max_Drawdown_Pct" in rules:
@@ -2930,6 +3571,7 @@ conn = connect()                  # open global connection
 create_tables()                   # create/update schema
 migrate_config_to_db()            # migrate config.yaml to the DB (uses _get_conn internally)
 ensure_job_schedules()            # seed default schedules
+ensure_backtesting_jobs()         # create backtesting job queue
 ensure_backtesting_settings()     # seed backtesting settings
 # --- End of module initialization ---
 

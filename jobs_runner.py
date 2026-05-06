@@ -11,6 +11,7 @@ import utils.telegram as telegram
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 PYTHON = sys.executable
 MAX_PARALLEL = 10
+BACKTESTING_JOBS_DIR = os.path.join("static", "backtest_results", "jobs")
 
 
 def _extract_main_timeframe(schedule_name: str):
@@ -68,13 +69,92 @@ def _sleep_until_next_minute():
     if sleep_seconds > 0:
         time.sleep(sleep_seconds)
 
+def _start_next_backtesting_job():
+    job = database.claim_next_backtesting_job()
+    if job is None:
+        return None
+
+    os.makedirs(os.path.join(ROOT_DIR, BACKTESTING_JOBS_DIR), exist_ok=True)
+    log_path = os.path.join(BACKTESTING_JOBS_DIR, f"{job['id']}.log")
+    database.set_backtesting_job_log_path(job["id"], log_path)
+    log_abs_path = os.path.join(ROOT_DIR, log_path)
+    log_file = open(log_abs_path, "w", encoding="utf-8")
+    command = [
+        PYTHON,
+        "my_backtesting.py",
+        "--symbol",
+        job["symbol"],
+        "--timeframe",
+        job["timeframe"],
+        "--strategy",
+        job["strategy_id"],
+    ]
+    if job["optimize"]:
+        command.append("--optimize")
+
+    started_at = datetime.now(timezone.utc).isoformat()
+    log_file.write(
+        f"[{started_at}] Running backtest job {job['id']}: "
+        f"{job['strategy_id']} - {job['symbol']} - {job['timeframe']} "
+        f"(optimize={job['optimize']})\n"
+    )
+    log_file.flush()
+    print(
+        f"[{started_at}] Running backtest job {job['id']} "
+        f"({job['strategy_id']} - {job['symbol']} - {job['timeframe']})"
+    )
+
+    process = subprocess.Popen(
+        command,
+        cwd=ROOT_DIR,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    return {"job": job, "process": process, "log_file": log_file}
+
+def _finish_backtesting_job(running_job):
+    job = running_job["job"]
+    process = running_job["process"]
+    log_file = running_job["log_file"]
+    return_code = process.poll()
+    if return_code is None:
+        return False
+
+    finished_at = datetime.now(timezone.utc).isoformat()
+    log_file.write(f"\n[{finished_at}] Backtest job finished with return code {return_code}.\n")
+    log_file.flush()
+    log_file.close()
+    error_message = "" if return_code == 0 else "Backtest subprocess failed. Check the job log."
+    database.complete_backtesting_job(job["id"], return_code, error_message)
+    print(f"[{finished_at}] Backtest job {job['id']} finished with return code {return_code}")
+    return True
+
 def run_loop():
     print("jobs_runner started (UTC).")
+    database.reset_running_backtesting_jobs("jobs_runner restarted before this job completed.")
     running = []
+    running_backtesting_job = None
     while True:
-        _sleep_until_next_minute()
         now_utc = datetime.now(timezone.utc)
         running = [(name, proc) for name, proc in running if proc.poll() is None]
+
+        if running_backtesting_job is not None and _finish_backtesting_job(running_backtesting_job):
+            running_backtesting_job = None
+
+        if running_backtesting_job is None:
+            try:
+                running_backtesting_job = _start_next_backtesting_job()
+            except Exception as e:
+                msg = f"[backtesting_runner] failed to start queued job: {repr(e)}"
+                print(msg)
+                try:
+                    telegram.send_telegram_message(telegram.telegram_token_errors,
+                                                   telegram.EMOJI_WARNING,
+                                                   msg)
+                except Exception:
+                    pass
+
         try:
             schedules = database.get_job_schedules()
         except Exception as e:
@@ -128,7 +208,7 @@ def run_loop():
                 except Exception:
                     pass
 
-        time.sleep(0.1)
+        time.sleep(1)
 
 if __name__ == "__main__":
     run_loop()

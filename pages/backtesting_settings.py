@@ -1,5 +1,6 @@
 import streamlit as st
 import time
+import pandas as pd
 
 import utils.database as database
 import utils.icons as icons
@@ -12,10 +13,20 @@ MAXIMIZE_OPTIONS = {
     "Sortino Ratio": "Like Sharpe but penalizes downside more.",
 }
 
+QUALITY_GRADE_VALUES = {"A", "B", "C", "D", "F"}
+
 BUY_HOLD_START_MODE_OPTIONS = {
     "indicator_warmup": "After indicator warm-up",
     "full_period": "From first data candle",
 }
+
+QUALITY_GRADE_SCALE = [
+    {"Grade": "A", "Quality Score": ">= 85", "Interpretation": "Excellent"},
+    {"Grade": "B", "Quality Score": "70 - 84.99", "Interpretation": "Strong"},
+    {"Grade": "C", "Quality Score": "55 - 69.99", "Interpretation": "Acceptable / moderate"},
+    {"Grade": "D", "Quality Score": "40 - 54.99", "Interpretation": "Weak"},
+    {"Grade": "F", "Quality Score": "< 40", "Interpretation": "Rejectable"},
+]
 
 
 def approval_rules_section():
@@ -55,6 +66,9 @@ def approval_rules_section():
     editable_rules["description"] = editable_rules["rule_name"].map(desc_map).fillna("")
     editable_rules["timeframe"] = editable_rules["timeframe"].fillna("global")
     editable_rules["enabled"] = editable_rules["enabled"].fillna(1).astype(bool)
+    editable_rules["rule_value"] = editable_rules["rule_value"].apply(
+        lambda value: "" if pd.isna(value) else str(value)
+    )
 
     edited_rules = st.data_editor(
         editable_rules,
@@ -63,7 +77,7 @@ def approval_rules_section():
         column_config={
             "rule_name": st.column_config.SelectboxColumn("Rule", options=rule_names),
             "description": st.column_config.TextColumn("Description"),
-            "rule_value": st.column_config.NumberColumn("Value"),
+            "rule_value": st.column_config.TextColumn("Value"),
             "timeframe": st.column_config.SelectboxColumn("Timeframe", options=timeframe_options),
             "enabled": st.column_config.CheckboxColumn("Enabled"),
         },
@@ -79,10 +93,42 @@ def approval_rules_section():
             normalized = edited_rules.copy()
             normalized["timeframe"] = normalized["timeframe"].fillna("global")
             normalized["enabled"] = normalized["enabled"].fillna(True).astype(bool)
-            missing_required = normalized["rule_name"].isna() | (normalized["rule_name"].astype(str).str.strip() == "") | normalized["rule_value"].isna()
+            missing_required = (
+                normalized["rule_name"].isna()
+                | (normalized["rule_name"].astype(str).str.strip() == "")
+                | normalized["rule_value"].isna()
+                | (normalized["rule_value"].astype(str).str.strip() == "")
+            )
             if missing_required.any():
                 st.error("Rule and Value are required for each row.")
                 st.stop()
+
+            grade_mask = normalized["rule_name"] == "Quality_Grade_Min"
+            if grade_mask.any():
+                normalized.loc[grade_mask, "rule_value"] = (
+                    normalized.loc[grade_mask, "rule_value"]
+                    .astype(str)
+                    .str.strip()
+                    .str.upper()
+                )
+                invalid_grade = ~normalized.loc[grade_mask, "rule_value"].isin(
+                    QUALITY_GRADE_VALUES
+                )
+                if invalid_grade.any():
+                    st.error("Quality_Grade_Min must be one of A, B, C, D, or F.")
+                    st.stop()
+
+            numeric_mask = ~grade_mask
+            if numeric_mask.any():
+                numeric_values = pd.to_numeric(
+                    normalized.loc[numeric_mask, "rule_value"],
+                    errors="coerce",
+                )
+                if numeric_values.isna().any():
+                    st.error("Value must be numeric for all rules except Quality_Grade_Min.")
+                    st.stop()
+                normalized.loc[numeric_mask, "rule_value"] = numeric_values
+
             if (normalized["rule_name"] == "Require_Drawdown_Limit_When_Underperform_BuyHold").any():
                 rd_mask = normalized["rule_name"] == "Require_Drawdown_Limit_When_Underperform_BuyHold"
                 normalized.loc[rd_mask, "rule_value"] = (
@@ -136,6 +182,13 @@ def approval_rules_section():
 
         if st.button("Discard Changes", icon=icons.ICON_CANCEL):
             st.session_state.pop("backtest_rules_editor", None)
+            st.rerun(scope="fragment")
+
+        if st.button("Restore Default Rules", icon=icons.ICON_REFRESH):
+            database.reset_backtest_approval_rules_to_defaults()
+            after_rules_buttons_container.success("Approval rules restored to defaults.")
+            st.session_state.pop("backtest_rules_editor", None)
+            time.sleep(1.0)
             st.rerun(scope="fragment")
 
 @st.fragment
@@ -339,6 +392,22 @@ def render_backtest_settings():
                 unsafe_allow_html=True,
             )
         quality_score_settings_actions = st.container()
+
+        st.subheader("Grade Scale")
+        st.caption(
+            "Use this scale when choosing approval rules. A default "
+            "Quality_Grade_Min of C keeps Grade A, B and C backtests."
+        )
+        st.dataframe(
+            QUALITY_GRADE_SCALE,
+            hide_index=True,
+            width="content",
+            column_config={
+                "Grade": st.column_config.TextColumn("Grade", width="small"),
+                "Quality Score": st.column_config.TextColumn("Quality Score"),
+                "Interpretation": st.column_config.TextColumn("Interpretation"),
+            },
+        )
 
     def save_backtesting_settings():
         if market_phase_1h_sma_fast >= market_phase_1h_sma_slow:

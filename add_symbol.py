@@ -35,8 +35,11 @@ def run(settings=None):
     strategy_module = importlib.import_module('my_backtesting')
         
     df_strategies = database.get_strategies_for_main()
-    # Move row with current main strategy to the top to be the first to be calculated
-    df_strategies = pd.concat([df_strategies[df_strategies['Id'] == settings.strategy_id], df_strategies[df_strategies['Id'] != settings.strategy_id]])
+    selected_strategy_ids = list(getattr(settings, "main_strategies", [settings.strategy_id]))
+    selected_strategy_set = set(selected_strategy_ids)
+    selected_order = {strategy_id: idx for idx, strategy_id in enumerate(selected_strategy_ids)}
+    df_strategies["_Selected_Order"] = df_strategies["Id"].map(selected_order).fillna(9999)
+    df_strategies = df_strategies.sort_values(["_Selected_Order", "Id"]).drop(columns=["_Selected_Order"])
 
     for index, row in df_strategies.iterrows():    
         # Dynamically get the strategy class
@@ -76,17 +79,18 @@ def run(settings=None):
                 # Keep EMAs in Positions synchronized with latest backtesting results
                 # even when a symbol is rejected by approval rules.
                 if (
-                    strategy_id == settings.strategy_id
-                    and strategy_id in ["ema_cross_with_market_phases", "ema_cross"]
+                    strategy_id in selected_strategy_set
+                    and strategy_id in ["ema_cross_with_market_phases", "ema_cross", "hma_rsi_linreg"]
                     and not df_strategy_results.empty
                 ):
                     ema_fast = int(df_strategy_results.Ema_Fast.values[0])
                     ema_slow = int(df_strategy_results.Ema_Slow.values[0])
-                    symbol_exist = database.get_all_positions_by_bot_symbol(bot=tf, symbol=symbol)
+                    symbol_exist = database.get_all_positions_by_bot_symbol_strategy(bot=tf, symbol=symbol, strategy_id=strategy_id)
                     if symbol_exist:
-                        database.set_backtesting_results_from_positions(
+                        database.set_backtesting_results_from_position_strategy(
                             symbol=symbol,
                             timeframe=tf,
+                            strategy_id=strategy_id,
                             ema_fast=ema_fast,
                             ema_slow=ema_slow,
                         )
@@ -95,32 +99,36 @@ def run(settings=None):
                     print(f"{symbol} {tf} rejected by approval rules: {reasons}")
                     continue
 
-                # if the backtesting strategy is the one we are currently using, we want to add the symbol to positions table and update rank
-                if strategy_id == settings.strategy_id:
+                # If the backtesting strategy is selected for trading, add/update its candidate row.
+                if strategy_id in selected_strategy_set:
                     # initialize vars
                     ema_fast = 0
                     ema_slow = 0
 
-                    if strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
+                    if strategy_id in ["ema_cross_with_market_phases", "ema_cross", "hma_rsi_linreg"]:
                         ema_fast = int(df_strategy_results.Ema_Fast.values[0])
                         ema_slow = int(df_strategy_results.Ema_Slow.values[0])  
+                    strategy_params_json = database.build_strategy_params_json(strategy_id, ema_fast, ema_slow)
                     
                     # if symbol do not exist in positions table then add it
-                    symbol_exist = database.get_all_positions_by_bot_symbol(bot=tf, symbol=symbol)
+                    symbol_exist = database.get_all_positions_by_bot_symbol_strategy(bot=tf, symbol=symbol, strategy_id=strategy_id)
                     if not symbol_exist:
                         database.insert_position(
                             bot=tf,
                             symbol=symbol,
                             ema_fast=ema_fast,
-                            ema_slow=ema_slow
+                            ema_slow=ema_slow,
+                            strategy_id=strategy_id,
+                            strategy_name=strategy_name,
+                            strategy_params_json=strategy_params_json,
                         )
                     else:
                         # update rank
                         rank = database.get_rank_from_symbols_by_market_phase_by_symbol(symbol)
                         database.set_rank_from_positions(symbol=symbol, rank=rank)
                         # update best ema for those symbols with no positions open
-                        if strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
-                            database.set_backtesting_results_from_positions(symbol=symbol, timeframe=tf, ema_fast=ema_fast, ema_slow=ema_slow)
+                        if strategy_id in ["ema_cross_with_market_phases", "ema_cross", "hma_rsi_linreg"]:
+                            database.set_backtesting_results_from_position_strategy(symbol=symbol, timeframe=tf, strategy_id=strategy_id, ema_fast=ema_fast, ema_slow=ema_slow)
             
     # mark symbols as calc completed
     for symbol in list_not_completed.Symbol:    

@@ -171,7 +171,16 @@ def calc_stake_amount(symbol, bot):
     else:
         return 0
 
-def create_buy_order(symbol: str, bot: str, fast_ema: int = 0, slow_ema: int = 0, convert_all_balance: bool = False):
+def create_buy_order(
+    symbol: str,
+    bot: str,
+    fast_ema: int = 0,
+    slow_ema: int = 0,
+    convert_all_balance: bool = False,
+    strategy_id: str = "",
+    strategy_name: str = "",
+    position_id: int | None = None,
+):
     settings = config.load_settings()
     
     run_mode = settings.run_mode
@@ -242,6 +251,7 @@ def create_buy_order(symbol: str, bot: str, fast_ema: int = 0, slow_ema: int = 0
             avg_price = round(avg_price,8)
                 
             # update position with the buy order
+            strategy_params_json = database.build_strategy_params_json(strategy_id, fast_ema, slow_ema)
             if not convert_all_balance:
                 database.set_position_buy(
                                         bot=bot, 
@@ -251,7 +261,11 @@ def create_buy_order(symbol: str, bot: str, fast_ema: int = 0, slow_ema: int = 0
                                         date=str(pd.to_datetime(order['transactTime'], unit='ms')),
                                         ema_fast = fast_ema,
                                         ema_slow = slow_ema,
-                                        buy_order_id=str(order['orderId']))
+                                        buy_order_id=str(order['orderId']),
+                                        position_id=position_id,
+                                        strategy_id=strategy_id,
+                                        strategy_name=strategy_name,
+                                        strategy_params_json=strategy_params_json)
                 
             database.add_order_buy(
                                    exchange_order_id=str(order['orderId']),
@@ -261,16 +275,16 @@ def create_buy_order(symbol: str, bot: str, fast_ema: int = 0, slow_ema: int = 0
                                    price=avg_price,
                                    qty=float(order['executedQty']),
                                    ema_fast=fast_ema,
-                                   ema_slow=slow_ema)
+                                   ema_slow=slow_ema,
+                                   strategy_id=strategy_id,
+                                   strategy_params_json=strategy_params_json)
         
-            if settings.strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
-                strategy_name = str(fast_ema)+"/"+str(slow_ema)+" "+settings.strategy_name
-            elif settings.strategy_id == "hma_rsi_linreg":
-                strategy_name = str(fast_ema)+"/"+str(slow_ema)+" "+settings.strategy_name
-            elif settings.strategy_id in ["market_phases"]:
-                strategy_name = settings.strategy_name
+            effective_strategy_id = strategy_id or settings.strategy_id
+            base_strategy_name = strategy_name or settings.strategy_name
+            if effective_strategy_id in ["ema_cross_with_market_phases", "ema_cross", "hma_rsi_linreg"]:
+                strategy_name = str(fast_ema)+"/"+str(slow_ema)+" "+base_strategy_name
             else:
-                strategy_name = settings.strategy_name
+                strategy_name = base_strategy_name
 
             if convert_all_balance:
                 convert_message = "Trade against auto switch"
@@ -313,7 +327,19 @@ def create_buy_order(symbol: str, bot: str, fast_ema: int = 0, slow_ema: int = 0
         print(msg)
         telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
 
-def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percentage = 100, take_profit_num = 0, convert_all_balance: bool = False):
+def create_sell_order(
+    symbol,
+    bot,
+    fast_ema=0,
+    slow_ema=0,
+    reason='',
+    percentage=100,
+    take_profit_num=0,
+    convert_all_balance: bool = False,
+    strategy_id: str = "",
+    strategy_name: str = "",
+    position_id: int | None = None,
+):
     settings = config.load_settings()
 
     run_mode = settings.run_mode
@@ -333,7 +359,7 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percenta
         if convert_all_balance:
             sell_qty = balance_qty
         else:
-            df_pos = database.get_positions_by_bot_symbol_position( bot=bot, symbol=symbol, position=1)
+            df_pos = database.get_position_by_id(position_id) if position_id is not None else database.get_positions_by_bot_symbol_position( bot=bot, symbol=symbol, position=1)
             if not df_pos.empty:
                 pos_qty = df_pos['Qty'].iloc[0]
             else:
@@ -376,7 +402,7 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percenta
                 buy_order_id = str(0)
             else:
                 # get Buy_Order_Id from positions table
-                df_pos = database.get_positions_by_bot_symbol_position(
+                df_pos = database.get_position_by_id(position_id) if position_id is not None else database.get_positions_by_bot_symbol_position(
                     bot=bot,
                     symbol=symbol,
                     position=1
@@ -389,7 +415,7 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percenta
                 
                 if percentage == 100:
                     # update position as closed position
-                    database.set_position_sell( bot=bot, symbol=symbol)
+                    database.set_position_sell( bot=bot, symbol=symbol, position_id=position_id)
                     
                     # release all locked values from position
                     if not df_pos.empty:
@@ -399,17 +425,17 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percenta
                         # if we are selling a position percentage we must update the qty
                         previous_qty = float(df_pos['Qty'].iloc[0])
                         new_qty = previous_qty - order_qty
-                        database.set_position_qty( bot=bot, symbol=symbol, qty=new_qty)
+                        database.set_position_qty( bot=bot, symbol=symbol, qty=new_qty, position_id=position_id)
 
                         # update take profit to inform that we already took profit 1, 2, 3 or 4
                         if take_profit_num == 1:
-                            database.set_position_take_profit_1( bot=bot, symbol=symbol, take_profit_1=1)
+                            database.set_position_take_profit_1( bot=bot, symbol=symbol, take_profit_1=1, position_id=position_id)
                         elif take_profit_num == 2:
-                            database.set_position_take_profit_2( bot=bot, symbol=symbol, take_profit_2=1)
+                            database.set_position_take_profit_2( bot=bot, symbol=symbol, take_profit_2=1, position_id=position_id)
                         elif take_profit_num == 3:
-                            database.set_position_take_profit_3( bot=bot, symbol=symbol, take_profit_3=1)
+                            database.set_position_take_profit_3( bot=bot, symbol=symbol, take_profit_3=1, position_id=position_id)
                         elif take_profit_num == 4:
-                            database.set_position_take_profit_4( bot=bot, symbol=symbol, take_profit_4=1)
+                            database.set_position_take_profit_4( bot=bot, symbol=symbol, take_profit_4=1, position_id=position_id)
                         
                         # lock values from parcial sales amounts
                         lock_values = settings.lock_values
@@ -463,6 +489,11 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percenta
                     stop_trigger_price = order_avg_price
 
             # add to orders database table
+            strategy_params_json = ""
+            if not df_pos.empty:
+                strategy_params_json = str(df_pos.get("Strategy_Params_JSON", "").iloc[0] or "")
+            if not strategy_params_json:
+                strategy_params_json = database.build_strategy_params_json(strategy_id, fast_ema, slow_ema)
             pnl_value, pnl_perc = database.add_order_sell(
                 sell_order_id = sell_order_id,
                 buy_order_id = buy_order_id,
@@ -473,6 +504,8 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percenta
                 qty = order_qty,
                 ema_fast = fast_ema,
                 ema_slow = slow_ema,
+                strategy_id=strategy_id,
+                strategy_params_json=strategy_params_json,
                 exit_reason = reason,
                 sell_percentage = percentage,
                 stop_type = stop_type,
@@ -488,14 +521,12 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percenta
             else:
                 alert_type = telegram.EMOJI_TRADE_WITH_LOSS
 
-            if settings.strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
-                strategy_name = str(fast_ema)+"/"+str(slow_ema)+" "+settings.strategy_name
-            elif settings.strategy_id == "hma_rsi_linreg":
-                strategy_name = str(fast_ema)+"/"+str(slow_ema)+" "+settings.strategy_name
-            elif settings.strategy_id in ["market_phases"]:
-                strategy_name = settings.strategy_name
+            effective_strategy_id = strategy_id or settings.strategy_id
+            base_strategy_name = strategy_name or settings.strategy_name
+            if effective_strategy_id in ["ema_cross_with_market_phases", "ema_cross", "hma_rsi_linreg"]:
+                strategy_name = str(fast_ema)+"/"+str(slow_ema)+" "+base_strategy_name
             else:
-                strategy_name = settings.strategy_name
+                strategy_name = base_strategy_name
             
             if convert_all_balance:
                 convert_message = "Trade against auto switch"
@@ -525,7 +556,7 @@ def create_sell_order(symbol, bot, fast_ema=0, slow_ema=0, reason = '', percenta
         else:
             # if there is no qty on balance to sell we set the qty on positions table to zero
             # this can happen if we sell on the exchange before the bot sells it. 
-            database.set_position_sell(bot=bot, symbol=symbol)
+            database.set_position_sell(bot=bot, symbol=symbol, position_id=position_id)
             result = False
             msg = "Unable to sell position. The position size in your balance is currently zero. No sell order was placed, and the position was removed from the unrealized PnL table."
         

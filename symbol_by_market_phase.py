@@ -231,9 +231,15 @@ def trade_against_auto_switch(settings=None):
             # sell all positions to USDT/USDC
             for tf in sell_timeframes:
                 df_sell = database.get_positions_by_bot_position( bot=tf, position=1)
-                list_to_sell = df_sell.Symbol.tolist()
-                for symbol in list_to_sell:
-                    binance.create_sell_order(symbol=symbol, bot=tf,reason=f"{sell_message}")  
+                for _, pos_row in df_sell.iterrows():
+                    binance.create_sell_order(
+                        symbol=str(pos_row["Symbol"]),
+                        bot=tf,
+                        reason=f"{sell_message}",
+                        strategy_id=str(pos_row.get("Strategy_Id") or ""),
+                        strategy_name=str(pos_row.get("Strategy_Name") or ""),
+                        position_id=int(pos_row["Id"]),
+                    )
             
             # release locked values from the balance
             database.release_all_values()
@@ -266,9 +272,15 @@ def trade_against_auto_switch(settings=None):
             # sell all positions to BTC
             for tf in sell_timeframes:
                 df_sell = database.get_positions_by_bot_position( bot=tf, position=1)
-                list_to_sell = df_sell.Symbol.tolist()
-                for symbol in list_to_sell:
-                    binance.create_sell_order(symbol=symbol, bot=tf, reason=f"{sell_message}")  
+                for _, pos_row in df_sell.iterrows():
+                    binance.create_sell_order(
+                        symbol=str(pos_row["Symbol"]),
+                        bot=tf,
+                        reason=f"{sell_message}",
+                        strategy_id=str(pos_row.get("Strategy_Id") or ""),
+                        strategy_name=str(pos_row.get("Strategy_Name") or ""),
+                        position_id=int(pos_row["Id"]),
+                    )
                     
             # release locked values from the balance
             database.release_all_values()
@@ -400,8 +412,9 @@ def main(timeframe):
         # Remove symbols from positions table that are not top performers in accumulation or bullish phase
         database.delete_positions_not_top_rank()
 
-        # Add top rank symbols to positions files
-        database.add_top_rank_to_positions(strategy_id=settings.strategy_id)
+        # Add top rank symbols to positions files for every selected trading strategy.
+        for strategy_id in getattr(settings, "main_strategies", [settings.strategy_id]):
+            database.add_top_rank_to_positions(strategy_id=strategy_id)
 
         # Delete rows with calc completed and keep only symbols with calc not completed
         database.delete_symbols_to_calc_completed()
