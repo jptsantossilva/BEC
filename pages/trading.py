@@ -27,6 +27,7 @@ TRADING_TAB_OPTIONS = [
 ]
 TRADING_ACTIVE_TAB_KEY = "trading_active_tab_saved"
 TRADING_ACTIVE_TAB_WIDGET_KEY = "_trading_active_tab_widget"
+MAIN_STRATEGIES_WIDGET_KEY = "_main_strategies_widget"
 
 # st.set_page_config(
 #     page_title="BEC App",
@@ -607,33 +608,47 @@ def settings():
                 "Primary strategy used by the trading timeframes (1d/4h/1h) for buy/sell decisions. "
                 "Also used in the daily refresh to apply approved backtesting results and update the symbols in Positions."
             )
-            if "main_strategies" not in st.session_state:
-                try:
-                    current_main_strategies = json.loads(config.read_setting("main_strategies"))
-                except Exception:
-                    current_main_strategies = [config.read_setting("main_strategy")]
-                valid_main_strategies = [
-                    strategy_id
-                    for strategy_id in current_main_strategies
-                    if strategy_id in dict_strategies_main
-                ]
-                st.session_state.main_strategies = valid_main_strategies or [config.read_setting("main_strategy")]
 
-            def _save_main_strategies():
-                selected = st.session_state.main_strategies or [config.read_setting("main_strategy")]
+            def _normalize_main_strategies(value):
+                if isinstance(value, list):
+                    strategy_ids = value
+                else:
+                    try:
+                        parsed = json.loads(str(value))
+                        strategy_ids = parsed if isinstance(parsed, list) else [parsed]
+                    except Exception:
+                        strategy_ids = [config.read_setting("main_strategy")]
+
+                valid_strategy_ids = []
+                for strategy_id in strategy_ids:
+                    strategy_id = str(strategy_id)
+                    if strategy_id in dict_strategies_main and strategy_id not in valid_strategy_ids:
+                        valid_strategy_ids.append(strategy_id)
+                fallback = config.read_setting("main_strategy")
+                return valid_strategy_ids or ([fallback] if fallback in dict_strategies_main else [])
+
+            saved_main_strategies = _normalize_main_strategies(config.read_setting("main_strategies"))
+            if st.session_state.get(MAIN_STRATEGIES_WIDGET_KEY) is None:
+                st.session_state[MAIN_STRATEGIES_WIDGET_KEY] = saved_main_strategies
+
+            def _save_main_strategies(selected):
+                selected = _normalize_main_strategies(selected)
                 patch = {"main_strategies": json.dumps(selected)}
                 if selected:
                     patch["main_strategy"] = selected[0]
                 config.update_settings(patch)
 
-            st.multiselect(
+            selected_main_strategies = st.multiselect(
                 "Main Strategies",
                 list(dict_strategies_main.keys()),
-                key="main_strategies",
-                on_change=_save_main_strategies,
+                key=MAIN_STRATEGIES_WIDGET_KEY,
                 format_func=format_func_strategies_main,
                 label_visibility="collapsed",
             )
+
+            normalized_selected_main_strategies = _normalize_main_strategies(selected_main_strategies)
+            if normalized_selected_main_strategies != saved_main_strategies:
+                _save_main_strategies(normalized_selected_main_strategies)
         
         with st.container(border=False):
             st.markdown("Bitcoin Strategy")
