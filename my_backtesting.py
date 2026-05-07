@@ -159,6 +159,7 @@ class RiskManagedStrategy(Strategy):
     atr_period = 14
     atr_multiplier = 1.8
     atr_activation_pnl = 2.0
+    take_profit_enabled = True
     take_profit_1 = 0.0
     take_profit_1_amount = 0.0
     take_profit_2 = 0.0
@@ -244,7 +245,7 @@ class RiskManagedStrategy(Strategy):
             self._reset_risk_state()
 
     def _apply_take_profits(self, current_pnl_pct: float):
-        if not self.position:
+        if not self.position or not bool(self.take_profit_enabled):
             return
 
         current_bar = int(len(self.data) - 1)
@@ -1070,10 +1071,14 @@ def build_config_detail_html(backtest_config):
         ]
 
         take_profit_items = []
+        take_profits_enabled = bool(take_profits.get("enabled", True))
+        take_profit_items.append(("Take Profits", "Enabled" if take_profits_enabled else "Disabled"))
         for tp_name, values in take_profits.items():
+            if tp_name == "enabled" or not isinstance(values, dict):
+                continue
             pnl_pct = float(values.get("pnl_pct", 0) or 0)
             amount_pct = float(values.get("amount_pct", 0) or 0)
-            enabled = pnl_pct > 0
+            enabled = take_profits_enabled and pnl_pct > 0
             take_profit_items.extend(
                 [
                     (f"{str(tp_name).upper()} PnL", _fmt_config_number(pnl_pct, suffix="%"), not enabled),
@@ -2831,6 +2836,7 @@ def run_backtest(symbol, timeframe, strategy, optimize):
     strategy.atr_period = int(database.get_setting("atr_period"))
     strategy.atr_multiplier = float(database.get_setting("atr_multiplier"))
     strategy.atr_activation_pnl = float(database.get_setting("atr_activation_pnl"))
+    strategy.take_profit_enabled = bool(database.get_setting("take_profit_enabled"))
     strategy.take_profit_1 = float(database.get_setting("take_profit_1"))
     strategy.take_profit_1_amount = float(database.get_setting("take_profit_1_amount"))
     strategy.take_profit_2 = float(database.get_setting("take_profit_2"))
@@ -2922,6 +2928,7 @@ def run_backtest(symbol, timeframe, strategy, optimize):
             "atr_activation_pnl_pct": float(strategy.atr_activation_pnl),
         },
         "take_profits": {
+            "enabled": bool(strategy.take_profit_enabled),
             "tp1": {"pnl_pct": float(strategy.take_profit_1), "amount_pct": float(strategy.take_profit_1_amount)},
             "tp2": {"pnl_pct": float(strategy.take_profit_2), "amount_pct": float(strategy.take_profit_2_amount)},
             "tp3": {"pnl_pct": float(strategy.take_profit_3), "amount_pct": float(strategy.take_profit_3_amount)},

@@ -27,6 +27,7 @@ _UPDATABLE_SETTING_KEYS = {
     "main_strategies",
     "btc_strategy",
     "trade_against_switch",
+    "take_profit_enabled",
     "take_profit_1",
     "take_profit_1_amount",
     "take_profit_2",
@@ -66,6 +67,7 @@ class AppSettings:
     btc_strategy_name: str
     btc_strategy_backtest_optimize: bool
     trade_against_switch: bool
+    take_profit_enabled: bool
     take_profit_1: float
     take_profit_1_amount: float
     take_profit_2: float
@@ -163,6 +165,7 @@ def load_settings(refresh: bool = False) -> AppSettings:
     trade_top_performance = database.get_setting("trade_top_performance")
     btc_strategy = database.get_setting("btc_strategy")
     trade_against_switch = database.get_setting("trade_against_switch")
+    take_profit_enabled = database.get_setting("take_profit_enabled")
     take_profit_1 = database.get_setting("take_profit_1")
     take_profit_1_amount = database.get_setting("take_profit_1_amount")
     take_profit_2 = database.get_setting("take_profit_2")
@@ -234,6 +237,7 @@ def load_settings(refresh: bool = False) -> AppSettings:
         btc_strategy_name=btc_strategy_name,
         btc_strategy_backtest_optimize=btc_strategy_backtest_optimize,
         trade_against_switch=trade_against_switch,
+        take_profit_enabled=take_profit_enabled,
         take_profit_1=take_profit_1,
         take_profit_1_amount=take_profit_1_amount,
         take_profit_2=take_profit_2,

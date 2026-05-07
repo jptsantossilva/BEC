@@ -503,8 +503,9 @@ def trade(timeframe, run_mode, settings=None):
                 )
 
         # if using take profit 1
+        take_profit_enabled = bool(settings.take_profit_enabled)
         sell_tp_1 = False
-        if settings.take_profit_1 > 0:
+        if take_profit_enabled and settings.take_profit_1 > 0:
             tp1_raw = pos_row.get("Take_Profit_1", 0)
             tp1_occurred = 0 if pd.isna(tp1_raw) else int(tp1_raw)
             # if not occurred
@@ -513,7 +514,7 @@ def trade(timeframe, run_mode, settings=None):
 
         # if using take profit 2
         sell_tp_2 = False
-        if settings.take_profit_2 > 0:
+        if take_profit_enabled and settings.take_profit_2 > 0:
             tp2_raw = pos_row.get("Take_Profit_2", 0)
             tp2_occurred = 0 if pd.isna(tp2_raw) else int(tp2_raw)
             # if not occurred
@@ -522,7 +523,7 @@ def trade(timeframe, run_mode, settings=None):
 
         # if using take profit 3
         sell_tp_3 = False
-        if settings.take_profit_3 > 0:
+        if take_profit_enabled and settings.take_profit_3 > 0:
             tp3_raw = pos_row.get("Take_Profit_3", 0)
             tp3_occurred = 0 if pd.isna(tp3_raw) else int(tp3_raw)
             # if not occurred
@@ -531,7 +532,7 @@ def trade(timeframe, run_mode, settings=None):
 
         # if using take profit 3
         sell_tp_4 = False
-        if settings.take_profit_4 > 0:
+        if take_profit_enabled and settings.take_profit_4 > 0:
             tp4_raw = pos_row.get("Take_Profit_4", 0)
             tp4_occurred = 0 if pd.isna(tp4_raw) else int(tp4_raw)
             # if not occurred

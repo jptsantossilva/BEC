@@ -38,7 +38,7 @@ Your role:
 Important:
 - The strategy trades crypto markets, which are volatile and regime-dependent.
 - The bot is long-only.
-- Take-profit settings are optional. A take-profit level with pnl_pct = 0 is disabled by user choice and must not be treated as an inconsistent configuration.
+- Take-profit settings are optional. If take_profits.enabled is false, all TP levels are disabled by user choice even when their stored pnl_pct values are above 0. A take-profit level with pnl_pct = 0 is also disabled by user choice and must not be treated as an inconsistent configuration.
 - Only evaluate take-profit behavior when there are active TP levels and/or trades with Exit_Reason containing tp.
 - Take-profits may create multiple partial exits from the same original position when enabled.
 - Exit_Reason describes why each partial or full exit happened.
@@ -55,7 +55,7 @@ Analyze the following backtest result.
 Focus on:
 1. Whether the strategy performance is acceptable compared with buy-and-hold.
 2. Whether the drawdown is too high for the return achieved.
-3. Whether active take-profit levels are helping or cutting winners too early. If all take-profit pnl_pct values are 0, state that TPs are disabled and do not recommend fixing them as a data issue.
+3. Whether active take-profit levels are helping or cutting winners too early. If take_profits.enabled is false or all take-profit pnl_pct values are 0, state that TPs are disabled and do not recommend fixing them as a data issue.
 4. Whether ATR trailing stop-loss is too tight, too loose, or useful.
 5. Whether hard stop-loss is being triggered too often.
 6. Whether exits by strategy signal are better or worse than exits by stop-loss.
@@ -427,8 +427,13 @@ def _exit_reason_summary(df):
 
 def _take_profit_summary(config, trades):
     take_profits = (config or {}).get("take_profits", {})
+    if not isinstance(take_profits, dict):
+        take_profits = {}
+    take_profits_enabled = bool(take_profits.get("enabled", True)) if isinstance(take_profits, dict) else True
     levels = []
     for name, values in take_profits.items():
+        if name == "enabled" or not isinstance(values, dict):
+            continue
         pnl_pct = _round(values.get("pnl_pct") if isinstance(values, dict) else None)
         amount_pct = _round(values.get("amount_pct") if isinstance(values, dict) else None)
         levels.append(
@@ -436,7 +441,7 @@ def _take_profit_summary(config, trades):
                 "level": str(name),
                 "pnl_pct": pnl_pct,
                 "amount_pct": amount_pct,
-                "enabled": bool(pnl_pct and pnl_pct > 0),
+                "enabled": bool(take_profits_enabled and pnl_pct and pnl_pct > 0),
             }
         )
 
@@ -446,12 +451,15 @@ def _take_profit_summary(config, trades):
         tp_exit_count = int(trades["Exit_Reason"].str.contains("tp", na=False).sum())
 
     return {
+        "enabled": take_profits_enabled,
         "levels": levels,
         "active_levels_count": len(active_levels),
         "all_take_profits_disabled": len(levels) > 0 and len(active_levels) == 0,
         "tp_exit_count": tp_exit_count,
         "interpretation_hint": (
-            "All take-profit levels are disabled because pnl_pct is 0. This is a valid user configuration, not a data quality issue."
+            "Take-profit levels are globally disabled. This is a valid user configuration, not a data quality issue."
+            if not take_profits_enabled
+            else "All take-profit levels are disabled because pnl_pct is 0. This is a valid user configuration, not a data quality issue."
             if len(levels) > 0 and len(active_levels) == 0
             else "Evaluate take-profit behavior only for enabled levels and trades with Exit_Reason containing tp."
         ),

@@ -801,6 +801,7 @@ def settings():
                         on_change=lambda k=key_perc: config.update_setting(k, st.session_state[k]),
                         help="The percentage increase in price at which the system will automatically trigger a sell order to secure profits.",
                         width=130,
+                        disabled=not st.session_state.take_profit_enabled,
                     )
                     st.number_input(
                         f"{label} Amount (%)",
@@ -811,6 +812,7 @@ def settings():
                         on_change=lambda k=key_amt: config.update_setting(k, st.session_state[k]),
                         help="The percentage of the position quantity to be sold when take profits level is achieved.",
                         width=130,
+                        disabled=not st.session_state.take_profit_enabled,
                     )
                     st.number_input(
                         f"RPS {label[-1]} (%)",
@@ -820,6 +822,18 @@ def settings():
                         help="Remaining position size after selling TP Amount% of the remainder.",
                         width=80,
                     )
+
+            with st.container(horizontal=True):
+                if "take_profit_enabled" not in st.session_state:
+                    st.session_state.take_profit_enabled = bool(config.read_setting("take_profit_enabled"))
+                st.checkbox(
+                    "Enable Take-Profit Levels",
+                    key="take_profit_enabled",
+                    on_change=lambda: config.update_setting(
+                        "take_profit_enabled", st.session_state.take_profit_enabled
+                    ),
+                    help="Enable/disable take-profit levels globally without changing the TP values.",
+                )
 
             # Ensure TP state is initialized before first RPS calculation.
             for key in [
@@ -850,7 +864,12 @@ def settings():
                         r*= (1-amount/100.0)
                     out.append(round(r,2))
                 return out
-            rps1,rps2,rps3,rps4 = rps_seq([(p1,a1),(p2,a2),(p3,a3),(p4,a4)])
+            rps_levels = (
+                [(p1, a1), (p2, a2), (p3, a3), (p4, a4)]
+                if st.session_state.take_profit_enabled
+                else [(0, a1), (0, a2), (0, a3), (0, a4)]
+            )
+            rps1,rps2,rps3,rps4 = rps_seq(rps_levels)
             _tp_num("TP1", "take_profit_1", "take_profit_1_amount", rps1, "rps1_widget")
             _tp_num("TP2", "take_profit_2", "take_profit_2_amount", rps2, "rps2_widget")
             _tp_num("TP3", "take_profit_3", "take_profit_3_amount", rps3, "rps3_widget")

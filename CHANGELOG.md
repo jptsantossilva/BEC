@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [2026-05-07]
+- Trading Dashboard - Settings / Take-Profit Levels now include an `Enable Take-Profit Levels` checkbox, allowing TPs to be temporarily disabled without clearing the configured TP percentages or amounts.
+- Trading / Backtesting - Take-profit execution now respects the global take-profit enable setting, and backtest reports/AI analysis include that enabled/disabled state.
 - Backtesting Results - Fixed report file lookup and generation paths to use the project root instead of the process working directory, preventing missing HTML reports when production services start from a different folder.
 - Docker - Backtesting reports now use the shared `/app/persist/backtest_results` volume when available, with `/app/static/backtest_results` symlinked to it so the dashboard and jobs runner see the same generated files.
 - Backtesting Results - Missing report warnings now show the expected absolute path, filename variants checked, and existing report files for the selected symbol to make production path issues easier to diagnose.
