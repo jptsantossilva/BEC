@@ -125,7 +125,6 @@ def get_setting(setting_name):
 
     # Default values for settings
     default_values = {
-        "main_strategy": "ema_cross_with_market_phases",
         "main_strategies": '["ema_cross_with_market_phases"]',
         "btc_strategy": "market_phases",
         "trade_against_switch": False,
@@ -157,7 +156,6 @@ def get_setting(setting_name):
 
     # Corresponding comments for each setting
     setting_comments = {
-        "main_strategy": "Primary strategy used for trading.",
         "main_strategies": "Primary strategies used for trading, stored as a JSON list.",
         "btc_strategy": "Strategy for trading BTC.",
         "trade_against_switch": "Toggle trading against BTC or USDT/USDC (True/False).",
@@ -273,6 +271,15 @@ def set_setting(name, value):
     except sqlite3.Error as e:
         print(f"Database error: {e}")
         raise
+
+
+def remove_obsolete_settings():
+    connection = _get_conn()
+    connection.execute(
+        "DELETE FROM Settings WHERE name = ?",
+        ("main_strategy",),
+    )
+    connection.commit()
 
 
 def get_or_create_secret_setting(name, length=48, comment=""):
@@ -2572,6 +2579,7 @@ def create_tables():
         connection.execute(create_orders_table)
         _ensure_orders_columns(connection)
         connection.execute(sql_create_settings_table)
+        remove_obsolete_settings()
         connection.execute(sql_create_positions_table)
         _ensure_positions_columns(connection)
         connection.execute(sql_create_blacklist_table)
@@ -2744,20 +2752,24 @@ def _ensure_positions_columns(connection):
             )
 
     try:
-        main_strategy = get_setting("main_strategy")
-    except sqlite3.Error:
-        main_strategy = "ema_cross_with_market_phases"
-    try:
-        main_strategy_name = get_strategy_name(main_strategy)
+        main_strategies = get_setting("main_strategies")
+        if isinstance(main_strategies, str):
+            parsed_main_strategies = json.loads(main_strategies)
+            main_strategies = parsed_main_strategies if isinstance(parsed_main_strategies, list) else [parsed_main_strategies]
+        default_strategy_id = str(main_strategies[0]).strip() if main_strategies else "ema_cross_with_market_phases"
     except Exception:
-        main_strategy_name = main_strategy
+        default_strategy_id = "ema_cross_with_market_phases"
+    try:
+        default_strategy_name = get_strategy_name(default_strategy_id)
+    except Exception:
+        default_strategy_name = default_strategy_id
     connection.execute(
         "UPDATE Positions SET Strategy_Id = ? WHERE Strategy_Id IS NULL OR Strategy_Id = ''",
-        (main_strategy,),
+        (default_strategy_id,),
     )
     connection.execute(
         "UPDATE Positions SET Strategy_Name = ? WHERE Strategy_Name IS NULL OR Strategy_Name = ''",
-        (main_strategy_name,),
+        (default_strategy_name,),
     )
     rows = connection.execute(
         """

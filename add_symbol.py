@@ -35,7 +35,7 @@ def run(settings=None):
     strategy_module = importlib.import_module('my_backtesting')
         
     df_strategies = database.get_strategies_for_main()
-    selected_strategy_ids = list(getattr(settings, "main_strategies", [settings.strategy_id]))
+    selected_strategy_ids = list(settings.main_strategies)
     selected_strategy_set = set(selected_strategy_ids)
     selected_order = {strategy_id: idx for idx, strategy_id in enumerate(selected_strategy_ids)}
     df_strategies["_Selected_Order"] = df_strategies["Id"].map(selected_order).fillna(9999)

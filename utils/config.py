@@ -11,6 +11,7 @@ import utils.telegram as telegram
 import utils.database as database
 
 _settings_cache = None
+DEFAULT_MAIN_STRATEGIES = ["ema_cross_with_market_phases"]
 _UPDATABLE_SETTING_KEYS = {
     "stake_amount_type",
     "max_number_of_open_positions",
@@ -23,7 +24,6 @@ _UPDATABLE_SETTING_KEYS = {
     "atr_multiplier",
     "atr_activation_pnl",
     "trade_top_performance",
-    "main_strategy",
     "main_strategies",
     "btc_strategy",
     "trade_against_switch",
@@ -60,9 +60,6 @@ class AppSettings:
     atr_multiplier: float
     atr_activation_pnl: float
     trade_top_performance: int
-    main_strategy: str
-    main_strategy_name: str
-    main_strategy_backtest_optimize: bool
     main_strategies: list
     main_strategy_configs: list
     btc_strategy: str
@@ -82,10 +79,6 @@ class AppSettings:
     bot_prefix: str
     trade_against_switch_stablecoin: str
     delisting_start_date: str
-    strategy_id: str
-    strategy_name: str
-    strategy_backtest_optimize: bool
-    strategy: object
     btc_strategy_impl: object
     n_decimals: int
 
@@ -114,9 +107,9 @@ def update_setting(name: str, value, *, refresh: bool = True) -> AppSettings:
     return update_settings({name: value}, refresh=refresh)
 
 
-def _parse_main_strategies(raw_value, fallback_strategy: str) -> list[str]:
+def _parse_main_strategies(raw_value) -> list[str]:
     if raw_value in (None, ""):
-        return [fallback_strategy] if fallback_strategy else []
+        return list(DEFAULT_MAIN_STRATEGIES)
 
     if isinstance(raw_value, list):
         values = raw_value
@@ -133,9 +126,7 @@ def _parse_main_strategies(raw_value, fallback_strategy: str) -> list[str]:
         if strategy_id and strategy_id not in result:
             result.append(strategy_id)
 
-    if not result and fallback_strategy:
-        result.append(fallback_strategy)
-    return result
+    return result or list(DEFAULT_MAIN_STRATEGIES)
 
 def read_setting(name: str):
     """Read setting value from the current settings snapshot."""
@@ -170,7 +161,6 @@ def load_settings(refresh: bool = False) -> AppSettings:
     atr_multiplier = database.get_setting("atr_multiplier")
     atr_activation_pnl = database.get_setting("atr_activation_pnl")
     trade_top_performance = database.get_setting("trade_top_performance")
-    main_strategy = database.get_setting("main_strategy")
     btc_strategy = database.get_setting("btc_strategy")
     trade_against_switch = database.get_setting("trade_against_switch")
     take_profit_1 = database.get_setting("take_profit_1")
@@ -187,22 +177,8 @@ def load_settings(refresh: bool = False) -> AppSettings:
     trade_against_switch_stablecoin = database.get_setting("trade_against_switch_stablecoin")
     delisting_start_date = database.get_setting("delisting_start_date")
 
-    main_strategy_name = ""
-    main_strategy_backtest_optimize = False
-    df_main_strategy = database.get_strategy_by_id(main_strategy)
-    if not df_main_strategy.empty:
-        main_strategy_name = str(df_main_strategy.Name.values[0])
-        main_strategy_backtest_optimize = bool(df_main_strategy.Backtest_Optimize.values[0])
-
     main_strategies_raw = database.get_setting("main_strategies")
-    main_strategies = _parse_main_strategies(main_strategies_raw, main_strategy)
-    default_main_strategies = '["ema_cross_with_market_phases"]'
-    if (
-        main_strategy
-        and main_strategy not in main_strategies
-        and str(main_strategies_raw) == default_main_strategies
-    ):
-        main_strategies = [main_strategy]
+    main_strategies = _parse_main_strategies(main_strategies_raw)
     # Persist the migrated list so future reads do not depend on the legacy value.
     normalized_main_strategies = json.dumps(main_strategies)
     if str(main_strategies_raw) != normalized_main_strategies:
@@ -230,21 +206,7 @@ def load_settings(refresh: bool = False) -> AppSettings:
         btc_strategy_name = str(df_btc_strategy.Name.values[0])
         btc_strategy_backtest_optimize = bool(df_btc_strategy.Backtest_Optimize.values[0])
 
-    # if trade_against == "USDT":
-    #     strategy_id = main_strategy
-    #     strategy_name = main_strategy_name
-    #     strategy_backtest_optimize = main_strategy_backtest_optimize
-    # elif trade_against == "BTC":
-    #     strategy_id = btc_strategy
-    #     strategy_name = btc_strategy_name
-    #     strategy_backtest_optimize = btc_strategy_backtest_optimize
-
-    strategy_id = main_strategy
-    strategy_name = main_strategy_name
-    strategy_backtest_optimize = main_strategy_backtest_optimize
-
     # Dynamically get the strategy class
-    strategy = getattr(strategy_module, strategy_id, None)
     btc_strategy_impl = getattr(strategy_module, btc_strategy, None)
 
     if trade_against == "BTC":
@@ -266,9 +228,6 @@ def load_settings(refresh: bool = False) -> AppSettings:
         atr_multiplier=atr_multiplier,
         atr_activation_pnl=atr_activation_pnl,
         trade_top_performance=trade_top_performance,
-        main_strategy=main_strategy,
-        main_strategy_name=main_strategy_name,
-        main_strategy_backtest_optimize=main_strategy_backtest_optimize,
         main_strategies=main_strategies,
         main_strategy_configs=main_strategy_configs,
         btc_strategy=btc_strategy,
@@ -288,10 +247,6 @@ def load_settings(refresh: bool = False) -> AppSettings:
         bot_prefix=bot_prefix,
         trade_against_switch_stablecoin=trade_against_switch_stablecoin,
         delisting_start_date=delisting_start_date,
-        strategy_id=strategy_id,
-        strategy_name=strategy_name,
-        strategy_backtest_optimize=strategy_backtest_optimize,
-        strategy=strategy,
         btc_strategy_impl=btc_strategy_impl,
         n_decimals=n_decimals,
     )

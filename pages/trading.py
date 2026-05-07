@@ -167,6 +167,70 @@ def delete_position(symbol, timeframe, position_id=None, strategy_name=""):
             position_id=position_id,
         ) 
         st.rerun()
+
+@st.dialog("Manual Sell")
+def forced_sale_position(symbol, timeframe, position_id, strategy_id="", strategy_name=""):
+    strategy_label = f" using **{strategy_name}**" if strategy_name else ""
+    st.write(f"Sell **{symbol}** from **{timeframe}** timeframe{strategy_label}.")
+
+    sell_amount_perc = st.slider(
+        label="Amount",
+        min_value=10,
+        max_value=100,
+        value=25,
+        step=5,
+        format="%d%%",
+    )
+
+    df_pos = database.get_position_by_id(int(position_id))
+    if not df_pos.empty:
+        balance_qty = df_pos["Qty"].iloc[0]
+    else:
+        balance_qty = 0
+
+    sell_amount = balance_qty * (sell_amount_perc / 100)
+    st.text_input(
+        label="Sell Amount / Position Balance",
+        value=f"{sell_amount} / {balance_qty}",
+        disabled=True,
+    )
+
+    sell_reason = f"Manual Sell of {sell_amount_perc}%"
+    sell_reason_input = st.text_input("Reason", value=sell_reason)
+    if sell_reason_input:
+        sell_reason = sell_reason_input
+
+    sell_confirmation = st.checkbox(
+        f"I confirm the Sell of **{sell_amount_perc}%** of **{symbol}** from **{timeframe}** bot"
+    )
+
+    if sell_confirmation and st.button(
+        "Sell Position",
+        key=f"sell_position_{position_id}",
+        icon=":material/sell:",
+        type="primary",
+    ):
+        sell_result = binance.create_sell_order(
+            symbol=symbol,
+            bot=timeframe,
+            reason=sell_reason,
+            percentage=sell_amount_perc,
+            strategy_id=strategy_id,
+            strategy_name=strategy_name,
+            position_id=int(position_id),
+        )
+        if sell_result is None:
+            st.warning("No sell order was placed.")
+            return
+
+        result, msg = sell_result
+
+        if result:
+            st.success(f"SOLD **{sell_amount_perc}%** of {symbol} from **{timeframe}** bot!")
+            time.sleep(1)
+            st.rerun()
+        else:
+            st.error(msg)
         
 def unrealized_pnl():
     with tab_upnl:
@@ -182,7 +246,7 @@ def unrealized_pnl():
         result_open_positions, positions_df_1d, positions_df_4h, positions_df_1h = calculate_unrealized_pnl()
         settings_snapshot = config.load_settings()
         df_trading_status_all = database.get_top_performers_trading_status(
-            strategy_id=getattr(settings_snapshot, "main_strategies", [settings_snapshot.strategy_id])
+            strategy_id=settings_snapshot.main_strategies
         )
 
         def _prepare_trading_status_for_tf(tf: str):
@@ -199,7 +263,43 @@ def unrealized_pnl():
                 (df["Trading_Approved"] == "Rejected") & (df["Trading_Rejection_Reasons"] == ""),
                 "Trading_Rejection_Reasons",
             ] = "Not evaluated yet"
+            columns_after_symbol = ["Trading_Approved", "Trading_Rejection_Reasons"]
+            ordered_columns = (
+                ["Symbol"]
+                + [col for col in columns_after_symbol if col in df.columns]
+                + [col for col in df.columns if col != "Symbol" and col not in columns_after_symbol]
+            )
+            df = df[ordered_columns]
             return df
+
+        def _render_selected_position_actions(event_positions, positions_df, key_suffix: str):
+            if len(event_positions.selection.rows) == 0:
+                return
+
+            selected_row_index = event_positions.selection.rows[0]
+            selected_position = positions_df.iloc[selected_row_index]
+            selected_symbol = selected_position["Symbol"]
+            selected_bot = selected_position["Bot"]
+            selected_position_id = int(selected_position["Id"])
+            selected_strategy_id = str(selected_position.get("Strategy_Id", "") or "")
+            selected_strategy_name = str(selected_position.get("Strategy_Name", "") or "")
+
+            with st.container(horizontal=True):
+                if st.button("Delete Position", key=f"delete_{key_suffix}", icon=":material/delete:"):
+                    delete_position(
+                        symbol=selected_symbol,
+                        timeframe=selected_bot,
+                        position_id=selected_position_id,
+                        strategy_name=selected_strategy_name,
+                    )
+                if st.button("Manual Sell", key=f"forced_sale_{key_suffix}", icon=":material/sell:"):
+                    forced_sale_position(
+                        symbol=selected_symbol,
+                        timeframe=selected_bot,
+                        position_id=selected_position_id,
+                        strategy_id=selected_strategy_id,
+                        strategy_name=selected_strategy_name,
+                    )
         # print("\nUnrealized PnL - Total")
         # print('-------------------------------')
         # print(result_open_positions)
@@ -255,6 +355,8 @@ def unrealized_pnl():
             on_select="rerun",
             selection_mode=["single-row", "multi-column"],
         )
+        _render_selected_position_actions(event_positions_1d, positions_df_1d, "1d")
+
         with st.expander("Top performers eligibility 1d", expanded=False):
             st.caption("Backtesting Approval Rules status for top performers on 1d.")
             df_trading_status_1d = _prepare_trading_status_for_tf("1d")
@@ -263,24 +365,6 @@ def unrealized_pnl():
             else:
                 styled_status_1d = df_trading_status_1d.style.apply(_highlight_trading_status, axis=1)
                 st.dataframe(styled_status_1d, width="content", hide_index=True)
-
-        # event_positions_1d.selection
-
-        row_1d_selected = len(event_positions_1d.selection.rows) > 0
-
-        # Check if there's a selection
-        if row_1d_selected:
-            selected_row_index = event_positions_1d.selection.rows[0]  # Get the index of the selected row
-            selected_symbol = positions_df_1d.loc[selected_row_index, 'Symbol']
-            selected_bot = positions_df_1d.loc[selected_row_index, 'Bot']  
-            selected_position_id = int(positions_df_1d.loc[selected_row_index, 'Id'])
-            selected_strategy_name = str(positions_df_1d.loc[selected_row_index].get('Strategy_Name', ''))
-
-            # Show the selected Name
-            # st.write(f"Selected Symbol {selected_symbol} and bot {selected_bot}")
-
-            if st.button("Delete Position", key="delete_1d"):
-                delete_position(symbol=selected_symbol, timeframe=selected_bot, position_id=selected_position_id, strategy_name=selected_strategy_name)
         
         
         #########################
@@ -296,6 +380,8 @@ def unrealized_pnl():
             on_select="rerun",
             selection_mode=["single-row", "multi-column"],
         )
+        _render_selected_position_actions(event_positions_4h, positions_df_4h, "4h")
+
         with st.expander("Top performers eligibility 4h", expanded=False):
             st.caption("Backtesting Approval Rules status for top performers on 4h.")
             df_trading_status_4h = _prepare_trading_status_for_tf("4h")
@@ -304,24 +390,6 @@ def unrealized_pnl():
             else:
                 styled_status_4h = df_trading_status_4h.style.apply(_highlight_trading_status, axis=1)
                 st.dataframe(styled_status_4h, width="content", hide_index=True)
-
-        # event_positions_1d.selection
-
-        row_4h_selected = len(event_positions_4h.selection.rows) > 0
-
-        # Check if there's a selection
-        if row_4h_selected:
-            selected_row_index = event_positions_4h.selection.rows[0]  # Get the index of the selected row
-            selected_symbol = positions_df_4h.loc[selected_row_index, 'Symbol']
-            selected_bot = positions_df_4h.loc[selected_row_index, 'Bot']  
-            selected_position_id = int(positions_df_4h.loc[selected_row_index, 'Id'])
-            selected_strategy_name = str(positions_df_4h.loc[selected_row_index].get('Strategy_Name', ''))
-
-            # Show the selected Name
-            # st.write(f"Selected Symbol {selected_symbol} and bot {selected_bot}")
-
-            if st.button("Delete Position", key="delete_4h"):
-                delete_position(symbol=selected_symbol, timeframe=selected_bot, position_id=selected_position_id, strategy_name=selected_strategy_name)
 
         #########################
         
@@ -336,6 +404,8 @@ def unrealized_pnl():
             on_select="rerun",
             selection_mode=["single-row", "multi-column"],
         )
+        _render_selected_position_actions(event_positions_1h, positions_df_1h, "1h")
+
         with st.expander("Top performers eligibility 1h", expanded=False):
             st.caption("Backtesting Approval Rules status for top performers on 1h.")
             df_trading_status_1h = _prepare_trading_status_for_tf("1h")
@@ -344,144 +414,6 @@ def unrealized_pnl():
             else:
                 styled_status_1h = df_trading_status_1h.style.apply(_highlight_trading_status, axis=1)
                 st.dataframe(styled_status_1h, width="content", hide_index=True)
-
-        # event_positions_1d.selection
-
-        row_1h_selected = len(event_positions_1h.selection.rows) > 0
-
-        # Check if there's a selection
-        if row_1h_selected:
-            selected_row_index = event_positions_1h.selection.rows[0]  # Get the index of the selected row
-            selected_symbol = positions_df_1h.loc[selected_row_index, 'Symbol']
-            selected_bot = positions_df_1h.loc[selected_row_index, 'Bot']  
-            selected_position_id = int(positions_df_1h.loc[selected_row_index, 'Id'])
-            selected_strategy_name = str(positions_df_1h.loc[selected_row_index].get('Strategy_Name', ''))
-
-            # Show the selected Name
-            # st.write(f"Selected Symbol {selected_symbol} and bot {selected_bot}")
-
-            if st.button("Delete Position", key="delete_1h"):
-                delete_position(symbol=selected_symbol, timeframe=selected_bot, position_id=selected_position_id, strategy_name=selected_strategy_name)
-
-        #----------------------
-        # Force Close Position
-        st.header("Forced Sale")
-        
-        sell_expander = st.expander("Choose position to sell")
-        with sell_expander:
-
-            # bots
-            bots = ["1d", "4h", "1h"]
-
-            
-            if "sell_bot" not in st.session_state:
-                st.session_state.sell_bot = None
-            # def sell_bot_change():
-
-            sell_bot = st.selectbox(
-                label="Bot",
-                options=(bots),
-                # label_visibility="collapsed",
-                key="sell_bot",
-                # on_change=sell_bot_change
-            )
-            
-            if st.session_state.sell_bot == "1d":
-                sell_positions_df = positions_df_1d
-            elif st.session_state.sell_bot == "4h":
-                sell_positions_df = positions_df_4h
-            elif st.session_state.sell_bot == "1h":
-                sell_positions_df = positions_df_1h
-            else:
-                sell_positions_df = pd.DataFrame()
-
-            position_options = []
-            position_labels = {}
-            if not sell_positions_df.empty:
-                for _, row in sell_positions_df.iterrows():
-                    option_id = int(row["Id"])
-                    strategy_label = row.get("Strategy_Name") or row.get("Strategy_Id") or ""
-                    position_options.append(option_id)
-                    position_labels[option_id] = f"{row['Symbol']} - {strategy_label}"
-
-            if "sell_symbol" not in st.session_state:
-                st.session_state.sell_symbol = None
-
-            sell_position_id = st.selectbox(
-                label="Position",
-                options=(position_options),
-                # label_visibility="collapsed",
-                key="sell_symbol",
-                format_func=lambda option: position_labels.get(option, str(option)),
-                disabled=len(position_options) == 0
-            )
-
-            disable_sell_confirmation1 = sell_position_id == None
-                    
-            # get balance
-            if not disable_sell_confirmation1:
-                selected_sell_pos = sell_positions_df.loc[sell_positions_df["Id"].astype(int) == int(sell_position_id)].iloc[0]
-                sell_symbol = str(selected_sell_pos["Symbol"])
-                sell_strategy_id = str(selected_sell_pos.get("Strategy_Id") or "")
-                sell_strategy_name = str(selected_sell_pos.get("Strategy_Name") or "")
-                sell_amount_perc = st.slider(
-                    label='Amount', 
-                    min_value=10, 
-                    max_value=100, 
-                    value=25, 
-                    step=5, 
-                    format="%d%%", 
-                    disabled=disable_sell_confirmation1
-                )
-                
-                # get current position balance
-                df_pos = database.get_position_by_id(int(sell_position_id))
-                if not df_pos.empty:
-                    balance_qty = df_pos['Qty'].iloc[0]
-                else:
-                    balance_qty = 0
-                # symbol_only, symbol_stable = general.separate_symbol_and_trade_against(sell_symbol)
-                # balance_qty = exchange.get_symbol_balance(symbol=symbol_only, bot=sell_bot) 
-                
-                sell_amount = balance_qty*(sell_amount_perc/100)
-                st.text_input(
-                    label='Sell Amount / Position Balance', 
-                    value=f'{sell_amount} / {balance_qty}', 
-                    disabled=True
-                )
-    
-                # sell_expander.write(disable_sell_confirmation1)
-                sell_reason = f"Forced Sale of {sell_amount_perc}%"
-                sell_reason_input = st.text_input("Reason")
-                if sell_reason_input:
-                    sell_reason = f"{sell_reason} - {sell_reason_input}"
-                sell_confirmation1 = st.checkbox(f"I confirm the Sell of **{sell_amount_perc}%** of **{sell_symbol}** from **{sell_bot}** bot", disabled=disable_sell_confirmation1)
-
-                # if button pressed then sell position
-                if sell_confirmation1:
-                    def sell_click():
-                        result, msg = binance.create_sell_order(
-                            symbol=sell_symbol,
-                            bot=sell_bot,
-                            reason=f"Forced Sale of {sell_amount_perc}%",
-                            percentage=sell_amount_perc,
-                            strategy_id=sell_strategy_id,
-                            strategy_name=sell_strategy_name,
-                            position_id=int(sell_position_id),
-                        ) 
-
-                        if result:
-                            sell_expander.success(f"SOLD **{sell_amount_perc}%** of {sell_symbol} from **{sell_bot}** bot!")
-                        else:
-                            sell_expander.error(msg)
-                        # time.sleep(3)
-
-                        st.session_state.sell_bot = None
-                        
-                        # dasboard refresh
-                        # st.rerun()
-
-                    sell_confirmation2 = sell_expander.button(label="SELL", on_click=sell_click)
 
 def top_performers():
     with tab_top_perf:
@@ -617,14 +549,14 @@ def settings():
                         parsed = json.loads(str(value))
                         strategy_ids = parsed if isinstance(parsed, list) else [parsed]
                     except Exception:
-                        strategy_ids = [config.read_setting("main_strategy")]
+                        strategy_ids = list(config.DEFAULT_MAIN_STRATEGIES)
 
                 valid_strategy_ids = []
                 for strategy_id in strategy_ids:
                     strategy_id = str(strategy_id)
                     if strategy_id in dict_strategies_main and strategy_id not in valid_strategy_ids:
                         valid_strategy_ids.append(strategy_id)
-                fallback = config.read_setting("main_strategy")
+                fallback = config.DEFAULT_MAIN_STRATEGIES[0]
                 return valid_strategy_ids or ([fallback] if fallback in dict_strategies_main else [])
 
             saved_main_strategies = _normalize_main_strategies(config.read_setting("main_strategies"))
@@ -634,8 +566,6 @@ def settings():
             def _save_main_strategies(selected):
                 selected = _normalize_main_strategies(selected)
                 patch = {"main_strategies": json.dumps(selected)}
-                if selected:
-                    patch["main_strategy"] = selected[0]
                 config.update_settings(patch)
 
             selected_main_strategies = st.multiselect(
@@ -971,6 +901,8 @@ def settings():
                 on_change=lambda: config.update_setting("bot_prefix", st.session_state.bot_prefix),
                 width=200,
                 help="When there are multiple instances of BEC running, the prefix is useful to distinguish which BEC the telegram message belongs to.")
+            if not str(st.session_state.bot_prefix or "").strip():
+                st.warning("Telegram Messages Prefix is empty. Telegram messages will not identify which BEC instance sent them.")
 
 
 def show_main_page():

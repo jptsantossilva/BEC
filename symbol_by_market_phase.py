@@ -413,7 +413,7 @@ def main(timeframe):
         database.delete_positions_not_top_rank()
 
         # Add top rank symbols to positions files for every selected trading strategy.
-        for strategy_id in getattr(settings, "main_strategies", [settings.strategy_id]):
+        for strategy_id in settings.main_strategies:
             database.add_top_rank_to_positions(strategy_id=strategy_id)
 
         # Delete rows with calc completed and keep only symbols with calc not completed

@@ -279,8 +279,8 @@ def create_buy_order(
                                    strategy_id=strategy_id,
                                    strategy_params_json=strategy_params_json)
         
-            effective_strategy_id = strategy_id or settings.strategy_id
-            base_strategy_name = strategy_name or settings.strategy_name
+            effective_strategy_id = strategy_id or (settings.main_strategy_configs[0]["id"] if settings.main_strategy_configs else "")
+            base_strategy_name = strategy_name or database.get_strategy_name(effective_strategy_id) or effective_strategy_id
             if effective_strategy_id in ["ema_cross_with_market_phases", "ema_cross", "hma_rsi_linreg"]:
                 strategy_name = str(fast_ema)+"/"+str(slow_ema)+" "+base_strategy_name
             else:
@@ -453,7 +453,7 @@ def create_sell_order(
                 stop_type = "hard_sl"
             elif reason.startswith("Take-Profit Level"):
                 stop_type = "tp"
-            elif reason.startswith("Forced Sale"):
+            elif reason.startswith(("Forced Sale", "Manual Sell")):
                 stop_type = "forced_sale"
             elif reason == "":
                 stop_type = "strategy"
@@ -521,8 +521,8 @@ def create_sell_order(
             else:
                 alert_type = telegram.EMOJI_TRADE_WITH_LOSS
 
-            effective_strategy_id = strategy_id or settings.strategy_id
-            base_strategy_name = strategy_name or settings.strategy_name
+            effective_strategy_id = strategy_id or (settings.main_strategy_configs[0]["id"] if settings.main_strategy_configs else "")
+            base_strategy_name = strategy_name or database.get_strategy_name(effective_strategy_id) or effective_strategy_id
             if effective_strategy_id in ["ema_cross_with_market_phases", "ema_cross", "hma_rsi_linreg"]:
                 strategy_name = str(fast_ema)+"/"+str(slow_ema)+" "+base_strategy_name
             else:

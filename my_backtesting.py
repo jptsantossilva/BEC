@@ -36,7 +36,9 @@ log_filename = "symbol_by_market_phase.log"
 logging.basicConfig(filename=log_filename, level=logging.INFO,
                     format='%(asctime)s %(message)s', datefmt='%Y-%m-%d %I:%M:%S %p -')
 
-FOLDER_BACKTEST_RESULTS = "static/backtest_results"
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+FOLDER_BACKTEST_RESULTS_URL = "static/backtest_results"
+FOLDER_BACKTEST_RESULTS = os.path.join(PROJECT_ROOT, FOLDER_BACKTEST_RESULTS_URL)
 
 # backtest with 4 years of price data 
 #-------------------------------------

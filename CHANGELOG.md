@@ -2,6 +2,13 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-05-07]
+- Backtesting Results - Fixed report file lookup and generation paths to use the project root instead of the process working directory, preventing missing HTML reports when production services start from a different folder.
+- Backtesting Results - Missing report warnings now show the expected absolute path, filename variants checked, and existing report files for the selected symbol to make production path issues easier to diagnose.
+- Trading Dashboard - Top performers eligibility grids now show `Trading_Approved` and `Trading_Rejection_Reasons` immediately after `Symbol` for easier approval review.
+- Trading Dashboard - Position row actions were moved directly below each positions grid; selecting a position now shows contextual `Delete Position` and `Manual Sell` buttons before the top performers eligibility expander.
+- Trading Dashboard - Replaced the separate `Forced Sale` block with a contextual `Manual Sell` dialog that supports partial or full manual sells for the selected position, including default sell reason, confirmation, and clearer button icons.
+
 ## [2026-05-06]
 - Trading - Added support for multiple main trading strategies. Settings now allow selecting multiple main strategies and trading/backtesting refresh flows keep strategy-specific candidates separated.
 - Trading - Positions and orders now track strategy metadata (`Strategy_Id`, `Strategy_Name`, `Strategy_Params_JSON`) so buys, sells, forced sells, deleted positions and PnL updates target the correct strategy-specific position.

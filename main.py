@@ -278,6 +278,10 @@ def get_strategy_display_name(strategy_id: str) -> str:
     return strategy_name or strategy_id
 
 
+def get_default_main_strategy_id(settings) -> str:
+    return settings.main_strategies[0] if settings.main_strategies else ""
+
+
 def strategy_uses_tuned_parameters(strategy_id: str) -> bool:
     return strategy_id in ["ema_cross_with_market_phases", "ema_cross", "hma_rsi_linreg"]
 
@@ -393,7 +397,7 @@ def trade(timeframe, run_mode, settings=None):
     for _, pos_row in df_sell.iterrows():
         symbol = str(pos_row["Symbol"])
         position_id = int(pos_row["Id"])
-        strategy_id = str(pos_row.get("Strategy_Id") or settings.strategy_id)
+        strategy_id = str(pos_row.get("Strategy_Id") or get_default_main_strategy_id(settings))
         strategy_name = str(pos_row.get("Strategy_Name") or get_strategy_display_name(strategy_id))
 
         # initialize vars
@@ -669,7 +673,7 @@ def trade(timeframe, run_mode, settings=None):
     for _, pos_row in df_buy.iterrows():
         symbol = str(pos_row["Symbol"])
         position_id = int(pos_row["Id"])
-        strategy_id = str(pos_row.get("Strategy_Id") or settings.strategy_id)
+        strategy_id = str(pos_row.get("Strategy_Id") or get_default_main_strategy_id(settings))
         strategy_name = str(pos_row.get("Strategy_Name") or get_strategy_display_name(strategy_id))
 
         # initialize vars

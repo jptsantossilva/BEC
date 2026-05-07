@@ -18,6 +18,10 @@ import utils.ai_strategy_analysis as ai_strategy_analysis
 import my_backtesting
 from my_backtesting import FOLDER_BACKTEST_RESULTS
 
+FOLDER_BACKTEST_RESULTS_URL = getattr(
+    my_backtesting, "FOLDER_BACKTEST_RESULTS_URL", "static/backtest_results"
+)
+
 
 class StreamlitLogCapture:
     def __init__(self, placeholder, original_stream, max_chars=50000):
@@ -93,9 +97,36 @@ def get_backtest_static_url(row, file_type):
     file_path = get_backtest_file_path(row, file_type)
     if os.path.exists(file_path):
         return os.path.join(
-            "app", FOLDER_BACKTEST_RESULTS, os.path.basename(file_path)
+            "app", FOLDER_BACKTEST_RESULTS_URL, os.path.basename(file_path)
         )
     return ""
+
+
+def format_missing_backtest_file_message(row, file_path, file_type):
+    candidates = [
+        os.path.join(FOLDER_BACKTEST_RESULTS, filename)
+        for filename in get_backtest_filename_candidates(row, file_type)
+    ]
+    existing_for_symbol = []
+    try:
+        symbol = str(row["Symbol"])
+        existing_for_symbol = sorted(
+            filename
+            for filename in os.listdir(FOLDER_BACKTEST_RESULTS)
+            if symbol in filename and filename.endswith(f".{file_type}")
+        )
+    except OSError:
+        existing_for_symbol = []
+
+    message = f"{file_type.upper()} report file not found for the selected row.\n\n"
+    message += f"Expected path: `{os.path.abspath(file_path)}`"
+    if len(candidates) > 1:
+        message += "\n\nChecked filename variants:\n"
+        message += "\n".join(f"- `{os.path.abspath(candidate)}`" for candidate in candidates)
+    if existing_for_symbol:
+        message += "\n\nExisting report files for this symbol:\n"
+        message += "\n".join(f"- `{filename}`" for filename in existing_for_symbol[:20])
+    return message
 
 
 def render_open_html_link(file_path, html_content=None):
@@ -1831,7 +1862,9 @@ if selected_row is not None:
             scrolling=False,
         )
     else:
-        st.warning("HTML report file not found for the selected row.")
+        st.warning(
+            format_missing_backtest_file_message(selected_row, selected_html_path, "html")
+        )
 else:
     st.caption("Select a row in the results grid to render the HTML report.")
 
