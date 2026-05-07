@@ -3038,8 +3038,9 @@ def run_backtest(symbol, timeframe, strategy, optimize):
             "maximize": bt_settings["Maximize"],
             "return_heatmap": True,
         }
-        if strategy_name == "hma_rsi_linreg":
-            optimize_params["rsi_min"] = range(50, 61, 2)
+        # Keep RSI fixed at the strategy default; optimizing it increased overfitting risk in backtests.
+        # if strategy_name == "hma_rsi_linreg":
+        #     optimize_params["rsi_min"] = range(50, 61, 2)
 
         optimized_param_names = [
             param_name
