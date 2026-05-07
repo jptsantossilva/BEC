@@ -21,6 +21,11 @@ from my_backtesting import FOLDER_BACKTEST_RESULTS
 FOLDER_BACKTEST_RESULTS_URL = getattr(
     my_backtesting, "FOLDER_BACKTEST_RESULTS_URL", "static/backtest_results"
 )
+FOLDER_BACKTEST_RESULTS_FALLBACK = getattr(
+    my_backtesting,
+    "FOLDER_BACKTEST_RESULTS_FALLBACK",
+    os.path.join(my_backtesting.PROJECT_ROOT, FOLDER_BACKTEST_RESULTS_URL),
+)
 
 
 class StreamlitLogCapture:
@@ -86,10 +91,15 @@ def get_backtest_file_path(row, file_type):
     canonical_path = os.path.join(
         FOLDER_BACKTEST_RESULTS, get_backtest_filename(row, file_type)
     )
-    for filename in get_backtest_filename_candidates(row, file_type):
-        file_path = os.path.join(FOLDER_BACKTEST_RESULTS, filename)
-        if os.path.exists(file_path):
-            return file_path
+    search_dirs = [FOLDER_BACKTEST_RESULTS]
+    if FOLDER_BACKTEST_RESULTS_FALLBACK not in search_dirs:
+        search_dirs.append(FOLDER_BACKTEST_RESULTS_FALLBACK)
+
+    for folder in search_dirs:
+        for filename in get_backtest_filename_candidates(row, file_type):
+            file_path = os.path.join(folder, filename)
+            if os.path.exists(file_path):
+                return file_path
     return canonical_path
 
 
@@ -103,20 +113,26 @@ def get_backtest_static_url(row, file_type):
 
 
 def format_missing_backtest_file_message(row, file_path, file_type):
+    search_dirs = [FOLDER_BACKTEST_RESULTS]
+    if FOLDER_BACKTEST_RESULTS_FALLBACK not in search_dirs:
+        search_dirs.append(FOLDER_BACKTEST_RESULTS_FALLBACK)
     candidates = [
-        os.path.join(FOLDER_BACKTEST_RESULTS, filename)
+        os.path.join(folder, filename)
+        for folder in search_dirs
         for filename in get_backtest_filename_candidates(row, file_type)
     ]
     existing_for_symbol = []
-    try:
-        symbol = str(row["Symbol"])
-        existing_for_symbol = sorted(
-            filename
-            for filename in os.listdir(FOLDER_BACKTEST_RESULTS)
-            if symbol in filename and filename.endswith(f".{file_type}")
-        )
-    except OSError:
-        existing_for_symbol = []
+    symbol = str(row["Symbol"])
+    for folder in search_dirs:
+        try:
+            existing_for_symbol.extend(
+                os.path.join(folder, filename)
+                for filename in os.listdir(folder)
+                if symbol in filename and filename.endswith(f".{file_type}")
+            )
+        except OSError:
+            continue
+    existing_for_symbol = sorted(existing_for_symbol)
 
     message = f"{file_type.upper()} report file not found for the selected row.\n\n"
     message += f"Expected path: `{os.path.abspath(file_path)}`"
@@ -125,7 +141,9 @@ def format_missing_backtest_file_message(row, file_path, file_type):
         message += "\n".join(f"- `{os.path.abspath(candidate)}`" for candidate in candidates)
     if existing_for_symbol:
         message += "\n\nExisting report files for this symbol:\n"
-        message += "\n".join(f"- `{filename}`" for filename in existing_for_symbol[:20])
+        message += "\n".join(
+            f"- `{os.path.abspath(filename)}`" for filename in existing_for_symbol[:20]
+        )
     return message
 
 

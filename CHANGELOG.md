@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [2026-05-07]
 - Backtesting Results - Fixed report file lookup and generation paths to use the project root instead of the process working directory, preventing missing HTML reports when production services start from a different folder.
+- Docker - Backtesting reports now use the shared `/app/persist/backtest_results` volume when available, with `/app/static/backtest_results` symlinked to it so the dashboard and jobs runner see the same generated files.
 - Backtesting Results - Missing report warnings now show the expected absolute path, filename variants checked, and existing report files for the selected symbol to make production path issues easier to diagnose.
 - Trading Dashboard - Top performers eligibility grids now show `Trading_Approved` and `Trading_Rejection_Reasons` immediately after `Symbol` for easier approval review.
 - Trading Dashboard - Position row actions were moved directly below each positions grid; selecting a position now shows contextual `Delete Position` and `Manual Sell` buttons before the top performers eligibility expander.

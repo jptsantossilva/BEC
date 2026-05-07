@@ -37,8 +37,14 @@ logging.basicConfig(filename=log_filename, level=logging.INFO,
                     format='%(asctime)s %(message)s', datefmt='%Y-%m-%d %I:%M:%S %p -')
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+PERSIST_DIR = os.path.join(PROJECT_ROOT, "persist")
 FOLDER_BACKTEST_RESULTS_URL = "static/backtest_results"
-FOLDER_BACKTEST_RESULTS = os.path.join(PROJECT_ROOT, FOLDER_BACKTEST_RESULTS_URL)
+FOLDER_BACKTEST_RESULTS = (
+    os.path.join(PERSIST_DIR, "backtest_results")
+    if os.path.isdir(PERSIST_DIR)
+    else os.path.join(PROJECT_ROOT, FOLDER_BACKTEST_RESULTS_URL)
+)
+FOLDER_BACKTEST_RESULTS_FALLBACK = os.path.join(PROJECT_ROOT, FOLDER_BACKTEST_RESULTS_URL)
 
 # backtest with 4 years of price data 
 #-------------------------------------
