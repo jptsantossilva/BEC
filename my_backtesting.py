@@ -3031,13 +3031,22 @@ def run_backtest(symbol, timeframe, strategy, optimize):
     # bt.plot()
 
     if optimize:
-        stats, heatmap = bt.optimize(
-            n1=range(10, 100, 10),
-            n2=range(20, 200, 10),
-            constraint=lambda param: param.n1 < param.n2,
-            maximize=bt_settings["Maximize"],
-            return_heatmap=True
-        )   
+        optimize_params = {
+            "n1": range(10, 101, 10),
+            "n2": range(20, 201, 10),
+            "constraint": lambda param: param.n1 < param.n2,
+            "maximize": bt_settings["Maximize"],
+            "return_heatmap": True,
+        }
+        if strategy_name == "hma_rsi_linreg":
+            optimize_params["rsi_min"] = range(50, 61, 2)
+
+        optimized_param_names = [
+            param_name
+            for param_name in optimize_params
+            if param_name not in {"constraint", "maximize", "return_heatmap"}
+        ]
+        stats, heatmap = bt.optimize(**optimize_params)   
 
         dfbema = pd.DataFrame(heatmap.sort_values().iloc[-1:])
         n1 = dfbema.index.get_level_values(0)[0]
@@ -3096,8 +3105,8 @@ def run_backtest(symbol, timeframe, strategy, optimize):
     print(f"Strategy = {strategy_name}")
     
     if optimize:
-        print("n1 = ",n1)
-        print("n2 = ",n2)
+        for param_name in optimized_param_names:
+            print(f"{param_name} = ", getattr(result_strategy, param_name, "n/a"))
     
     print("Backtest start date = ", backtest_start_date)
     print("Backtest end date =" , backtest_end_date)
