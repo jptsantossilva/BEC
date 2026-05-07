@@ -606,6 +606,46 @@ def get_strategy_name(strategy):
 def get_base_strategy_name(strategy):
     return get_strategy_name(strategy).split("(")[0]
 
+def _add_exit_size_percentages(df_trades):
+        if "Size" not in df_trades.columns or "EntryBar" not in df_trades.columns:
+            return df_trades
+
+        size = pd.to_numeric(df_trades["Size"], errors="coerce").abs()
+        entry_size = size.groupby(df_trades["EntryBar"]).transform("sum")
+        df_trades["Exit_Size_Pct"] = (
+            size / entry_size.replace(0, pd.NA) * 100
+        ).round(8)
+
+        sort_columns = [
+            column
+            for column in ["EntryBar", "ExitBar", "ExitTime"]
+            if column in df_trades.columns
+        ]
+        sorted_trades = df_trades.assign(_bec_original_index=df_trades.index)
+        sorted_trades = sorted_trades.sort_values(
+            sort_columns + ["_bec_original_index"],
+            kind="mergesort",
+        )
+
+        remaining_exit_pct = pd.Series(pd.NA, index=df_trades.index, dtype="Float64")
+        for _entry_bar, group in sorted_trades.groupby("EntryBar", sort=False):
+            remaining_size = size.loc[group.index].sum()
+            for index in group.index:
+                closed_size = size.loc[index]
+                if pd.isna(closed_size) or pd.isna(remaining_size) or remaining_size <= 0:
+                    remaining_exit_pct.loc[index] = pd.NA
+                    continue
+
+                remaining_exit_pct.loc[index] = round(
+                    float(closed_size / remaining_size * 100),
+                    8,
+                )
+                remaining_size = remaining_size - closed_size
+
+        df_trades["Exit_Remaining_Size_Pct"] = remaining_exit_pct
+        return df_trades
+
+
 def build_backtesting_trades_df(stats, strategy=None):
         df_trades = pd.DataFrame(stats._trades)
         if df_trades.empty:
@@ -629,11 +669,7 @@ def build_backtesting_trades_df(stats, strategy=None):
             pd.NA,
         )
 
-        if "Size" in df_trades.columns:
-            entry_size = df_trades.groupby("EntryBar")["Size"].transform(lambda s: s.abs().sum())
-            df_trades["Exit_Size_Pct"] = (
-                df_trades["Size"].abs() / entry_size.replace(0, pd.NA) * 100
-            ).round(8)
+        df_trades = _add_exit_size_percentages(df_trades)
 
         exit_reason_records = getattr(strategy, "_last_exit_reason_records", []) if strategy is not None else []
         if len(exit_reason_records) == len(df_trades):
@@ -695,6 +731,8 @@ def prepare_backtesting_trades_display(df_trades):
             df_display["Return_Pct"] = (df_display["ReturnPct"].astype(float) * 100).round(4)
 
         for column in [
+            "Exit_Size_Pct",
+            "Exit_Remaining_Size_Pct",
             "Size",
             "EntryPrice",
             "ExitPrice",
@@ -713,6 +751,7 @@ def prepare_backtesting_trades_display(df_trades):
             "Duration",
             "Exit_Reason",
             "Exit_Size_Pct",
+            "Exit_Remaining_Size_Pct",
             "Size",
             "EntryPrice",
             "ExitPrice",
@@ -726,6 +765,23 @@ def prepare_backtesting_trades_display(df_trades):
             "ExitBar",
         ]
         return df_display[[column for column in ordered_columns if column in df_display.columns]]
+
+
+def add_backtesting_trade_header_tooltips(trades_html_table):
+        header_tooltips = {
+            "Exit_Size_Pct": "Percent of the original position size closed by this exit.",
+            "Exit_Remaining_Size_Pct": "Percent of the remaining open position closed immediately before this exit.",
+            "Size": "Quantity of the traded base asset, not the position value in quote currency.",
+        }
+        for column, tooltip in header_tooltips.items():
+            escaped_column = html.escape(column)
+            escaped_tooltip = html.escape(tooltip, quote=True)
+            trades_html_table = trades_html_table.replace(
+                f"<th>{escaped_column}</th>",
+                f'<th title="{escaped_tooltip}" aria-label="{escaped_tooltip}">{escaped_column}</th>',
+                1,
+            )
+        return trades_html_table
 
 def flatten_backtesting_config(backtest_config):
         rows = []
@@ -1037,12 +1093,25 @@ def build_config_detail_html(backtest_config):
             return _format_report_value(value, digits=digits, suffix=suffix)
 
         def _config_rows(items):
-            return "".join(
-                f"<div class='bec-stat-row bec-config-row {'is-faded' if len(item) > 2 and item[2] else ''}'>"
-                f"<span>{item[0]}</span><strong class='bec-impact-neutral'>{item[1]}</strong>"
-                "</div>"
-                for item in items
-            )
+            rows = []
+            for item in items:
+                value = str(item[1])
+                state_class = ""
+                impact_class = "neutral"
+                if value == "Enabled":
+                    state_class = "is-enabled"
+                    impact_class = "positive"
+                elif value == "Disabled":
+                    state_class = "is-disabled"
+                    impact_class = "negative"
+
+                faded_class = "is-faded" if len(item) > 2 and item[2] else ""
+                rows.append(
+                    f"<div class='bec-stat-row bec-config-row {faded_class} {state_class}'>"
+                    f"<span>{item[0]}</span><strong class='bec-impact-{impact_class}'>{item[1]}</strong>"
+                    "</div>"
+                )
+            return "".join(rows)
 
         def _config_section(title, items):
             if not items:
@@ -1082,7 +1151,7 @@ def build_config_detail_html(backtest_config):
             take_profit_items.extend(
                 [
                     (f"{str(tp_name).upper()} PnL", _fmt_config_number(pnl_pct, suffix="%"), not enabled),
-                    (f"{str(tp_name).upper()} Position", _fmt_config_number(amount_pct, suffix="%"), not enabled),
+                    (f"{str(tp_name).upper()} Position Remaining", _fmt_config_number(amount_pct, suffix="%"), not enabled),
                     (f"{str(tp_name).upper()} Status", "Enabled" if enabled else "Disabled"),
                 ]
             )
@@ -1158,6 +1227,7 @@ def build_backtesting_tables_html(df_stats, backtest_config, df_trades):
             classes="bec-table bec-trades-table display compact stripe",
             border=0,
         )
+        trades_html_table = add_backtesting_trade_header_tooltips(trades_html_table)
 
         return (
             "<div class='bec-info-grid'>"
@@ -1846,6 +1916,14 @@ def save_backtesting_to_html(
         }
         .bec-config-row strong {
             color: var(--bec-text);
+        }
+        .bec-config-row.is-enabled span,
+        .bec-config-row.is-enabled strong {
+            color: var(--bec-green);
+        }
+        .bec-config-row.is-disabled span,
+        .bec-config-row.is-disabled strong {
+            color: var(--bec-red);
         }
         .bec-config-pill-grid {
             display: grid;
@@ -3079,7 +3157,10 @@ def run_backtest(symbol, timeframe, strategy, optimize):
                                     )
     
     # trades
-    df_trades_for_db = df_trades.drop(columns=["Size", "Exit_Size_Pct"], errors="ignore")
+    df_trades_for_db = df_trades.drop(
+        columns=["Size", "Exit_Size_Pct", "Exit_Remaining_Size_Pct"],
+        errors="ignore",
+    )
 
     # Insert the new columns at the beginning of the DataFrame
     df_trades_for_db.insert(0, "Symbol", symbol)
