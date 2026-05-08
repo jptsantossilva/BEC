@@ -115,6 +115,14 @@ Security note:
 - Telegram notifications for bot execution, position changes, and warnings.
 - Blacklist management to exclude symbols from trading.
 
+## Project layout
+Most application code lives in the `bec/` package. Thin compatibility wrappers remain in
+the repository root for existing Docker, Streamlit, cron, and scheduler commands such as
+`streamlit run dashboard.py`, `python jobs_runner.py`, and `python main.py 1d`.
+
+Streamlit pages remain in `pages/`. Runtime data keeps the existing paths: `data.db`,
+`main.log`, and `static/backtest_results`.
+
 ![dashboard](https://raw.githubusercontent.com/jptsantossilva/BEC/main/docs/dashboard.png)
 
 Backtesting report (BTCUSDC, 1d):

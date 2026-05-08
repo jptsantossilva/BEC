@@ -4,9 +4,9 @@ import sys
 import logging
 from html import escape as _html_escape
 
-from utils.env_loader import load_env_file
-import utils.database as database
-# from utils.database import get_setting
+from bec.utils.env_loader import load_env_file
+import bec.utils.database as database
+# from bec.utils.database import get_setting
 
 load_env_file(override=True)
 

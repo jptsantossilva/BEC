@@ -1,7 +1,7 @@
 import pandas as pd
 import streamlit as st
 
-import utils.database as database
+import bec.utils.database as database
 
 st.header("Scheduled Jobs")
 # st.write(f"You are logged in as {st.session_state.role}.")

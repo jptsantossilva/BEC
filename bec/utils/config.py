@@ -5,10 +5,10 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-# from utils import telegram
-# from utils import database
-import utils.telegram as telegram
-import utils.database as database
+# from bec.utils import telegram
+# from bec.utils import database
+import bec.utils.telegram as telegram
+import bec.utils.database as database
 
 _settings_cache = None
 DEFAULT_MAIN_STRATEGIES = ["ema_cross_with_market_phases"]
@@ -188,7 +188,7 @@ def load_settings(refresh: bool = False) -> AppSettings:
         database.set_setting("main_strategies", normalized_main_strategies)
 
     main_strategy_configs = []
-    strategy_module = importlib.import_module('my_backtesting')
+    strategy_module = importlib.import_module("bec.my_backtesting")
     for selected_strategy_id in main_strategies:
         df_selected_strategy = database.get_strategy_by_id(selected_strategy_id)
         if df_selected_strategy.empty:

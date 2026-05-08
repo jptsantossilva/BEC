@@ -12,9 +12,9 @@ from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceOrderException, BinanceRequestException
 from binance.helpers import round_step_size
 
-import utils.config as config
-import utils.telegram as telegram
-import utils.database as database
+import bec.utils.config as config
+import bec.utils.telegram as telegram
+import bec.utils.database as database
 
 _client: Optional[Client] = None # private to module
 

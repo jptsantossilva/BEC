@@ -1,5 +1,6 @@
 
 *.csv
+!runtime/legacy/coinpairBestEma Full List.csv
 *.log
 data.db
 *.db
@@ -115,6 +116,8 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
+!.env.example
 .venv
 env/
 venv/

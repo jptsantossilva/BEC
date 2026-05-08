@@ -2,7 +2,7 @@ import time
 import re
 
 import streamlit as st
-import utils.database as database
+import bec.utils.database as database
 
 
 st.title("User Settings")

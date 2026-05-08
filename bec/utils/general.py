@@ -30,8 +30,7 @@ def extract_date_from_github_changelog():
         return None
     
 def extract_date_from_local_changelog():
-    # Go one level up from the current file (utils/)
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     file_path = os.path.join(base_dir, "CHANGELOG.md")
 
     with open(file_path, 'r') as file:

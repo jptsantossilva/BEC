@@ -1,10 +1,10 @@
 import streamlit as st
 from binance.client import Client
 
-from market_indicators.registry import get_registry
-from market_indicators.data import get_OHLCV
-from market_indicators.styles import inject_base_css
-from market_indicators.ui import status_badge, score_meter, sparkline, last_updated
+from bec.market_indicators.registry import get_registry
+from bec.market_indicators.data import get_OHLCV
+from bec.market_indicators.styles import inject_base_css
+from bec.market_indicators.ui import status_badge, score_meter, sparkline, last_updated
 
 
 st.set_page_config(page_title="Bull Market Peak – Dashboard", layout="wide")

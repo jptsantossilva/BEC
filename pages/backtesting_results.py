@@ -13,10 +13,10 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-import utils.database as database
-import utils.ai_strategy_analysis as ai_strategy_analysis
-import my_backtesting
-from my_backtesting import FOLDER_BACKTEST_RESULTS
+import bec.utils.database as database
+import bec.utils.ai_strategy_analysis as ai_strategy_analysis
+import bec.my_backtesting as my_backtesting
+from bec.my_backtesting import FOLDER_BACKTEST_RESULTS
 
 FOLDER_BACKTEST_RESULTS_URL = getattr(
     my_backtesting, "FOLDER_BACKTEST_RESULTS_URL", "static/backtest_results"
@@ -817,7 +817,7 @@ def run_backtest_for_selection(strategy_id, symbol, timeframe):
         else False
     )
 
-    strategy_module = importlib.import_module("my_backtesting")
+    strategy_module = importlib.import_module("bec.my_backtesting")
     if getattr(strategy_module, strategy_id, None) is None:
         st.error(f"Strategy '{strategy_id}' is not available in my_backtesting.py.")
         return False

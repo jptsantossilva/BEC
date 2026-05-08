@@ -5,8 +5,8 @@ import re
 from datetime import datetime
 import os
 
-import utils.config as config
-import utils.telegram as telegram
+import bec.utils.config as config
+import bec.utils.telegram as telegram
 
 BASE_URL = "https://www.binance.com"
 ANNOUNCEMENTS_LIST_URL = "https://www.binance.com/en/support/announcement/list/161"

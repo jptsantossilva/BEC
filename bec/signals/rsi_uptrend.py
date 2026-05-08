@@ -13,7 +13,7 @@ import sys
 import os
 
 # Allow running this file directly from the signals/ folder.
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
@@ -25,9 +25,9 @@ import time
 
 import ta
 
-import utils.telegram as telegram
-import utils.database as database 
-import exchanges.binance as binance
+import bec.utils.telegram as telegram
+import bec.utils.database as database 
+import bec.exchanges.binance as binance
 
 TELEGRAM_PREFIX_SIGNAL = "RSI-Uptrend" 
 RSI_LOOKBACK_PERIODS = 14 # 14 days

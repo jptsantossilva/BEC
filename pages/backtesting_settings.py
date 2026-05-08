@@ -2,8 +2,8 @@ import streamlit as st
 import time
 import pandas as pd
 
-import utils.database as database
-import utils.icons as icons
+import bec.utils.database as database
+import bec.utils.icons as icons
 
 MAXIMIZE_OPTIONS = {
     "SQN": "Van Tharp's [System Quality Number](https://www.google.com/search?q=System+Quality+Number).",

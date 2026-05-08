@@ -10,12 +10,12 @@ from millify import millify
 import streamlit_authenticator as stauth
 import altair as alt
 
-import utils.config as config
-import utils.database as database
-import exchanges.binance as binance
-import utils.trading_service as trading_service
+import bec.utils.config as config
+import bec.utils.database as database
+import bec.exchanges.binance as binance
+import bec.utils.trading_service as trading_service
 
-from my_backtesting import FOLDER_BACKTEST_RESULTS
+from bec.my_backtesting import FOLDER_BACKTEST_RESULTS
 
 TRADING_TAB_OPTIONS = [
     "Unrealized PnL",

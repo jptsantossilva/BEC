@@ -1,7 +1,7 @@
 from datetime import datetime
 
-import utils.database as database
-import utils.telegram as telegram
+import bec.utils.database as database
+import bec.utils.telegram as telegram
 
 
 def delete_position(symbol, bot, unit_price: float = 0.0, reason: str = "Symbol delisted from exchange", position_id: int | None = None):

@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Union, Callable
 import streamlit as st
 
-from exchanges.binance import get_ohlcv as fetch_binance_OHLCV
+from bec.exchanges.binance import get_ohlcv as fetch_binance_OHLCV
 from binance.client import Client 
 
 # ----------------------

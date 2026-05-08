@@ -1,7 +1,7 @@
 import streamlit as st
 import altair as alt
 
-import utils.database as database
+import bec.utils.database as database
 
 
 def get_chart_daily_balance(asset):

@@ -8,7 +8,7 @@ def load_env_file(env_path: str | os.PathLike | None = None, override: bool = Tr
     By default .env wins over already exported machine variables. This keeps
     dev, Docker and app behavior aligned around the project-local .env file.
     """
-    path = Path(env_path) if env_path else Path(__file__).resolve().parents[1] / ".env"
+    path = Path(env_path) if env_path else Path(__file__).resolve().parents[2] / ".env"
     if not path.exists():
         return
 

@@ -11,7 +11,7 @@ from datetime import datetime
 import pandas as pd
 import yaml
 
-from utils import general
+from bec.utils import general
 
 
 def build_strategy_params_json(strategy_id: str, fast_value=0, slow_value=0) -> str:
@@ -100,7 +100,9 @@ def _get_conn():
 # change connection on Dashboard
 def connect_to_bot(folder_name: str):
     #Connects to an SQLite database file located in a child folder of the grandparent folder.
-    grandparent_folder = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+    grandparent_folder = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), os.pardir, os.pardir)
+    )
     child_folder = os.path.join(grandparent_folder, folder_name)
     return connect(child_folder)
 
@@ -504,7 +506,7 @@ def add_order_sell(
             # calc the PnL value
             # since we can make multiple sells, I will use the buy_qty = sell_qty to get the pnl_value for the partial sold position 
             # pnl_value = (sell_price*sell_qty)-(buy_price*buy_qty)
-            from utils import config as _config
+            from bec.utils import config as _config
             settings = _config.load_settings()
             pnl_value = (sell_price*sell_qty)-(buy_price*sell_qty)
             pnl_value = float(round(pnl_value, settings.n_decimals))
@@ -960,7 +962,7 @@ def update_position_pnl(bot: str, symbol: str, curr_price: float, position_id: i
         pnl_perc = ((curr_price - buy_price)/buy_price)*100
         pnl_perc = float(round(pnl_perc,2))
 
-        from utils import config as _config
+        from bec.utils import config as _config
         settings = _config.load_settings()
         pnl_value = (curr_price*qty)-(buy_price*qty)
         pnl_value = float(round(pnl_value, settings.n_decimals))

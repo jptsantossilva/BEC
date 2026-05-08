@@ -9,9 +9,9 @@ import requests
 from requests import HTTPError
 from requests import Timeout
 
-from utils.env_loader import load_env_file
-import utils.database as database
-from utils.strategy_quality_score import calculate_strategy_quality_score
+from bec.utils.env_loader import load_env_file
+import bec.utils.database as database
+from bec.utils.strategy_quality_score import calculate_strategy_quality_score
 
 load_env_file(override=True)
 
