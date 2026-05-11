@@ -500,7 +500,7 @@ def render_result_detail(row, method):
     st.caption(f"Interpretation: {summary.get('interpretation', 'n/a')}")
     if summary.get("sample_note"):
         st.warning(str(summary.get("sample_note")))
-    st.plotly_chart(equity_figure, use_container_width=True)
+    st.plotly_chart(equity_figure, width="stretch")
     metrics = _metrics_df(result)
     if not metrics.empty:
         st.dataframe(

@@ -2,7 +2,7 @@ import streamlit as st
 
 
 DEFAULT_PAGE_TITLE = "BEC App"
-DEFAULT_PAGE_ICON = "random"
+DEFAULT_PAGE_ICON = ":material/currency_bitcoin:"
 DEFAULT_LAYOUT = "wide"
 DEFAULT_MENU_ITEMS = {
     "Get Help": "https://github.com/jptsantossilva/BEC#readme",

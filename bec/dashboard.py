@@ -24,6 +24,8 @@ load_env_file(override=True)
 
 configure_page()
 
+st.logo("static/bec-logo.svg", size="large", icon_image=":material/currency_bitcoin:")
+
 # --- Top-of-page banner placeholder (must be above any other UI rendering)
 TOP_NOTICE = st.empty()
 
@@ -139,6 +141,11 @@ def check_app_version():
         app_version = last_date
     else:
         app_version = "App version not found"
+    st.sidebar.page_link(
+        "https://jptsantossilva.github.io/BEC/",
+        label="User Manual",
+        icon=":material/menu_book:",
+    )
     st.sidebar.markdown(
         f"""
         <div style="line-height:1.15; margin-top:0.15rem;">
