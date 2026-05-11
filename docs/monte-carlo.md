@@ -31,14 +31,50 @@ It does not edit the original candles. It creates new DataFrames for each scenar
 
 ## Robustness Score
 
-The score compares the original result with the scenario distribution. It considers median return, worst 5% return, worst drawdown, and how many scenarios were valid.
+The **MC Score** is a 0-100 robustness score. It compares the original result with the Monte Carlo scenario distribution.
+
+The score uses three components:
+
+| Component | Weight | What It Measures |
+| --- | ---: | --- |
+| Median return | 40% | Whether the typical Monte Carlo scenario keeps returns close to the original backtest |
+| Worst 5% return | 35% | Whether the lower-tail scenarios still hold up |
+| Drawdown | 25% | Whether the worst 5% drawdowns are controlled versus the original drawdown |
+
+The final score is adjusted by the valid scenario ratio:
+
+```text
+MC Score =
+(
+  median return component * 40%
+  + worst 5% return component * 35%
+  + drawdown component * 25%
+)
+* valid scenarios / total scenarios
+```
+
+For example, if BEC runs 200 scenarios and all 200 are valid, the valid scenario ratio is `1.0`. If only 120 of 200 are valid, the score is multiplied by `0.6`.
+
+### Components
+
+The **median return component** compares the median scenario return with the original return. If the median scenario return is much lower than the original backtest, the MC Score drops.
+
+The **worst 5% return component** looks at the lower tail of the scenario distribution. This penalizes strategies that only look strong in the original path but break down in weaker synthetic paths.
+
+The **drawdown component** compares the original drawdown with the worst 5% scenario drawdown. If Monte Carlo scenarios create much larger drawdowns than the original backtest, the score drops.
+
+All components are capped between 0 and 100 before weighting.
 
 Common interpretations:
 
-- **Robust**: scenario results remain close enough to the original.
-- **Moderate robustness**: usable signal, but not strongly stable.
-- **Sequence-sensitive**: trade order has a large effect.
-- **Market-path fragile**: candles-based scenarios degrade the result heavily.
-- **Insufficient scenarios**: too few valid scenarios to trust the result.
+| Interpretation | Rule | Meaning |
+| --- | --- | --- |
+| **Robust** | Score >= 75 | Scenario results remain close enough to the original |
+| **Moderate robustness** | Score >= 55 and < 75 | Usable signal, but not strongly stable |
+| **Sequence-sensitive** | Score < 55 for trade-order shuffling | Trade order has a large effect |
+| **Market-path fragile** | Score < 45 for candles-based tests | Synthetic market paths degrade the result heavily |
+| **Insufficient scenarios** | Too few valid scenarios or insufficient trade sample | The result should not be trusted |
+
+The MC Score is not the same as the Backtesting **Strategy Quality Score**. MC Score is only about robustness under Monte Carlo scenarios; Strategy Quality Score combines return, risk, trade quality, and other backtest quality factors.
 
 Use Monte Carlo as a filter, not as proof that a strategy will work live.
