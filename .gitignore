@@ -51,6 +51,11 @@ pip-delete-this-directory.txt
 
 # Unit test / coverage reports
 tests/
+!tests/
+tests/*
+!tests/unit/
+tests/unit/*
+!tests/unit/test_monte_carlo.py
 htmlcov/
 .tox/
 .nox/
@@ -83,6 +88,12 @@ instance/
 
 # Sphinx documentation
 docs/_build/
+docs/.vitepress/cache/
+docs/.vitepress/dist/
+docs/.vitepress/.temp/
+
+# Node / VitePress
+node_modules/
 
 # PyBuilder
 target/

@@ -1,3 +1,5 @@
+name: bec
+
 services:
   dashboard:
     image: ghcr.io/jptsantossilva/bec:latest
@@ -39,3 +41,4 @@ services:
 
 volumes:
   bec_persist:
+    name: bec_bec_persist
