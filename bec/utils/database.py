@@ -6,12 +6,16 @@ import shutil
 import sqlite3
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pandas as pd
 import yaml
 
 from bec.utils import general
+
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+MONTE_CARLO_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "static", "backtest_results", "monte_carlo")
 
 
 def build_strategy_params_json(strategy_id: str, fast_value=0, slow_value=0) -> str:
@@ -2492,6 +2496,55 @@ sql_create_backtesting_jobs_table = """
     );
 """
 
+sql_create_monte_carlo_jobs_table = """
+    CREATE TABLE IF NOT EXISTS Monte_Carlo_Jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        batch_id TEXT NOT NULL,
+        strategy_id TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        timeframe TEXT NOT NULL,
+        method TEXT NOT NULL,
+        scenarios INTEGER NOT NULL,
+        seed INTEGER NOT NULL DEFAULT 42,
+        status TEXT NOT NULL DEFAULT 'queued',
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        return_code INTEGER,
+        log_path TEXT,
+        error_message TEXT
+    );
+"""
+
+sql_create_monte_carlo_results_table = """
+    CREATE TABLE IF NOT EXISTS Monte_Carlo_Results (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        Symbol TEXT NOT NULL,
+        Time_Frame TEXT NOT NULL,
+        Strategy_Id TEXT NOT NULL,
+        Method TEXT NOT NULL,
+        Scenarios INTEGER NOT NULL,
+        Valid_Scenarios INTEGER NOT NULL,
+        Seed INTEGER NOT NULL,
+        Robustness_Score REAL,
+        Interpretation TEXT,
+        Net_Profit_Original REAL,
+        Net_Profit_Worst_5 REAL,
+        Net_Profit_Median REAL,
+        Net_Profit_Best_5 REAL,
+        Max_Drawdown_Original REAL,
+        Max_Drawdown_Worst_5 REAL,
+        Max_Drawdown_Median REAL,
+        Max_Drawdown_Best_5 REAL,
+        Html_Path TEXT,
+        Csv_Path TEXT,
+        Json_Path TEXT,
+        Result_JSON TEXT,
+        Created_At TEXT NOT NULL,
+        CONSTRAINT monte_carlo_target_unique UNIQUE (Symbol, Time_Frame, Strategy_Id, Method)
+    );
+"""
+
 DEFAULT_JOB_SCHEDULES = [
     ("main_1h", "main.py", "1h", "1h", 1, "Trading bot (1h) using the configured strategy."),
     ("main_4h", "main.py", "4h", "4h", 1, "Trading bot (4h) using the configured strategy."),
@@ -2636,6 +2689,12 @@ def create_tables():
         connection.execute("CREATE INDEX IF NOT EXISTS idx_backtesting_jobs_status_created ON Backtesting_Jobs(status, created_at)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_backtesting_jobs_batch ON Backtesting_Jobs(batch_id)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_backtesting_jobs_target ON Backtesting_Jobs(strategy_id, symbol, timeframe, status)")
+        connection.execute(sql_create_monte_carlo_jobs_table)
+        connection.execute(sql_create_monte_carlo_results_table)
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_monte_carlo_jobs_status_created ON Monte_Carlo_Jobs(status, created_at)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_monte_carlo_jobs_batch ON Monte_Carlo_Jobs(batch_id)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_monte_carlo_jobs_target ON Monte_Carlo_Jobs(strategy_id, symbol, timeframe, method, status)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_monte_carlo_results_target ON Monte_Carlo_Results(Strategy_Id, Symbol, Time_Frame, Method)")
 
         # --------
         # apply database scripts updates
@@ -2898,6 +2957,16 @@ def ensure_backtesting_jobs():
         connection.execute("CREATE INDEX IF NOT EXISTS idx_backtesting_jobs_batch ON Backtesting_Jobs(batch_id)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_backtesting_jobs_target ON Backtesting_Jobs(strategy_id, symbol, timeframe, status)")
 
+def ensure_monte_carlo_tables():
+    connection = _get_conn()
+    with connection:
+        connection.execute(sql_create_monte_carlo_jobs_table)
+        connection.execute(sql_create_monte_carlo_results_table)
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_monte_carlo_jobs_status_created ON Monte_Carlo_Jobs(status, created_at)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_monte_carlo_jobs_batch ON Monte_Carlo_Jobs(batch_id)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_monte_carlo_jobs_target ON Monte_Carlo_Jobs(strategy_id, symbol, timeframe, method, status)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_monte_carlo_results_target ON Monte_Carlo_Results(Strategy_Id, Symbol, Time_Frame, Method)")
+
 def enqueue_backtesting_jobs(jobs, batch_id: str = ""):
     import uuid
 
@@ -3098,6 +3167,405 @@ def reset_running_backtesting_jobs(error_message: str = "Interrupted before comp
             """,
             (finished_at, error_message),
         )
+
+def enqueue_monte_carlo_jobs(jobs, batch_id: str = ""):
+    import uuid
+
+    connection = _get_conn()
+    batch_id = batch_id or uuid.uuid4().hex
+    created_at = datetime.utcnow().isoformat(timespec="seconds")
+    queued = []
+    skipped = []
+
+    with connection:
+        connection.execute(sql_create_monte_carlo_jobs_table)
+        for job in jobs:
+            strategy_id = str(job["strategy_id"]).strip()
+            symbol = str(job["symbol"]).strip().upper()
+            timeframe = str(job["timeframe"]).strip()
+            method = str(job["method"]).strip()
+            scenarios = int(job["scenarios"])
+            seed = int(job.get("seed", 42))
+            cursor = connection.execute(
+                """
+                SELECT id
+                FROM Monte_Carlo_Jobs
+                WHERE strategy_id = ?
+                  AND symbol = ?
+                  AND timeframe = ?
+                  AND method = ?
+                  AND status IN ('queued', 'running')
+                LIMIT 1
+                """,
+                (strategy_id, symbol, timeframe, method),
+            )
+            existing = cursor.fetchone()
+            if existing:
+                skipped.append(
+                    {
+                        "id": existing[0],
+                        "strategy_id": strategy_id,
+                        "symbol": symbol,
+                        "timeframe": timeframe,
+                        "method": method,
+                    }
+                )
+                continue
+
+            cursor = connection.execute(
+                """
+                INSERT INTO Monte_Carlo_Jobs (
+                    batch_id, strategy_id, symbol, timeframe, method, scenarios, seed, status, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?)
+                """,
+                (batch_id, strategy_id, symbol, timeframe, method, scenarios, seed, created_at),
+            )
+            queued.append(
+                {
+                    "id": cursor.lastrowid,
+                    "strategy_id": strategy_id,
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "method": method,
+                }
+            )
+
+    return {"batch_id": batch_id, "queued": queued, "skipped": skipped}
+
+def get_monte_carlo_jobs(limit: int = 50):
+    connection = _get_conn()
+    connection.execute(sql_create_monte_carlo_jobs_table)
+    return pd.read_sql(
+        """
+        SELECT id, batch_id, strategy_id, symbol, timeframe, method, scenarios, seed,
+               status, created_at, started_at, finished_at, return_code, log_path, error_message
+        FROM Monte_Carlo_Jobs
+        ORDER BY
+            CASE status
+                WHEN 'running' THEN 0
+                WHEN 'queued' THEN 1
+                WHEN 'failed' THEN 2
+                ELSE 3
+            END,
+            COALESCE(started_at, created_at) DESC,
+            id DESC
+        LIMIT ?
+        """,
+        connection,
+        params=(int(limit),),
+    )
+
+def get_monte_carlo_job_counts():
+    connection = _get_conn()
+    connection.execute(sql_create_monte_carlo_jobs_table)
+    return pd.read_sql(
+        "SELECT status, COUNT(*) AS count FROM Monte_Carlo_Jobs GROUP BY status",
+        connection,
+    )
+
+def get_monte_carlo_job_counts_by_batch(batch_id: str):
+    connection = _get_conn()
+    connection.execute(sql_create_monte_carlo_jobs_table)
+    return pd.read_sql(
+        """
+        SELECT status, COUNT(*) AS count
+        FROM Monte_Carlo_Jobs
+        WHERE batch_id = ?
+        GROUP BY status
+        """,
+        connection,
+        params=(str(batch_id),),
+    )
+
+def claim_next_monte_carlo_job():
+    connection = _get_conn()
+    started_at = datetime.utcnow().isoformat(timespec="seconds")
+    with connection:
+        connection.execute(sql_create_monte_carlo_jobs_table)
+        cursor = connection.execute(
+            """
+            SELECT id, batch_id, strategy_id, symbol, timeframe, method, scenarios, seed
+            FROM Monte_Carlo_Jobs
+            WHERE status = 'queued'
+            ORDER BY created_at ASC, id ASC
+            LIMIT 1
+            """
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+
+        connection.execute(
+            """
+            UPDATE Monte_Carlo_Jobs
+            SET status = 'running',
+                started_at = ?,
+                error_message = NULL,
+                return_code = NULL
+            WHERE id = ? AND status = 'queued'
+            """,
+            (started_at, row[0]),
+        )
+
+    return {
+        "id": row[0],
+        "batch_id": row[1],
+        "strategy_id": row[2],
+        "symbol": row[3],
+        "timeframe": row[4],
+        "method": row[5],
+        "scenarios": int(row[6]),
+        "seed": int(row[7]),
+    }
+
+def set_monte_carlo_job_log_path(job_id: int, log_path: str):
+    connection = _get_conn()
+    with connection:
+        connection.execute(
+            "UPDATE Monte_Carlo_Jobs SET log_path = ? WHERE id = ?",
+            (str(log_path), int(job_id)),
+        )
+
+def complete_monte_carlo_job(job_id: int, return_code: int, error_message: str = ""):
+    connection = _get_conn()
+    finished_at = datetime.utcnow().isoformat(timespec="seconds")
+    status = "completed" if int(return_code) == 0 else "failed"
+    with connection:
+        connection.execute(
+            """
+            UPDATE Monte_Carlo_Jobs
+            SET status = ?,
+                finished_at = ?,
+                return_code = ?,
+                error_message = ?
+            WHERE id = ?
+            """,
+            (status, finished_at, int(return_code), str(error_message or ""), int(job_id)),
+        )
+
+def reset_running_monte_carlo_jobs(error_message: str = "Interrupted before completion."):
+    connection = _get_conn()
+    finished_at = datetime.utcnow().isoformat(timespec="seconds")
+    with connection:
+        connection.execute(sql_create_monte_carlo_jobs_table)
+        connection.execute(
+            """
+            UPDATE Monte_Carlo_Jobs
+            SET status = 'failed',
+                finished_at = ?,
+                error_message = ?
+            WHERE status = 'running'
+            """,
+            (finished_at, error_message),
+        )
+
+def get_backtesting_trades_by_symbol_timeframe_strategy(symbol: str, timeframe: str, strategy_id: str):
+    connection = _get_conn()
+    connection.execute(sql_create_backtesting_trades_table)
+    return pd.read_sql(
+        """
+        SELECT *
+        FROM Backtesting_Trades
+        WHERE Symbol = ?
+          AND Time_Frame = ?
+          AND Strategy_Id = ?
+        ORDER BY EntryTime, ExitTime, Id
+        """,
+        connection,
+        params=(str(symbol), str(timeframe), str(strategy_id)),
+    )
+
+def upsert_monte_carlo_result(result: dict):
+    connection = _get_conn()
+    created_at = datetime.utcnow().isoformat(timespec="seconds")
+    summary = result.get("summary", {}) if isinstance(result, dict) else {}
+    metrics = result.get("metrics", {}) if isinstance(result, dict) else {}
+
+    def _metric(metric_name, column_name):
+        try:
+            value = metrics.get(metric_name, {}).get(column_name)
+            return float(value) if value is not None else None
+        except Exception:
+            return None
+
+    with connection:
+        connection.execute(sql_create_monte_carlo_results_table)
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO Monte_Carlo_Results (
+                Symbol, Time_Frame, Strategy_Id, Method, Scenarios, Valid_Scenarios, Seed,
+                Robustness_Score, Interpretation,
+                Net_Profit_Original, Net_Profit_Worst_5, Net_Profit_Median, Net_Profit_Best_5,
+                Max_Drawdown_Original, Max_Drawdown_Worst_5, Max_Drawdown_Median, Max_Drawdown_Best_5,
+                Html_Path, Csv_Path, Json_Path, Result_JSON, Created_At
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(result.get("symbol")),
+                str(result.get("timeframe")),
+                str(result.get("strategy_id")),
+                str(result.get("method")),
+                int(summary.get("total_scenarios", result.get("scenarios", 0)) or 0),
+                int(summary.get("valid_scenarios", 0) or 0),
+                int(result.get("seed", 42) or 42),
+                float(summary.get("robustness_score")) if summary.get("robustness_score") is not None else None,
+                str(summary.get("interpretation", "")),
+                _metric("Net Profit", "original"),
+                _metric("Net Profit", "worst_5"),
+                _metric("Net Profit", "median"),
+                _metric("Net Profit", "best_5"),
+                _metric("Max Drawdown", "original"),
+                _metric("Max Drawdown", "worst_5"),
+                _metric("Max Drawdown", "median"),
+                _metric("Max Drawdown", "best_5"),
+                str(result.get("html_path", "")),
+                str(result.get("csv_path", "")),
+                str(result.get("json_path", "")),
+                json.dumps(result, ensure_ascii=True),
+                created_at,
+            ),
+        )
+
+def get_all_monte_carlo_results():
+    connection = _get_conn()
+    connection.execute(sql_create_monte_carlo_results_table)
+    return pd.read_sql(
+        """
+        SELECT id, Symbol, Time_Frame, Strategy_Id, Method, Scenarios, Valid_Scenarios,
+               Seed, Robustness_Score, Interpretation,
+               Net_Profit_Original, Net_Profit_Worst_5, Net_Profit_Median, Net_Profit_Best_5,
+               Max_Drawdown_Original, Max_Drawdown_Worst_5, Max_Drawdown_Median, Max_Drawdown_Best_5,
+               Html_Path, Csv_Path, Json_Path, Created_At
+        FROM Monte_Carlo_Results
+        ORDER BY Created_At DESC
+        """,
+        connection,
+    )
+
+def get_monte_carlo_result(symbol: str, timeframe: str, strategy_id: str, method: str):
+    connection = _get_conn()
+    connection.execute(sql_create_monte_carlo_results_table)
+    return pd.read_sql(
+        """
+        SELECT *
+        FROM Monte_Carlo_Results
+        WHERE Symbol = ?
+          AND Time_Frame = ?
+          AND Strategy_Id = ?
+          AND Method = ?
+        LIMIT 1
+        """,
+        connection,
+        params=(str(symbol), str(timeframe), str(strategy_id), str(method)),
+    )
+
+def _monte_carlo_result_paths(row):
+    paths = []
+    for column in ["Html_Path", "Csv_Path", "Json_Path"]:
+        try:
+            value = row[column]
+        except Exception:
+            value = None
+        if value:
+            paths.append(str(value))
+    return paths
+
+def _safe_delete_monte_carlo_file(path: str):
+    if not path:
+        return {"path": str(path or ""), "deleted": False, "skipped": True, "error": ""}
+
+    normalized = str(path).replace("\\", os.sep)
+    abs_path = normalized if os.path.isabs(normalized) else os.path.join(PROJECT_ROOT, normalized)
+    real_base = os.path.realpath(MONTE_CARLO_OUTPUT_DIR)
+    real_path = os.path.realpath(abs_path)
+
+    try:
+        common = os.path.commonpath([real_base, real_path])
+    except ValueError:
+        common = ""
+    if common != real_base:
+        return {"path": str(path), "deleted": False, "skipped": True, "error": "outside_monte_carlo_dir"}
+    if os.path.isdir(real_path):
+        return {"path": str(path), "deleted": False, "skipped": True, "error": "is_directory"}
+    if not os.path.exists(real_path):
+        return {"path": str(path), "deleted": False, "skipped": True, "error": ""}
+
+    try:
+        os.remove(real_path)
+        return {"path": str(path), "deleted": True, "skipped": False, "error": ""}
+    except OSError as exc:
+        return {"path": str(path), "deleted": False, "skipped": False, "error": repr(exc)}
+
+def _delete_monte_carlo_files(paths):
+    file_results = [_safe_delete_monte_carlo_file(path) for path in paths]
+    return {
+        "files": file_results,
+        "deleted_files": sum(1 for item in file_results if item["deleted"]),
+        "skipped_files": sum(1 for item in file_results if item["skipped"]),
+        "file_errors": [item for item in file_results if item["error"] and not item["skipped"]],
+        "unsafe_paths": [item for item in file_results if item["error"] == "outside_monte_carlo_dir"],
+    }
+
+def get_monte_carlo_cleanup_candidates(method: str = "", older_than_days: int = None, result_ids=None):
+    connection = _get_conn()
+    connection.execute(sql_create_monte_carlo_results_table)
+    clauses = []
+    params = []
+    if method:
+        clauses.append("Method = ?")
+        params.append(str(method))
+    if older_than_days is not None:
+        cutoff = datetime.utcnow() - timedelta(days=int(older_than_days))
+        clauses.append("Created_At < ?")
+        params.append(cutoff.isoformat(timespec="seconds"))
+    if result_ids:
+        ids = [int(value) for value in result_ids]
+        placeholders = ",".join(["?"] * len(ids))
+        clauses.append(f"id IN ({placeholders})")
+        params.extend(ids)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    return pd.read_sql(
+        f"""
+        SELECT id, Symbol, Time_Frame, Strategy_Id, Method, Created_At,
+               Html_Path, Csv_Path, Json_Path
+        FROM Monte_Carlo_Results
+        {where}
+        ORDER BY Created_At DESC
+        """,
+        connection,
+        params=tuple(params),
+    )
+
+def delete_monte_carlo_results(result_ids):
+    ids = [int(value) for value in (result_ids or [])]
+    if not ids:
+        return {"deleted_results": 0, "deleted_files": 0, "skipped_files": 0, "file_errors": [], "unsafe_paths": []}
+
+    candidates = get_monte_carlo_cleanup_candidates(result_ids=ids)
+    paths = []
+    for _, row in candidates.iterrows():
+        paths.extend(_monte_carlo_result_paths(row))
+
+    connection = _get_conn()
+    placeholders = ",".join(["?"] * len(ids))
+    with connection:
+        cursor = connection.execute(
+            f"DELETE FROM Monte_Carlo_Results WHERE id IN ({placeholders})",
+            tuple(ids),
+        )
+    file_summary = _delete_monte_carlo_files(paths)
+    return {
+        "deleted_results": int(cursor.rowcount if cursor.rowcount is not None else len(candidates)),
+        **file_summary,
+    }
+
+def delete_monte_carlo_results_by_method(method: str):
+    candidates = get_monte_carlo_cleanup_candidates(method=str(method))
+    return delete_monte_carlo_results(candidates["id"].tolist() if not candidates.empty else [])
+
+def delete_old_monte_carlo_results(days: int = 30, method: str = ""):
+    candidates = get_monte_carlo_cleanup_candidates(method=str(method or ""), older_than_days=int(days))
+    return delete_monte_carlo_results(candidates["id"].tolist() if not candidates.empty else [])
 
 def get_job_schedules():
     connection = _get_conn()
@@ -3588,6 +4056,7 @@ create_tables()                   # create/update schema
 migrate_config_to_db()            # migrate config.yaml to the DB (uses _get_conn internally)
 ensure_job_schedules()            # seed default schedules
 ensure_backtesting_jobs()         # create backtesting job queue
+ensure_monte_carlo_tables()       # create Monte Carlo queue/results
 ensure_backtesting_settings()     # seed backtesting settings
 # --- End of module initialization ---
 

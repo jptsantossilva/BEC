@@ -2,6 +2,9 @@ import pandas as pd
 import streamlit as st
 
 import bec.utils.database as database
+from bec.page_config import configure_page
+
+configure_page()
 
 st.header("Scheduled Jobs")
 # st.write(f"You are logged in as {st.session_state.role}.")

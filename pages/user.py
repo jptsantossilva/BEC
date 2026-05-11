@@ -3,7 +3,9 @@ import re
 
 import streamlit as st
 import bec.utils.database as database
+from bec.page_config import configure_page
 
+configure_page()
 
 st.title("User Settings")
 st.caption(f"You are logged in with role: {st.session_state.get('role')}.")

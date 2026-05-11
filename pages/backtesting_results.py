@@ -16,7 +16,10 @@ import streamlit.components.v1 as components
 import bec.utils.database as database
 import bec.utils.ai_strategy_analysis as ai_strategy_analysis
 import bec.my_backtesting as my_backtesting
+from bec.page_config import configure_page
 from bec.my_backtesting import FOLDER_BACKTEST_RESULTS
+
+configure_page()
 
 FOLDER_BACKTEST_RESULTS_URL = getattr(
     my_backtesting, "FOLDER_BACKTEST_RESULTS_URL", "static/backtest_results"
@@ -931,6 +934,23 @@ def tail_text_file(file_path, max_chars=12000):
     return content[-max_chars:]
 
 
+def style_backtesting_job_status(value):
+    status = str(value or "").strip().lower()
+    colors = {
+        "queued": "#7c3aed",
+        "pending": "#7c3aed",
+        "running": "#2563eb",
+        "completed": "#16a34a",
+        "failed": "#dc2626",
+        "cancelled": "#64748b",
+        "canceled": "#64748b",
+        "skipped": "#ca8a04",
+        "unknown": "#475569",
+    }
+    color = colors.get(status, "#475569")
+    return f"color: {color};"
+
+
 @st.fragment(run_every=3)
 def render_backtesting_jobs_status():
     counts = database.get_backtesting_job_counts()
@@ -1038,8 +1058,13 @@ def render_backtesting_jobs_status():
             ]
         ]
 
+        styled_jobs_display = jobs_display.style.map(
+            style_backtesting_job_status,
+            subset=["status"],
+        )
+
         st.dataframe(
-            jobs_display,
+            styled_jobs_display,
             width="content",
             hide_index=True,
             height=260,
@@ -1337,8 +1362,8 @@ migrate_filter_state("bt_results_symbol", "bt_results_saved_symbol")
 
 df_bt_results = database.get_all_backtesting_results()
 
-primary_filter_col1, primary_filter_col2 = st.columns(2)
-with primary_filter_col1:
+primary_filters = st.container(horizontal=True)
+with primary_filters:
     strategy_options = list(dict_strategies.keys())
     restore_multiselect_filter(
         "bt_results_saved_strategy",
@@ -1356,7 +1381,6 @@ with primary_filter_col1:
         ),
     )
 
-with primary_filter_col2:
     list_timeframe = ["1d", "4h", "1h"]
     restore_multiselect_filter(
         "bt_results_saved_timeframe",
@@ -1376,9 +1400,25 @@ with primary_filter_col2:
 # search by symbol
 list_symbols = sorted(df_bt_results["Symbol"].dropna().astype(str).unique().tolist())
 
-symbol_filter_col, top_performers_col = st.columns([0.5, 0.5])
-with top_performers_col:
-    st.write('<div style="height: 35px;"></div>', unsafe_allow_html=True)
+symbol_filters = st.container(horizontal=True, vertical_alignment="bottom")
+with symbol_filters:
+    restore_multiselect_filter(
+        "bt_results_saved_symbol",
+        "_bt_results_symbol",
+        list_symbols,
+        allow_new_options=True,
+    )
+    search_symbol = st.multiselect(
+        label="Symbol",
+        options=list_symbols,
+        accept_new_options=True,
+        key="_bt_results_symbol",
+        on_change=lambda: persist_filter_widget(
+            "bt_results_saved_symbol",
+            "_bt_results_symbol",
+        ),
+    )
+
     if st.button(
         "Load Top Performers",
         key="bt_results_load_top_performers",
@@ -1400,32 +1440,12 @@ if top_performers_message:
     else:
         st.info(message_text)
 
-with symbol_filter_col:
-    restore_multiselect_filter(
-        "bt_results_saved_symbol",
-        "_bt_results_symbol",
-        list_symbols,
-        allow_new_options=True,
-    )
-    search_symbol = st.multiselect(
-        label="Symbol",
-        options=list_symbols,
-        accept_new_options=True,
-        key="_bt_results_symbol",
-        on_change=lambda: persist_filter_widget(
-            "bt_results_saved_symbol",
-            "_bt_results_symbol",
-        ),
-    )
-
 today = datetime.now()
 four_years_ago = today.replace(year=today.year - 4)
 
 with st.expander("Advanced filters", expanded=False):
-    date_filter_col, result_filter_col = st.columns([0.42, 0.58])
-    with date_filter_col:
-        date_start_col, date_end_col = st.columns(2)
-    with date_start_col:
+    advanced_result_filters = st.container(horizontal=True, vertical_alignment="bottom")
+    with advanced_result_filters:
         search_date_ini = st.date_input(
             label="Start date",
             value=four_years_ago,
@@ -1435,7 +1455,6 @@ with st.expander("Advanced filters", expanded=False):
             key="bt_results_start_date",
         )
 
-    with date_end_col:
         search_date_end = st.date_input(
             label="End date",
             value=today,
@@ -1445,9 +1464,6 @@ with st.expander("Advanced filters", expanded=False):
             key="bt_results_end_date",
         )
 
-    with result_filter_col:
-        quality_col, approved_col, return_col = st.columns([0.38, 0.38, 0.24])
-    with quality_col:
         quality_grade_options = ["A", "B", "C", "D", "F"]
         search_quality_grade = st.multiselect(
             "Quality Grade",
@@ -1455,15 +1471,12 @@ with st.expander("Advanced filters", expanded=False):
             key="bt_results_quality_grade",
         )
 
-    with approved_col:
         search_trading_approved = st.selectbox(
             "Trading Approved",
             options=["All", "Approved", "Rejected"],
             key="bt_results_trading_approved",
         )
 
-    with return_col:
-        st.write('<div style="height: 35px;"></div>', unsafe_allow_html=True)
         search_return_pct = st.checkbox(
             "Return % > 0",
             value=False,

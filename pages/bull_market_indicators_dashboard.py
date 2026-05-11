@@ -5,9 +5,10 @@ from bec.market_indicators.registry import get_registry
 from bec.market_indicators.data import get_OHLCV
 from bec.market_indicators.styles import inject_base_css
 from bec.market_indicators.ui import status_badge, score_meter, sparkline, last_updated
+from bec.page_config import configure_page
 
 
-st.set_page_config(page_title="Bull Market Peak – Dashboard", layout="wide")
+configure_page(page_title="Bull Market Peak - Dashboard")
 
 
 inject_base_css()

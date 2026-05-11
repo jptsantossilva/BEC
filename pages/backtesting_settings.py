@@ -4,6 +4,9 @@ import pandas as pd
 
 import bec.utils.database as database
 import bec.utils.icons as icons
+from bec.page_config import configure_page
+
+configure_page()
 
 MAXIMIZE_OPTIONS = {
     "SQN": "Van Tharp's [System Quality Number](https://www.google.com/search?q=System+Quality+Number).",

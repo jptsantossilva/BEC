@@ -58,6 +58,8 @@ To remove everything:
 ```bash
 docker compose down -v
 ```
+This removes the persistent database volume. Do not use `docker compose down -v`
+when updating an existing production install.
 
 ## Updates
 Follow the last updates from the change log [here](https://github.com/jptsantossilva/BEC/blob/main/CHANGELOG.md)

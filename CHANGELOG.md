@@ -2,6 +2,12 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-05-11]
+- Monte Carlo Analysis - Added queued Monte Carlo robustness tests with trade-order shuffling and candles-based market path simulations.
+- Monte Carlo Analysis - Added result reports, MC Score, interpretation labels, styled results grid, progress visibility and contextual help.
+- Monte Carlo Analysis - Added cleanup tools for selected, method-specific and older Monte Carlo analyses, including automatic 30-day retention cleanup.
+- Documentation - Added the user manual.
+
 ## [2026-05-07]
 - Trading Dashboard - Settings / Take-Profit Levels now include an `Enable Take-Profit Levels` checkbox, allowing TPs to be temporarily disabled without clearing the configured TP percentages or amounts.
 - Trading / Backtesting - Take-profit execution now respects the global take-profit enable setting, and backtest reports/AI analysis include that enabled/disabled state.

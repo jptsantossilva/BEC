@@ -2,6 +2,9 @@ import streamlit as st
 import altair as alt
 
 import bec.utils.database as database
+from bec.page_config import configure_page
+
+configure_page()
 
 
 def get_chart_daily_balance(asset):

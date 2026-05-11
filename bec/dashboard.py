@@ -2,8 +2,10 @@
 import os
 import time
 import hashlib
+from urllib.parse import urlparse
 
 import streamlit as st
+from streamlit.runtime.scriptrunner_utils.script_run_context import get_script_run_ctx
 
 
 import streamlit_authenticator as stauth
@@ -16,22 +18,11 @@ import bec.utils.database as database
 from bec.utils.env_loader import load_env_file
 import bec.utils.general as general
 import bec.utils.telegram as telegram
+from bec.page_config import configure_page
 
 load_env_file(override=True)
 
-st.set_page_config(
-    page_title="BEC App",
-    page_icon="random",
-    layout="wide",
-    # initial_sidebar_state="auto",
-    menu_items={
-        "Get Help": "https://github.com/jptsantossilva/BEC#readme",
-        "Report a bug": "https://github.com/jptsantossilva/BEC/issues/new",
-        "About": """# My name is BEC \n I am a Trading Bot and I'm trying to be an *extremely* cool app! 
-        \n This is my dad's 🐦 Twitter: [@jptsantossilva](https://twitter.com/jptsantossilva).
-        """,
-    },
-)
+configure_page()
 
 # --- Top-of-page banner placeholder (must be above any other UI rendering)
 TOP_NOTICE = st.empty()
@@ -98,6 +89,48 @@ def logout_page_view():
 # 👇 coloca isto acima de set_pages()
 def unauthenticated_landing():
     st.empty()
+
+
+def requested_page_path_from_url():
+    ctx = get_script_run_ctx()
+    if not ctx or not ctx.context_info:
+        return ""
+
+    parsed_url = urlparse(ctx.context_info.url or "")
+    path = parsed_url.path.strip("/")
+    if not path:
+        return ""
+
+    return path.rsplit("/", 1)[-1]
+
+
+def restore_requested_page_from_url(pages_by_url_path, default_page):
+    ctx = get_script_run_ctx()
+    if not ctx:
+        return
+
+    requested_path = requested_page_path_from_url()
+    requested_page = pages_by_url_path.get(requested_path)
+    if not requested_page:
+        return
+
+    intended_hash = ctx.pages_manager.intended_page_script_hash
+    intended_name = ctx.pages_manager.intended_page_name
+    fallback_hashes = {"", ctx.pages_manager.main_script_hash}
+
+    if intended_hash and intended_hash not in fallback_hashes:
+        return
+
+    if intended_name and intended_name not in {"", default_page.url_path}:
+        return
+
+    # On a hard browser refresh, Streamlit can rerun the app before the frontend
+    # sends the selected page hash. Preserve the URL-selected page instead of
+    # falling back to the default dashboard.
+    ctx.pages_manager.set_script_intent(
+        requested_page._script_hash,
+        requested_path,
+    )
 
 
 def check_app_version():
@@ -193,19 +226,26 @@ def set_pages():
     role = st.session_state.role
 
     logout_page = st.Page(logout_page_view, title="Log out", icon=":material/logout:")
-    user_page = st.Page("pages/user.py", title="User", icon=":material/person:")
+    user_page = st.Page(
+        "pages/user.py",
+        title="User",
+        icon=":material/person:",
+        url_path="user",
+    )
 
     trading = st.Page(
         "pages/trading.py",
         title="Dashboard",
         icon=":material/currency_bitcoin:",
-        default=(role == "Trading"),
+        url_path="trading",
+        default=True,
     )
 
     balances = st.Page(
         "pages/balances.py",
         title="Balances",
         icon=":material/account_balance_wallet:",
+        url_path="balances",
         default=False,
     )
 
@@ -213,6 +253,7 @@ def set_pages():
         "pages/backtesting_settings.py",
         title="Backtest Settings",
         icon=":material/candlestick_chart:",
+        url_path="backtesting_settings",
         default=False,
     )
 
@@ -224,10 +265,19 @@ def set_pages():
         default=False,
     )
 
+    monte_carlo_analysis = st.Page(
+        "pages/monte_carlo_analysis.py",
+        title="Monte Carlo Analysis",
+        icon=":material/ssid_chart:",
+        url_path="monte_carlo_analysis",
+        default=False,
+    )
+
     scheduled_jobs = st.Page(
         "pages/scheduled_jobs.py",
         title="Scheduled Jobs",
         icon=":material/pending_actions:",
+        url_path="scheduled_jobs",
         default=False,
     )
 
@@ -235,8 +285,21 @@ def set_pages():
         "pages/bull_market_indicators_dashboard.py",
         title="Dashboard",
         icon=":material/finance_mode:",
-        default=(role == "Market Analysis"),
+        url_path="bull_market_indicators_dashboard",
+        default=False,
     )
+
+    pages_by_url_path = {
+        "user": user_page,
+        "trading": trading,
+        "balances": balances,
+        "scheduled_jobs": scheduled_jobs,
+        "backtesting_settings": backtesting_settings,
+        "backtesting_results": backtesting_results,
+        "monte_carlo_analysis": monte_carlo_analysis,
+        "bull_market_indicators_dashboard": bull_market_indicators_dashboard,
+    }
+    restore_requested_page_from_url(pages_by_url_path, trading)
 
     # --- Account pages ---
     account_pages = []
@@ -245,7 +308,7 @@ def set_pages():
 
     # --- Role-based pages ---
     trading_pages = [trading, balances, scheduled_jobs]
-    backtesting_pages = [backtesting_settings, backtesting_results]
+    backtesting_pages = [backtesting_settings, backtesting_results, monte_carlo_analysis]
     # market_analysis_pages = [bull_market_indicators_dashboard]
     page_dict = {}
     if st.session_state.authentication_status:
@@ -257,12 +320,23 @@ def set_pages():
 
     if page_dict or account_pages:
         pg = st.navigation({"Account": account_pages} | page_dict)
+        pg.run()
     else:
         pg = st.navigation(
-            [st.Page(unauthenticated_landing, title="Welcome", icon=":material/lock:")]
+            [
+                user_page,
+                logout_page,
+                trading,
+                balances,
+                scheduled_jobs,
+                backtesting_settings,
+                backtesting_results,
+                monte_carlo_analysis,
+                bull_market_indicators_dashboard,
+            ],
+            position="hidden",
         )
-
-    pg.run()
+        unauthenticated_landing()
 
 
 def show_main_page():

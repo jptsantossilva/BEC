@@ -14,8 +14,11 @@ import bec.utils.config as config
 import bec.utils.database as database
 import bec.exchanges.binance as binance
 import bec.utils.trading_service as trading_service
+from bec.page_config import configure_page
 
 from bec.my_backtesting import FOLDER_BACKTEST_RESULTS
+
+configure_page()
 
 TRADING_TAB_OPTIONS = [
     "Unrealized PnL",
@@ -28,20 +31,6 @@ TRADING_TAB_OPTIONS = [
 TRADING_ACTIVE_TAB_KEY = "trading_active_tab_saved"
 TRADING_ACTIVE_TAB_WIDGET_KEY = "_trading_active_tab_widget"
 MAIN_STRATEGIES_WIDGET_KEY = "_main_strategies_widget"
-
-# st.set_page_config(
-#     page_title="BEC App",
-#     page_icon="random",
-#     layout="wide",
-#     # initial_sidebar_state="auto",
-#     menu_items={
-#         'Get Help': 'https://github.com/jptsantossilva/BEC#readme',
-#         'Report a bug': "https://github.com/jptsantossilva/BEC/issues/new",
-#         'About': """# My name is BEC \n I am a Trading Bot and I'm trying to be an *extremely* cool app! 
-#         \n This is my dad's 🐦 Twitter: [@jptsantossilva](https://twitter.com/jptsantossilva).
-#         """
-#     }
-# )
 
 # for testing purposes
 # st.session_state

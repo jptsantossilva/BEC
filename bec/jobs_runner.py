@@ -12,6 +12,7 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PYTHON = sys.executable
 MAX_PARALLEL = 10
 BACKTESTING_JOBS_DIR = os.path.join("static", "backtest_results", "jobs")
+MONTE_CARLO_JOBS_DIR = os.path.join("static", "backtest_results", "monte_carlo", "jobs")
 
 
 def _extract_main_timeframe(schedule_name: str):
@@ -130,23 +131,105 @@ def _finish_backtesting_job(running_job):
     print(f"[{finished_at}] Backtest job {job['id']} finished with return code {return_code}")
     return True
 
+def _start_next_monte_carlo_job():
+    job = database.claim_next_monte_carlo_job()
+    if job is None:
+        return None
+
+    os.makedirs(os.path.join(ROOT_DIR, MONTE_CARLO_JOBS_DIR), exist_ok=True)
+    log_path = os.path.join(MONTE_CARLO_JOBS_DIR, f"{job['id']}.log")
+    database.set_monte_carlo_job_log_path(job["id"], log_path)
+    log_abs_path = os.path.join(ROOT_DIR, log_path)
+    log_file = open(log_abs_path, "w", encoding="utf-8")
+    command = [
+        PYTHON,
+        "monte_carlo.py",
+        "--symbol",
+        job["symbol"],
+        "--timeframe",
+        job["timeframe"],
+        "--strategy",
+        job["strategy_id"],
+        "--method",
+        job["method"],
+        "--scenarios",
+        str(job["scenarios"]),
+        "--seed",
+        str(job["seed"]),
+    ]
+
+    started_at = datetime.now(timezone.utc).isoformat()
+    log_file.write(
+        f"[{started_at}] Running Monte Carlo job {job['id']}: "
+        f"{job['method']} - {job['strategy_id']} - {job['symbol']} - {job['timeframe']} "
+        f"(scenarios={job['scenarios']}, seed={job['seed']})\n"
+    )
+    log_file.flush()
+    print(
+        f"[{started_at}] Running Monte Carlo job {job['id']} "
+        f"({job['method']} - {job['strategy_id']} - {job['symbol']} - {job['timeframe']})"
+    )
+
+    process = subprocess.Popen(
+        command,
+        cwd=ROOT_DIR,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    return {"job": job, "process": process, "log_file": log_file}
+
+def _finish_monte_carlo_job(running_job):
+    job = running_job["job"]
+    process = running_job["process"]
+    log_file = running_job["log_file"]
+    return_code = process.poll()
+    if return_code is None:
+        return False
+
+    finished_at = datetime.now(timezone.utc).isoformat()
+    log_file.write(f"\n[{finished_at}] Monte Carlo job finished with return code {return_code}.\n")
+    log_file.flush()
+    log_file.close()
+    error_message = "" if return_code == 0 else "Monte Carlo subprocess failed. Check the job log."
+    database.complete_monte_carlo_job(job["id"], return_code, error_message)
+    print(f"[{finished_at}] Monte Carlo job {job['id']} finished with return code {return_code}")
+    return True
+
 def run_loop():
     print("jobs_runner started (UTC).")
     database.reset_running_backtesting_jobs("jobs_runner restarted before this job completed.")
+    database.reset_running_monte_carlo_jobs("jobs_runner restarted before this job completed.")
     running = []
     running_backtesting_job = None
+    running_monte_carlo_job = None
     while True:
         now_utc = datetime.now(timezone.utc)
         running = [(name, proc) for name, proc in running if proc.poll() is None]
 
         if running_backtesting_job is not None and _finish_backtesting_job(running_backtesting_job):
             running_backtesting_job = None
+        if running_monte_carlo_job is not None and _finish_monte_carlo_job(running_monte_carlo_job):
+            running_monte_carlo_job = None
 
         if running_backtesting_job is None:
             try:
                 running_backtesting_job = _start_next_backtesting_job()
             except Exception as e:
                 msg = f"[backtesting_runner] failed to start queued job: {repr(e)}"
+                print(msg)
+                try:
+                    telegram.send_telegram_message(telegram.telegram_token_errors,
+                                                   telegram.EMOJI_WARNING,
+                                                   msg)
+                except Exception:
+                    pass
+
+        if running_monte_carlo_job is None:
+            try:
+                running_monte_carlo_job = _start_next_monte_carlo_job()
+            except Exception as e:
+                msg = f"[monte_carlo_runner] failed to start queued job: {repr(e)}"
                 print(msg)
                 try:
                     telegram.send_telegram_message(telegram.telegram_token_errors,
