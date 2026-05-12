@@ -11,6 +11,15 @@ DEFAULT_MENU_ITEMS = {
         \n This is my dad's 🐦 Twitter: [@jptsantossilva](https://twitter.com/jptsantossilva).
         """,
 }
+WIDE_MODE_CSS = """
+<style>
+    .block-container,
+    [data-testid="stMainBlockContainer"] {
+        max-width: none !important;
+        width: 100% !important;
+    }
+</style>
+"""
 
 
 def configure_page(page_title=DEFAULT_PAGE_TITLE):
@@ -20,3 +29,4 @@ def configure_page(page_title=DEFAULT_PAGE_TITLE):
         layout=DEFAULT_LAYOUT,
         menu_items=DEFAULT_MENU_ITEMS,
     )
+    st.markdown(WIDE_MODE_CSS, unsafe_allow_html=True)

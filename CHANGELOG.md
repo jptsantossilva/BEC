@@ -2,6 +2,15 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-05-12]
+- Dashboard Authentication - Fixed login, logout, cookie handling, logout confirmation and default dashboard redirect after login.
+- Dashboard Layout - Fixed Streamlit wide mode setup for the main dashboard entrypoint.
+- Tests - Added authentication and login page tests.
+- Monte Carlo Analysis - Updated the MC Score calculation to give more weight to median results.
+- Monte Carlo Analysis - Fixed Monte Carlo report generation for trade-order shuffling.
+- Monte Carlo Queue - Changed job ordering to show the most recent jobs first.
+- Balances - Fixed duplicated daily balance snapshots and added cleanup for existing duplicated rows.
+
 ## [2026-05-11]
 - Monte Carlo Analysis - Added queued Monte Carlo robustness tests with trade-order shuffling and candles-based market path simulations.
 - Monte Carlo Analysis - Added result reports, MC Score, interpretation labels, styled results grid, progress visibility and contextual help.

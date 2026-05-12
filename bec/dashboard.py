@@ -2,6 +2,7 @@
 import os
 import time
 import hashlib
+import secrets
 from urllib.parse import urlparse
 
 import streamlit as st
@@ -18,11 +19,8 @@ import bec.utils.database as database
 from bec.utils.env_loader import load_env_file
 import bec.utils.general as general
 import bec.utils.telegram as telegram
-from bec.page_config import configure_page
 
 load_env_file(override=True)
-
-configure_page()
 
 st.logo("static/bec-logo.svg", size="large", icon_image=":material/currency_bitcoin:")
 
@@ -32,23 +30,23 @@ TOP_NOTICE = st.empty()
 # for testing purposes
 # st.session_state
 
-# Initialization
-if "name" not in st.session_state:
-    st.session_state.name = ""
-if "username" not in st.session_state:
-    st.session_state.username = ""
-if "user_password" not in st.session_state:
-    st.session_state.user_password = "None"
-if "reset_form_open" not in st.session_state:
-    st.session_state.reset_form_open = False
-if "reset_password_submitted" not in st.session_state:
-    st.session_state.reset_password_submitted = False
-if "authentication_status" not in st.session_state:
-    st.session_state.authentication_status = None
-if "role" not in st.session_state:
-    st.session_state.role = None
-if "logout" not in st.session_state:
-    st.session_state.logout = False
+def initialize_session_state():
+    defaults = {
+        "name": "",
+        "username": "",
+        "user_password": "None",
+        "reset_form_open": False,
+        "reset_password_submitted": False,
+        "authentication_status": None,
+        "role": None,
+        "logout": False,
+        "redirect_to_dashboard_after_login": False,
+    }
+    for key, value in defaults.items():
+        st.session_state.setdefault(key, value)
+
+
+initialize_session_state()
 
 ROLES = [None, "Trading", "Market Analysis", "Admin"]
 
@@ -60,32 +58,44 @@ COOKIE_KEY = database.get_or_create_secret_setting(
     comment="Auto-generated secret used to sign dashboard login cookies.",
 )
 COOKIE_SIGNING_KEY = hashlib.sha256(COOKIE_KEY.encode("utf-8")).hexdigest()
+authenticator = None
+
+
+def rotate_dashboard_cookie_key():
+    global COOKIE_KEY, COOKIE_SIGNING_KEY
+
+    COOKIE_KEY = secrets.token_urlsafe(48)
+    database.set_setting("dashboard_cookie_key", COOKIE_KEY)
+    COOKIE_SIGNING_KEY = hashlib.sha256(COOKIE_KEY.encode("utf-8")).hexdigest()
 
 
 def logout():
-
-    # now clear cookie and force a clean login
     try:
-        authenticator.logout(location="unrendered")
+        authenticator.authentication_controller.logout()
     except Exception:
         pass
+    rotate_dashboard_cookie_key()
     st.session_state["logout"] = True
+    st.session_state["logout_complete"] = True
     for key in ("authentication_status", "username", "name", "role"):
         st.session_state[key] = None
+    clear_authentication_cookie()
     st.rerun()
 
 
 def logout_page_view():
-    st.title("Log out")
-    st.write("Click confirm to end your session.")
+    if st.session_state.get("logout_complete"):
+        st.switch_page("dashboard.py")
 
-    cols = st.columns((2), width=300)
-    with cols[0]:
-        if st.button("Confirm", icon=":material/check:"):
-            logout()
-    with cols[1]:
-        if st.button("Cancel", icon=":material/cancel:"):
-            st.switch_page("pages/trading.py")  # navigate to Trading page
+    st.title("Log out")
+    st.write("Are you sure you want to log out?")
+
+    actions = st.container(horizontal=True)
+    if actions.button("Confirm", icon=":material/check:", key="confirm_logout"):
+        st.info("Logging out...")
+        logout()
+    if actions.button("Cancel", icon=":material/cancel:", key="cancel_logout"):
+        st.switch_page("pages/trading.py")
 
 
 # 👇 coloca isto acima de set_pages()
@@ -146,8 +156,10 @@ def check_app_version():
         label="User Manual",
         icon=":material/menu_book:",
     )
+    
     st.sidebar.markdown(
         f"""
+        <br>
         <div style="line-height:1.15; margin-top:0.15rem;">
             <div style="font-size:0.82rem; color:rgba(49, 51, 63, 0.6);">BEC - {trade_against}</div>
             <div style="font-size:0.78rem; color:rgba(49, 51, 63, 0.6); margin-top:0.08rem;">Version {app_version}</div>
@@ -230,9 +242,15 @@ def check_app_version():
 
 
 def set_pages():
+    initialize_session_state()
     role = st.session_state.role
 
-    logout_page = st.Page(logout_page_view, title="Log out", icon=":material/logout:")
+    logout_page = st.Page(
+        logout_page_view,
+        title="Log out",
+        icon=":material/logout:",
+        url_path="logout",
+    )
     user_page = st.Page(
         "pages/user.py",
         title="User",
@@ -297,6 +315,7 @@ def set_pages():
     )
 
     pages_by_url_path = {
+        "logout": logout_page,
         "user": user_page,
         "trading": trading,
         "balances": balances,
@@ -306,6 +325,9 @@ def set_pages():
         "monte_carlo_analysis": monte_carlo_analysis,
         "bull_market_indicators_dashboard": bull_market_indicators_dashboard,
     }
+    if st.session_state.pop("redirect_to_dashboard_after_login", False):
+        st.switch_page("pages/trading.py")
+
     restore_requested_page_from_url(pages_by_url_path, trading)
 
     # --- Account pages ---
@@ -421,17 +443,98 @@ def render_forgot_password_widget():
         st.error(e)
 
 
-def set_authentication():
-    df_users = database.get_all_users()
-    # Convert the DataFrame to a dictionary
+def format_authenticator_credentials(df_users):
     credentials = df_users.to_dict("index")
     formatted_credentials = {"usernames": {}}
-    # Iterate over the keys and values of the original `credentials` dictionary
     for username, user_info in credentials.items():
-        # Add each username and its corresponding user info to the `formatted_credentials` dictionary
-        formatted_credentials["usernames"][username] = user_info
+        formatted_credentials["usernames"][str(username).lower()] = dict(user_info)
+    return formatted_credentials
 
-    st.session_state.setdefault("credentials", formatted_credentials)
+
+def clear_authentication_cookie():
+    if authenticator is None:
+        return
+
+    cookie_controller = getattr(authenticator, "cookie_controller", None)
+    if cookie_controller:
+        cookie_model = getattr(cookie_controller, "cookie_model", None)
+        cookie_manager = getattr(cookie_model, "cookie_manager", None)
+        if cookie_manager:
+            try:
+                cookie_manager.delete(COOKIE_NAME, key="delete_dashboard_auth_cookie")
+            except KeyError:
+                pass
+            return
+        try:
+            cookie_controller.delete_cookie()
+        except KeyError:
+            pass
+        return
+
+    cookie_manager = getattr(authenticator, "cookie_manager", None)
+    if cookie_manager:
+        cookie_manager.delete(COOKIE_NAME)
+        cookie_manager.delete(COOKIE_NAME, path="/")
+
+
+def restore_login_from_cookie():
+    try:
+        authenticator.login(location="unrendered")
+    except LoginError:
+        clear_authentication_cookie()
+        for key in ("authentication_status", "username", "name", "role"):
+            st.session_state[key] = None
+        st.info(
+            "Your previous session became invalid after the username change. Please log in again."
+        )
+
+
+def render_login_form():
+    with st.form(key="bec_login_form"):
+        st.subheader("Login")
+        username = st.text_input(
+            "Username",
+            key="bec_login_username",
+            autocomplete="username",
+        )
+        password = st.text_input(
+            "Password",
+            type="password",
+            key="bec_login_password",
+            autocomplete="current-password",
+        )
+        submitted = st.form_submit_button("Login")
+
+    if not submitted:
+        return
+
+    if not username or not password:
+        st.session_state.authentication_status = None
+        return
+
+    try:
+        authenticated = authenticator.authentication_controller.login(username, password)
+    except LoginError as e:
+        st.session_state.authentication_status = False
+        st.error(e)
+        return
+
+    if authenticated:
+        st.session_state.logout = False
+        st.session_state.logout_complete = False
+        st.session_state.redirect_to_dashboard_after_login = True
+        authenticator.cookie_controller.set_cookie()
+        st.rerun()
+    else:
+        st.session_state.authentication_status = False
+
+
+def set_authentication():
+    initialize_session_state()
+
+    df_users = database.get_all_users()
+    formatted_credentials = format_authenticator_credentials(df_users)
+    st.session_state["credentials"] = formatted_credentials
 
     global authenticator
 
@@ -444,17 +547,11 @@ def set_authentication():
 
     st.session_state["authenticator"] = authenticator
 
-    # If we just logged out, remove the cookie *now*, before login() reads it
     if st.session_state.get("logout"):
-        try:
-            authenticator.cookie_manager.delete(COOKIE_NAME)
-            authenticator.cookie_manager.delete(COOKIE_NAME, path="/")  # extra safety
-        except Exception:
-            pass
         for key in ("authentication_status", "username", "name", "role"):
             st.session_state[key] = None
-        st.session_state["logout"] = False
-        st.rerun()
+    else:
+        restore_login_from_cookie()
 
     # Centered login column for better UX
     left_col, center_col, right_col = st.columns([1, 1, 1])
@@ -462,27 +559,7 @@ def set_authentication():
         # Put the heading BEFORE the login widget
         if st.session_state.authentication_status in [False, None]:
             st.title("BEC Trading")
-
-        # --- LOGIN with recovery for "User not authorized" ---
-        try:
-            authenticator.login()
-        except LoginError:
-            # Clear old cookies/token that might still reference the previous username
-            try:
-                authenticator.cookie_manager.delete(COOKIE_NAME)
-                authenticator.cookie_manager.delete(COOKIE_NAME, path="/")
-            except Exception:
-                pass
-
-            # Remove old authentication state from session
-            for k in ("authentication_status", "username", "name", "role"):
-                st.session_state.pop(k, None)
-
-            # Notify user and force re-login
-            st.info(
-                "Your previous session became invalid after the username change. Please log in again."
-            )
-            authenticator.login()
+            render_login_form()
 
         if st.session_state.authentication_status == False:
             st.error("Username or password is incorrect")
@@ -501,6 +578,7 @@ def set_authentication():
 
 
 def main():
+    initialize_session_state()
     authentication_status = st.session_state.authentication_status
 
     if authentication_status:

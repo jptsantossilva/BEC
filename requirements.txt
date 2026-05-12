@@ -55,7 +55,7 @@ frozenlist==1.8.0
     #   aiosignal
 gitdb==4.0.12
     # via gitpython
-gitpython==3.1.47
+gitpython==3.1.50
     # via streamlit
 greenlet==3.3.1
     # via playwright
@@ -213,7 +213,7 @@ tzdata==2025.3
     # via pandas
 tzlocal==5.3.1
     # via dateparser
-urllib3==2.6.3
+urllib3==2.7.0
     # via requests
 watchdog==6.0.0
     # via streamlit

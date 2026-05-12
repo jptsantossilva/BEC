@@ -2051,22 +2051,43 @@ sql_create_balances_table = """
 	BTC_Price REAL,
     Balance_USD REAL,
     Balance_BTC REAL,
-    Total_Balance_Of_BTC REAL
+    Total_Balance_Of_BTC REAL,
+    UNIQUE(Date, Asset)
 );
 """
 
 sql_add_balances = """
-    INSERT OR IGNORE INTO Balances (Date, Asset, Balance, USD_Price, BTC_Price, Balance_USD, Balance_BTC, Total_Balance_Of_BTC) VALUES (?, ?, ?, ?, ?,?, ?, ?);
+    INSERT OR REPLACE INTO Balances (Date, Asset, Balance, USD_Price, BTC_Price, Balance_USD, Balance_BTC, Total_Balance_Of_BTC) VALUES (?, ?, ?, ?, ?,?, ?, ?);
 """
+
+def _ensure_balances_unique_index(connection):
+    connection.execute(
+        """
+        DELETE FROM Balances
+        WHERE Id NOT IN (
+            SELECT MAX(Id)
+            FROM Balances
+            GROUP BY Date, Asset
+        );
+        """
+    )
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_balances_date_asset
+        ON Balances(Date, Asset);
+        """
+    )
+
 def add_balances(balances: pd.DataFrame):
     connection = _get_conn()
     if balances.empty:
         return
     # convert dataframe to a list of tuples
     data = list(balances.to_records(index=False))
-    for row in data:
-        with connection:
-            connection.execute(sql_add_balances, row)
+    dates = sorted({str(row[0]) for row in data})
+    with connection:
+        connection.executemany("DELETE FROM Balances WHERE Date = ?", [(date,) for date in dates])
+        connection.executemany(sql_add_balances, data)
     
 def get_asset_balances_last_n_days(n_days):
     connection = _get_conn()
@@ -2664,6 +2685,7 @@ def create_tables():
             connection.execute(sql_users_add_admin, ("admin", "admin@admin.com", "admin", hashed_password))
         # balances
         connection.execute(sql_create_balances_table)
+        _ensure_balances_unique_index(connection)
         # signals log
         connection.execute(sql_create_signals_log_table)
         # locked values
@@ -3046,15 +3068,7 @@ def get_backtesting_jobs(limit: int = 50):
             log_path,
             error_message
         FROM Backtesting_Jobs
-        ORDER BY
-            CASE status
-                WHEN 'running' THEN 0
-                WHEN 'queued' THEN 1
-                WHEN 'failed' THEN 2
-                ELSE 3
-            END,
-            COALESCE(started_at, created_at) DESC,
-            id DESC
+        ORDER BY COALESCE(started_at, created_at) DESC, id DESC
         LIMIT ?
         """,
         connection,
@@ -3240,15 +3254,7 @@ def get_monte_carlo_jobs(limit: int = 50):
         SELECT id, batch_id, strategy_id, symbol, timeframe, method, scenarios, seed,
                status, created_at, started_at, finished_at, return_code, log_path, error_message
         FROM Monte_Carlo_Jobs
-        ORDER BY
-            CASE status
-                WHEN 'running' THEN 0
-                WHEN 'queued' THEN 1
-                WHEN 'failed' THEN 2
-                ELSE 3
-            END,
-            COALESCE(started_at, created_at) DESC,
-            id DESC
+        ORDER BY COALESCE(started_at, created_at) DESC, id DESC
         LIMIT ?
         """,
         connection,

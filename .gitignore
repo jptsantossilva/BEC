@@ -55,7 +55,10 @@ tests/
 tests/*
 !tests/unit/
 tests/unit/*
-!tests/unit/test_monte_carlo.py
+!tests/unit/*.py
+!tests/integration/
+tests/integration/*
+!tests/integration/*.py
 htmlcov/
 .tox/
 .nox/

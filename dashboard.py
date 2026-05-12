@@ -1,3 +1,7 @@
+from bec.page_config import configure_page
+
+configure_page()
+
 from bec.dashboard import *
 
 if __name__ == "__main__":

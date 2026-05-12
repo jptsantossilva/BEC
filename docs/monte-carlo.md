@@ -37,18 +37,18 @@ The score uses three components:
 
 | Component | Weight | What It Measures |
 | --- | ---: | --- |
-| Median return | 40% | Whether the typical Monte Carlo scenario keeps returns close to the original backtest |
-| Worst 5% return | 35% | Whether the lower-tail scenarios still hold up |
-| Drawdown | 25% | Whether the worst 5% drawdowns are controlled versus the original drawdown |
+| Median return | 55% | Whether the typical Monte Carlo scenario keeps returns close to the original backtest |
+| Worst 5% return | 25% | Whether the lower-tail scenarios still hold up |
+| Drawdown | 20% | Whether the worst 5% drawdowns are controlled versus the original drawdown |
 
 The final score is adjusted by the valid scenario ratio:
 
 ```text
 MC Score =
 (
-  median return component * 40%
-  + worst 5% return component * 35%
-  + drawdown component * 25%
+  median return component * 55%
+  + worst 5% return component * 25%
+  + drawdown component * 20%
 )
 * valid scenarios / total scenarios
 ```

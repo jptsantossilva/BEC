@@ -20,8 +20,8 @@ METHOD_OPTIONS = {
 }
 DEFAULT_MONTE_CARLO_RETENTION_DAYS = 30
 MC_SCORE_HELP = (
-    "MC Score combines median scenario return (40%), worst 5% scenario return (35%), "
-    "and worst 5% drawdown versus the original drawdown (25%), then multiplies by "
+    "MC Score combines median scenario return (55%), worst 5% scenario return (25%), "
+    "and worst 5% drawdown versus the original drawdown (20%), then multiplies by "
     "valid scenarios / total scenarios. Higher is more robust."
 )
 MC_INTERPRETATION_HELP = (
@@ -144,9 +144,9 @@ The **MC Score** is a 0-100 robustness score. It compares the original backtest 
 ```text
 MC Score =
 (
-  median return component * 40%
-  + worst 5% return component * 35%
-  + drawdown component * 25%
+  median return component * 55%
+  + worst 5% return component * 25%
+  + drawdown component * 20%
 )
 * valid scenarios / total scenarios
 ```

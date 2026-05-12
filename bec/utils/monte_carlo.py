@@ -299,7 +299,7 @@ def _robustness_score(metrics, valid_scenarios, total_scenarios, min_sample_ok=T
     median_component = 50.0 if original_return == 0 else max(0.0, min(100.0, (median_return / abs(original_return)) * 100.0))
     tail_component = 100.0 if original_return <= 0 else max(0.0, min(100.0, ((worst_return + original_return) / (2.0 * original_return)) * 100.0))
     drawdown_component = 100.0 if worst_dd <= original_dd else max(0.0, min(100.0, (original_dd / worst_dd) * 100.0))
-    return round(((median_component * 0.4) + (tail_component * 0.35) + (drawdown_component * 0.25)) * valid_ratio, 2)
+    return round(((median_component * 0.55) + (tail_component * 0.25) + (drawdown_component * 0.20)) * valid_ratio, 2)
 
 
 def _interpretation(score, valid_scenarios, total_scenarios, method, min_sample_ok=True):
@@ -764,7 +764,7 @@ def _write_outputs(result):
     escaped_timeframe = html.escape(str(result["timeframe"]))
     escaped_strategy = html.escape(str(result["strategy_id"]))
     escaped_seed = html.escape(str(result.get("seed", "")))
-    html = f"""
+    report_html = f"""
 <!doctype html>
 <html data-bec-theme="light">
 <head>
@@ -808,7 +808,7 @@ def _write_outputs(result):
 </html>
 """
     with open(html_path, "w", encoding="utf-8") as file:
-        file.write(html)
+        file.write(report_html)
 
     return result
 
