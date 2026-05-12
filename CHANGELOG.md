@@ -10,6 +10,8 @@ All notable changes to this project will be documented in this file.
 - Monte Carlo Analysis - Fixed Monte Carlo report generation for trade-order shuffling.
 - Monte Carlo Queue - Changed job ordering to show the most recent jobs first.
 - Balances - Fixed duplicated daily balance snapshots and added cleanup for existing duplicated rows.
+- Trading Dashboard - Unrealized PnL position durations now refresh in memory whenever the tab renders.
+- Trading Dashboard - Selected open positions can now show their related sell orders directly below the positions grid.
 
 ## [2026-05-11]
 - Monte Carlo Analysis - Added queued Monte Carlo robustness tests with trade-order shuffling and candles-based market path simulations.

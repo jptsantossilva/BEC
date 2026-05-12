@@ -252,14 +252,52 @@ def unrealized_pnl():
                 (df["Trading_Approved"] == "Rejected") & (df["Trading_Rejection_Reasons"] == ""),
                 "Trading_Rejection_Reasons",
             ] = "Not evaluated yet"
+            df = df.sort_values("Symbol", kind="stable")
             columns_after_symbol = ["Trading_Approved", "Trading_Rejection_Reasons"]
+            hidden_columns = ["Strategy_Id"]
             ordered_columns = (
                 ["Symbol"]
                 + [col for col in columns_after_symbol if col in df.columns]
-                + [col for col in df.columns if col != "Symbol" and col not in columns_after_symbol]
+                + [
+                    col
+                    for col in df.columns
+                    if col != "Symbol" and col not in columns_after_symbol + hidden_columns
+                ]
             )
             df = df[ordered_columns]
             return df
+
+        def _prepare_position_sales(position_id: int):
+            df = database.get_sell_orders_by_position_id(position_id)
+            if df.empty:
+                return df
+
+            df = df.copy()
+            for column in ["Buy_Price", "Sell_Price", "Buy_Position_Value", "Sell_Position_Value"]:
+                if column in df.columns:
+                    df[column] = df[column].apply(lambda x: f"{float(x):.8f}")
+            if "PnL_Perc" in df.columns:
+                df["PnL_Perc"] = df["PnL_Perc"].apply(lambda x: f"{float(x):.2f}")
+            if "PnL_Value" in df.columns:
+                df["PnL_Value"] = df["PnL_Value"].apply(lambda x: f"{{:.{num_decimals}f}}".format(float(x)))
+
+            preferred_columns = [
+                "Sell_Date",
+                "Symbol",
+                "Sell_Perc",
+                "Sell_Qty",
+                "Sell_Price",
+                "Sell_Position_Value",
+                "PnL_Perc",
+                "PnL_Value",
+                "Exit_Reason",
+                "Stop_Type",
+                "Buy_Date",
+                "Buy_Price",
+            ]
+            ordered_columns = [col for col in preferred_columns if col in df.columns]
+            ordered_columns += [col for col in df.columns if col not in ordered_columns]
+            return df[ordered_columns]
 
         def _render_selected_position_actions(event_positions, positions_df, key_suffix: str):
             if len(event_positions.selection.rows) == 0:
@@ -272,6 +310,8 @@ def unrealized_pnl():
             selected_position_id = int(selected_position["Id"])
             selected_strategy_id = str(selected_position.get("Strategy_Id", "") or "")
             selected_strategy_name = str(selected_position.get("Strategy_Name", "") or "")
+            show_sales_key = f"show_position_sales_{key_suffix}"
+            sales_visible = st.session_state.get(show_sales_key) == selected_position_id
 
             with st.container(horizontal=True):
                 if st.button("Delete Position", key=f"delete_{key_suffix}", icon=":material/delete:"):
@@ -288,6 +328,38 @@ def unrealized_pnl():
                         position_id=selected_position_id,
                         strategy_id=selected_strategy_id,
                         strategy_name=selected_strategy_name,
+                    )
+                sales_button_label = "Hide Sales" if sales_visible else "Show Sales"
+                if st.button(sales_button_label, key=f"sales_{key_suffix}", icon=":material/receipt_long:"):
+                    st.session_state[show_sales_key] = None if sales_visible else selected_position_id
+                    st.rerun()
+
+            if st.session_state.get(show_sales_key) == selected_position_id:
+                sales_df = _prepare_position_sales(selected_position_id)
+                st.caption(f"Sales for {selected_symbol} on {selected_bot}.")
+                if sales_df.empty:
+                    st.info("No sales found for this position.")
+                else:
+                    st.dataframe(
+                        sales_df,
+                        width="content",
+                        hide_index=True,
+                        column_config={
+                            "Id": None,
+                            "Bot": None,
+                            "Strategy_Id": None,
+                            "Strategy_Params_JSON": None,
+                            "Ema_Fast": None,
+                            "Ema_Slow": None,
+                            "Stop_Trigger_Price": None,
+                            "Trail_Stop_ATR_At_Exit": None,
+                            "Highest_Price_Since_Entry_At_Exit": None,
+                            "Atr_Params_At_Exit": None,
+                            "Stop_Type": st.column_config.TextColumn("Exit Type"),
+                            "Exit_Reason": st.column_config.TextColumn("Exit Reason", width="large"),
+                            "Sell_Perc": st.column_config.NumberColumn("Sell %"),
+                            "Sell_Qty": st.column_config.NumberColumn("Sell Qty"),
+                        },
                     )
         # print("\nUnrealized PnL - Total")
         # print('-------------------------------')
@@ -357,6 +429,7 @@ def unrealized_pnl():
         
         
         #########################
+        st.space()
 
         st.subheader("Positions 4h")
         
@@ -381,6 +454,7 @@ def unrealized_pnl():
                 st.dataframe(styled_status_4h, width="content", hide_index=True)
 
         #########################
+        st.space()
         
         st.subheader("Positions 1h")
 
@@ -1178,6 +1252,7 @@ def calculate_unrealized_pnl():
     df_positions_1d = database.get_unrealized_pnl_by_bot(bot="1d")
     df_positions_4h = database.get_unrealized_pnl_by_bot(bot="4h")
     df_positions_1h = database.get_unrealized_pnl_by_bot(bot="1h")
+    _refresh_position_durations_for_display(df_positions_1d, df_positions_4h, df_positions_1h)
 
     # Build results per bot using WEIGHTED PnL% (weights = Position_Value)
     results_df = pd.DataFrame()
@@ -1284,6 +1359,46 @@ def calculate_unrealized_pnl():
                     df_ref.insert(target_index, column, values)
     
     return results_df, df_positions_1d, df_positions_4h, df_positions_1h
+
+
+def _refresh_position_durations_for_display(*positions_dfs):
+    datetime_now = datetime.now()
+    for df in positions_dfs:
+        if df.empty or "Date" not in df.columns or "Duration" not in df.columns:
+            continue
+        df["Duration"] = df.apply(
+            lambda row: _format_position_duration_for_display(row, datetime_now),
+            axis=1,
+        )
+
+
+def _format_position_duration_for_display(row, datetime_now):
+    existing_duration = row.get("Duration", "")
+    date_value = row.get("Date")
+
+    if pd.isna(date_value):
+        return existing_duration
+
+    date_text = str(date_value).strip()
+    if not date_text or date_text.lower() in ("none", "nan", "nat"):
+        return existing_duration
+
+    datetime_open_position = None
+    for date_format in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
+        try:
+            datetime_open_position = datetime.strptime(date_text, date_format)
+            break
+        except ValueError:
+            continue
+
+    if datetime_open_position is None:
+        return existing_duration
+
+    diff_seconds = int((datetime_now - datetime_open_position).total_seconds())
+    if diff_seconds < 0:
+        return existing_duration
+
+    return str(database.calc_duration(diff_seconds))
 
 
 def _format_position_strategy(row):

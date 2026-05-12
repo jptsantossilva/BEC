@@ -641,6 +641,44 @@ def get_orders_by_bot_side_year_month(bot: str, side: str, year: str, month: str
     df = pd.read_sql(sql_get_orders_by_bot_side_year_month, connection, params=(bot, side, year_month))
     return df
 
+sql_get_sell_orders_by_position_id = """
+    SELECT
+        os.Id,
+        os.Bot,
+        os.Symbol,
+        os.PnL_Perc,
+        os.PnL_Value,
+        ob.Date as Buy_Date,
+        ob.Price as Buy_Price,
+        ob.Qty as Buy_Qty,
+        (ob.Qty * ob.Price) Buy_Position_Value,
+        os.Date as Sell_Date,
+        os.Price as Sell_Price,
+        os.Qty as Sell_Qty,
+        (os.Qty * os.Price) Sell_Position_Value,
+        os.Sell_Perc,
+        os.Ema_Fast,
+        os.Ema_Slow,
+        os.Strategy_Id,
+        os.Strategy_Params_JSON,
+        os.Exit_Reason,
+        os.Stop_Type,
+        os.Stop_Trigger_Price,
+        os.Trail_Stop_ATR_At_Exit,
+        os.Highest_Price_Since_Entry_At_Exit,
+        os.Atr_Params_At_Exit
+    FROM Positions pos
+    JOIN Orders ob ON pos.Buy_Order_Id = ob.Exchange_Order_Id
+    JOIN Orders os ON os.Buy_Order_Id = ob.Id
+    WHERE
+        pos.Id = ?
+        AND os.Side = 'SELL'
+    ORDER BY os.Id DESC;
+"""
+def get_sell_orders_by_position_id(position_id: int):
+    connection = _get_conn()
+    return pd.read_sql(sql_get_sell_orders_by_position_id, connection, params=(position_id,))
+
 # POSITIONS
 sql_create_positions_table = """
     CREATE TABLE IF NOT EXISTS Positions (
