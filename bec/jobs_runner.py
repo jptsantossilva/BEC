@@ -15,6 +15,23 @@ BACKTESTING_JOBS_DIR = os.path.join("static", "backtest_results", "jobs")
 MONTE_CARLO_JOBS_DIR = os.path.join("static", "backtest_results", "monte_carlo", "jobs")
 
 
+def _resolve_schedule_script(script: str) -> str:
+    """Resolve schedule scripts against the current package layout."""
+    script = str(script or "").strip()
+    if not script:
+        return script
+
+    script_path = os.path.normpath(script)
+    if os.path.isabs(script_path) or os.path.exists(os.path.join(ROOT_DIR, script_path)):
+        return script_path
+
+    packaged_script_path = os.path.join("bec", script_path)
+    if os.path.exists(os.path.join(ROOT_DIR, packaged_script_path)):
+        return packaged_script_path
+
+    return script_path
+
+
 def _extract_main_timeframe(schedule_name: str):
     """Return timeframe for main jobs (main_1d/main_4h/main_1h), else None."""
     if not schedule_name.startswith("main_"):
@@ -278,7 +295,8 @@ def run_loop():
                 fired_at = datetime.now(timezone.utc)
                 print(f"[{fired_at.isoformat()}] Running {name} ({cadence})")
                 args = shlex.split(row.script_args or "")
-                proc = subprocess.Popen([PYTHON, row.script, *args], cwd=ROOT_DIR)
+                script = _resolve_schedule_script(row.script)
+                proc = subprocess.Popen([PYTHON, script, *args], cwd=ROOT_DIR)
                 running.append((name, proc))
                 database.update_job_last_run(name, slot.isoformat())
             except Exception as e:

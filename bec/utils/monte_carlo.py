@@ -11,6 +11,7 @@ import plotly.graph_objects as go
 
 import bec.my_backtesting as my_backtesting
 import bec.utils.database as database
+from bec.utils.take_profit import normalize_take_profit_levels, take_profit_enabled
 from backtesting.lib import FractionalBacktest
 
 
@@ -961,20 +962,20 @@ def _apply_saved_strategy_parameters(strategy, backtest_row):
 
 def _configure_strategy(strategy, strategy_id, timeframe):
     bt_settings = database.get_backtesting_settings()
-    strategy.stop_loss_pct = float(database.get_setting("stop_loss"))
-    strategy.atr_trailing_enabled = bool(database.get_setting("atr_trailing_enabled"))
-    strategy.atr_period = int(database.get_setting("atr_period"))
-    strategy.atr_multiplier = float(database.get_setting("atr_multiplier"))
-    strategy.atr_activation_pnl = float(database.get_setting("atr_activation_pnl"))
-    strategy.take_profit_enabled = bool(database.get_setting("take_profit_enabled"))
-    strategy.take_profit_1 = float(database.get_setting("take_profit_1"))
-    strategy.take_profit_1_amount = float(database.get_setting("take_profit_1_amount"))
-    strategy.take_profit_2 = float(database.get_setting("take_profit_2"))
-    strategy.take_profit_2_amount = float(database.get_setting("take_profit_2_amount"))
-    strategy.take_profit_3 = float(database.get_setting("take_profit_3"))
-    strategy.take_profit_3_amount = float(database.get_setting("take_profit_3_amount"))
-    strategy.take_profit_4 = float(database.get_setting("take_profit_4"))
-    strategy.take_profit_4_amount = float(database.get_setting("take_profit_4_amount"))
+    strategy_risk = database.get_strategy_risk(strategy_id)
+    atr_risk = strategy_risk.get("atr_trailing", {}) if isinstance(strategy_risk, dict) else {}
+    take_profits = normalize_take_profit_levels(strategy_risk.get("take_profits", []) if isinstance(strategy_risk, dict) else [])
+    strategy.stop_loss_pct = float(strategy_risk.get("stop_loss_pct", 0.0) or 0.0)
+    strategy.atr_trailing_enabled = bool(atr_risk.get("enabled", False))
+    strategy.atr_period = int(atr_risk.get("period", 14) or 14)
+    strategy.atr_multiplier = float(atr_risk.get("multiplier", 1.8) or 1.8)
+    strategy.atr_activation_pnl = float(atr_risk.get("activation_pnl_pct", 0.0) or 0.0)
+    strategy.take_profit_enabled = take_profit_enabled(take_profits)
+    strategy.take_profits = take_profits
+    for level in range(1, 5):
+        tp = next((item for item in take_profits if int(item.get("level", 0) or 0) == level), {})
+        setattr(strategy, f"take_profit_{level}", float(tp.get("pnl_pct", 0.0) or 0.0))
+        setattr(strategy, f"take_profit_{level}_amount", float(tp.get("amount_pct", 0.0) or 0.0))
     current_fast, current_slow = my_backtesting.get_market_phase_sma_settings(bt_settings, timeframe)
     daily_fast, daily_slow = my_backtesting.get_market_phase_sma_settings(bt_settings, "1d")
     strategy.nFastSMA = current_fast
@@ -989,10 +990,16 @@ def _configure_strategy(strategy, strategy_id, timeframe):
     strategy.use_daily_linreg_filter = False
     strategy.daily_linreg_timeframe = ""
     strategy.daily_linreg_alignment = ""
+    strategy.execution_timeframe = str(timeframe)
     return bt_settings, daily_fast, daily_slow
 
 
 def _prepare_backtest_df(df, symbol, timeframe, strategy_id, strategy, daily_fast, daily_slow):
+    definition = getattr(strategy, "definition", None)
+    if isinstance(definition, dict) and definition.get("engine") == "bec_strategy_ast_v2":
+        strategy.execution_symbol = str(symbol)
+        strategy.execution_timeframe = str(timeframe)
+        return df
     if strategy_id in {"ema_cross", "ema_cross_with_market_phases"} and str(timeframe) != "1d":
         if strategy_id == "ema_cross_with_market_phases":
             settings = database.get_backtesting_settings()
@@ -1074,6 +1081,8 @@ def run_candles_based(symbol, timeframe, strategy_id, scenarios=200, seed=42):
         raise ValueError(f"No backtest result found for {strategy_id} - {symbol} - {timeframe}.")
     _apply_saved_strategy_parameters(strategy, bt_row.iloc[0])
     settings, daily_fast, daily_slow = _configure_strategy(strategy, strategy_id, timeframe)
+    strategy.execution_symbol = str(symbol)
+    strategy.execution_timeframe = str(timeframe)
     df = my_backtesting.get_data(symbol, timeframe)
     if df.empty:
         raise ValueError(f"No OHLCV data found for {symbol} - {timeframe}.")
@@ -1127,7 +1136,7 @@ def run_monte_carlo(symbol, timeframe, strategy_id, method=METHOD_TRADE_SHUFFLE,
 def main():
     parser = argparse.ArgumentParser(description="Run one BEC Monte Carlo analysis.")
     parser.add_argument("--symbol", required=True)
-    parser.add_argument("--timeframe", required=True, choices=["1d", "4h", "1h"])
+    parser.add_argument("--timeframe", required=True, choices=["1d", "4h", "1h", "15m"])
     parser.add_argument("--strategy", required=True)
     parser.add_argument("--method", required=True, choices=[METHOD_TRADE_SHUFFLE, METHOD_CANDLES])
     parser.add_argument("--scenarios", type=int, default=None)

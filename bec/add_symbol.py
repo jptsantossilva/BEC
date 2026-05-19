@@ -1,7 +1,6 @@
 import pandas as pd
 import importlib
 
-import bec.utils.telegram as telegram
 import bec.utils.config as config
 import bec.utils.database as database
 from bec.my_backtesting import calc_backtesting
@@ -24,12 +23,17 @@ def run(settings=None):
     # reset the index and set number beginning from 1
     list_not_completed = list_not_completed.reset_index(drop=True)
     list_not_completed.index += 1
+    stats = {
+        "symbols_pending": int(len(list_not_completed)),
+        "strategies_tested": 0,
+        "backtest_runs": 0,
+        "approved_candidates": 0,
+        "rejected_candidates": 0,
+    }
 
     if not list_not_completed.empty: # not empty 
-        msg = f"{telegram.telegram_prefix_market_phases_sl}Backtesting the following symbols:"
-        telegram.send_telegram_message(telegram.telegram_token_main, "", msg)
-        msg = telegram.telegram_prefix_market_phases_sl +"\n"+ list_not_completed.to_string(index=True, header = False)
-        telegram.send_telegram_message(telegram.telegram_token_main, "", msg) 
+        print("Backtesting the following symbols:")
+        print(list_not_completed.to_string(index=True, header=False))
 
     # Dynamically import the entire strategies module
     strategy_module = importlib.import_module("bec.my_backtesting")
@@ -47,14 +51,15 @@ def run(settings=None):
         strategy_name = row["Name"]
         strategy_backtest_optimize = row["Backtest_Optimize"]
         strategy = getattr(strategy_module, strategy_id)
+        stats["strategies_tested"] += 1
 
-        msg = f"{telegram.telegram_prefix_market_phases_sl}Backtesting the strategy {strategy_name}"
-        telegram.send_telegram_message(telegram.telegram_token_main, "", msg)
+        print(f"Backtesting the strategy {strategy_name}")
     
         # calc BestEMA for each symbol and each time frame and save on positions table
         for symbol in list_not_completed.Symbol:
             for tf in timeframe: 
                 # backtesting
+                stats["backtest_runs"] += 1
                 calc_backtesting(symbol, tf, strategy=strategy, optimize=strategy_backtest_optimize)
                 
                 # get strategy backtesting results
@@ -75,24 +80,23 @@ def run(settings=None):
                     trading_approved=approved,
                     trading_rejection_reasons="" if approved else ";".join(reasons),
                 )
+                if approved:
+                    stats["approved_candidates"] += 1
+                else:
+                    stats["rejected_candidates"] += 1
 
-                # Keep EMAs in Positions synchronized with latest backtesting results
-                # even when a symbol is rejected by approval rules.
-                if (
-                    strategy_id in selected_strategy_set
-                    and strategy_id in ["ema_cross_with_market_phases", "ema_cross", "hma_rsi_linreg"]
-                    and not df_strategy_results.empty
-                ):
-                    ema_fast = int(df_strategy_results.Ema_Fast.values[0])
-                    ema_slow = int(df_strategy_results.Ema_Slow.values[0])
+                if strategy_id in selected_strategy_set and not df_strategy_results.empty:
+                    strategy_params_json = database.build_strategy_params_json_from_backtest_result(
+                        strategy_id,
+                        df_strategy_results.iloc[0],
+                    )
                     symbol_exist = database.get_all_positions_by_bot_symbol_strategy(bot=tf, symbol=symbol, strategy_id=strategy_id)
                     if symbol_exist:
                         database.set_backtesting_results_from_position_strategy(
                             symbol=symbol,
                             timeframe=tf,
                             strategy_id=strategy_id,
-                            ema_fast=ema_fast,
-                            ema_slow=ema_slow,
+                            strategy_params_json=strategy_params_json,
                         )
 
                 if not approved:
@@ -101,14 +105,10 @@ def run(settings=None):
 
                 # If the backtesting strategy is selected for trading, add/update its candidate row.
                 if strategy_id in selected_strategy_set:
-                    # initialize vars
-                    ema_fast = 0
-                    ema_slow = 0
-
-                    if strategy_id in ["ema_cross_with_market_phases", "ema_cross", "hma_rsi_linreg"]:
-                        ema_fast = int(df_strategy_results.Ema_Fast.values[0])
-                        ema_slow = int(df_strategy_results.Ema_Slow.values[0])  
-                    strategy_params_json = database.build_strategy_params_json(strategy_id, ema_fast, ema_slow)
+                    strategy_params_json = database.build_strategy_params_json_from_backtest_result(
+                        strategy_id,
+                        df_strategy_results.iloc[0],
+                    )
                     
                     # if symbol do not exist in positions table then add it
                     symbol_exist = database.get_all_positions_by_bot_symbol_strategy(bot=tf, symbol=symbol, strategy_id=strategy_id)
@@ -116,8 +116,6 @@ def run(settings=None):
                         database.insert_position(
                             bot=tf,
                             symbol=symbol,
-                            ema_fast=ema_fast,
-                            ema_slow=ema_slow,
                             strategy_id=strategy_id,
                             strategy_name=strategy_name,
                             strategy_params_json=strategy_params_json,
@@ -126,13 +124,18 @@ def run(settings=None):
                         # update rank
                         rank = database.get_rank_from_symbols_by_market_phase_by_symbol(symbol)
                         database.set_rank_from_positions(symbol=symbol, rank=rank)
-                        # update best ema for those symbols with no positions open
-                        if strategy_id in ["ema_cross_with_market_phases", "ema_cross", "hma_rsi_linreg"]:
-                            database.set_backtesting_results_from_position_strategy(symbol=symbol, timeframe=tf, strategy_id=strategy_id, ema_fast=ema_fast, ema_slow=ema_slow)
+                        database.set_backtesting_results_from_position_strategy(
+                            symbol=symbol,
+                            timeframe=tf,
+                            strategy_id=strategy_id,
+                            strategy_params_json=strategy_params_json,
+                        )
             
     # mark symbols as calc completed
     for symbol in list_not_completed.Symbol:    
         database.set_symbols_to_calc_completed( symbol=symbol)
+
+    return stats
 
 if __name__ == "__main__":
     run(settings=config.load_settings(refresh=True))

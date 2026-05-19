@@ -28,25 +28,19 @@ _UPDATABLE_SETTING_KEYS = {
     "btc_strategy",
     "trade_against_switch",
     "take_profit_enabled",
-    "take_profit_1",
-    "take_profit_1_amount",
-    "take_profit_2",
-    "take_profit_2_amount",
-    "take_profit_3",
-    "take_profit_3_amount",
-    "take_profit_4",
-    "take_profit_4_amount",
     "run_mode",
     "lock_values",
     "bot_prefix",
+    "telegram_routine_trade_logs",
     "trade_against_switch_stablecoin",
     "delisting_start_date",
 }
 
 # sets the output display precision in terms of decimal places to 8.
-# this is helpful when trading against BTC. The value in the dataframe has the precision 8 but when we display it 
+# this is helpful when trading against BTC. The value in the dataframe has the precision 8 but when we display it
 # by printing or sending to telegram only shows precision 6
 pd.set_option("display.precision", 8)
+
 
 @dataclass(frozen=True)
 class AppSettings:
@@ -68,17 +62,10 @@ class AppSettings:
     btc_strategy_backtest_optimize: bool
     trade_against_switch: bool
     take_profit_enabled: bool
-    take_profit_1: float
-    take_profit_1_amount: float
-    take_profit_2: float
-    take_profit_2_amount: float
-    take_profit_3: float
-    take_profit_3_amount: float
-    take_profit_4: float
-    take_profit_4_amount: float
     run_mode: str
     lock_values: bool
     bot_prefix: str
+    telegram_routine_trade_logs: str
     trade_against_switch_stablecoin: str
     delisting_start_date: str
     btc_strategy_impl: object
@@ -89,12 +76,15 @@ def _invalidate_settings_cache():
     global _settings_cache
     _settings_cache = None
 
+
 def update_settings(patch: dict, *, refresh: bool = True) -> AppSettings:
     """Persist one or many settings and return updated settings snapshot."""
     if not patch:
         return load_settings(refresh=refresh)
 
-    invalid = sorted([key for key in patch.keys() if key not in _UPDATABLE_SETTING_KEYS])
+    invalid = sorted(
+        [key for key in patch.keys() if key not in _UPDATABLE_SETTING_KEYS]
+    )
     if invalid:
         raise ValueError(f"Invalid setting keys: {', '.join(invalid)}")
 
@@ -103,6 +93,7 @@ def update_settings(patch: dict, *, refresh: bool = True) -> AppSettings:
 
     _invalidate_settings_cache()
     return load_settings(refresh=refresh)
+
 
 def update_setting(name: str, value, *, refresh: bool = True) -> AppSettings:
     """Persist one setting and return updated settings snapshot."""
@@ -130,6 +121,7 @@ def _parse_main_strategies(raw_value) -> list[str]:
 
     return result or list(DEFAULT_MAIN_STRATEGIES)
 
+
 def read_setting(name: str):
     """Read setting value from the current settings snapshot."""
     settings = load_settings()
@@ -137,12 +129,15 @@ def read_setting(name: str):
         raise ValueError(f"Unknown setting name: {name}")
     return getattr(settings, name)
 
+
 # Function to handle errors (common code for error handling)
 def handle_error(error, message):
     msg = f"Error: {message}. {sys._getframe().f_code.co_name} - {repr(error)}"
     print(msg)
     # logging.exception(msg)
-    telegram.send_telegram_message(telegram.telegramToken_errors, telegram.EMOJI_WARNING, msg)
+    telegram.send_telegram_message(
+        telegram.telegramToken_errors, telegram.EMOJI_WARNING, msg
+    )
     sys.exit(msg)
 
 
@@ -166,18 +161,13 @@ def load_settings(refresh: bool = False) -> AppSettings:
     btc_strategy = database.get_setting("btc_strategy")
     trade_against_switch = database.get_setting("trade_against_switch")
     take_profit_enabled = database.get_setting("take_profit_enabled")
-    take_profit_1 = database.get_setting("take_profit_1")
-    take_profit_1_amount = database.get_setting("take_profit_1_amount")
-    take_profit_2 = database.get_setting("take_profit_2")
-    take_profit_2_amount = database.get_setting("take_profit_2_amount")
-    take_profit_3 = database.get_setting("take_profit_3")
-    take_profit_3_amount = database.get_setting("take_profit_3_amount")
-    take_profit_4 = database.get_setting("take_profit_4")
-    take_profit_4_amount = database.get_setting("take_profit_4_amount")
     run_mode = database.get_setting("run_mode")
     lock_values = database.get_setting("lock_values")
     bot_prefix = database.get_setting("bot_prefix")
-    trade_against_switch_stablecoin = database.get_setting("trade_against_switch_stablecoin")
+    telegram_routine_trade_logs = database.get_setting("telegram_routine_trade_logs")
+    trade_against_switch_stablecoin = database.get_setting(
+        "trade_against_switch_stablecoin"
+    )
     delisting_start_date = database.get_setting("delisting_start_date")
 
     main_strategies_raw = database.get_setting("main_strategies")
@@ -197,8 +187,14 @@ def load_settings(refresh: bool = False) -> AppSettings:
             {
                 "id": selected_strategy_id,
                 "name": str(df_selected_strategy.Name.values[0]),
-                "backtest_optimize": bool(df_selected_strategy.Backtest_Optimize.values[0]),
-                "strategy": getattr(strategy_module, selected_strategy_id, None),
+                "backtest_optimize": bool(
+                    df_selected_strategy.Backtest_Optimize.values[0]
+                ),
+                "strategy": (
+                    strategy_module.resolve_strategy(selected_strategy_id)
+                    if hasattr(strategy_module, "resolve_strategy")
+                    else getattr(strategy_module, selected_strategy_id, None)
+                ),
             }
         )
 
@@ -207,14 +203,20 @@ def load_settings(refresh: bool = False) -> AppSettings:
     df_btc_strategy = database.get_strategy_by_id(btc_strategy)
     if not df_btc_strategy.empty:
         btc_strategy_name = str(df_btc_strategy.Name.values[0])
-        btc_strategy_backtest_optimize = bool(df_btc_strategy.Backtest_Optimize.values[0])
+        btc_strategy_backtest_optimize = bool(
+            df_btc_strategy.Backtest_Optimize.values[0]
+        )
 
     # Dynamically get the strategy class
-    btc_strategy_impl = getattr(strategy_module, btc_strategy, None)
+    btc_strategy_impl = (
+        strategy_module.resolve_strategy(btc_strategy)
+        if hasattr(strategy_module, "resolve_strategy")
+        else getattr(strategy_module, btc_strategy, None)
+    )
 
     if trade_against == "BTC":
         n_decimals = 8
-    elif trade_against in ["USDT", "USDC"]:    
+    elif trade_against in ["USDT", "USDC"]:
         n_decimals = 2
     else:
         n_decimals = 2
@@ -238,17 +240,10 @@ def load_settings(refresh: bool = False) -> AppSettings:
         btc_strategy_backtest_optimize=btc_strategy_backtest_optimize,
         trade_against_switch=trade_against_switch,
         take_profit_enabled=take_profit_enabled,
-        take_profit_1=take_profit_1,
-        take_profit_1_amount=take_profit_1_amount,
-        take_profit_2=take_profit_2,
-        take_profit_2_amount=take_profit_2_amount,
-        take_profit_3=take_profit_3,
-        take_profit_3_amount=take_profit_3_amount,
-        take_profit_4=take_profit_4,
-        take_profit_4_amount=take_profit_4_amount,
         run_mode=run_mode,
         lock_values=lock_values,
         bot_prefix=bot_prefix,
+        telegram_routine_trade_logs=telegram_routine_trade_logs,
         trade_against_switch_stablecoin=trade_against_switch_stablecoin,
         delisting_start_date=delisting_start_date,
         btc_strategy_impl=btc_strategy_impl,

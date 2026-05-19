@@ -49,9 +49,16 @@ def get_data(symbol, time_frame, start_date):
     if df.empty:
         msg = f"Failed after {max_retry} tries to get historical data. Unable to retrieve data. "
         msg = msg + sys._getframe(  ).f_code.co_name+" - "+symbol
-        msg = telegram.telegram_prefix_signals_sl + msg
         print(msg)
-        telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_WARNING, msg)
+        telegram.send_error_event(
+            action="SUPER-RSI OHLCV load",
+            symbol=symbol,
+            timeframe=time_frame,
+            reason="Historical dataframe is empty after retries.",
+            impact="Signal calculation skipped for this symbol.",
+            next_step="Check Binance data availability and rerun the signal job.",
+            notify_main=False,
+        )
         frame = pd.DataFrame()
         return frame
     return df
@@ -104,7 +111,6 @@ def super_rsi(symbol):
     msg_15m = f"{symbol} - RSI({rsi_15m}) 15m = {value}"
     msg_15m = telegram.telegram_prefix_signals_sl + msg_15m
     print(msg_15m)
-    telegram.send_telegram_message(telegram.telegram_token_main, '', msg_15m)
     
     if not result_low:
         msg = f"{symbol} - RSI({rsi_15m}) 15m ≤ {rsi_low} - condition not fulfilled"
@@ -136,7 +142,6 @@ def super_rsi(symbol):
         msg_30m = f"{symbol} - RSI({rsi_30m}) 30m = {value}"
         msg_30m = telegram.telegram_prefix_signals_sl + msg_30m
         print(msg_30m)
-        telegram.send_telegram_message(telegram.telegram_token_main,'', msg_30m)
 
         if not result_low:
             msg = f"{symbol} - RSI({rsi_30m}) 30m ≤ {rsi_low} - condition not fulfilled"
@@ -163,7 +168,6 @@ def super_rsi(symbol):
         msg_1h = f"{symbol} - RSI({rsi_1h}) 1H = {value}"
         msg_1h = telegram.telegram_prefix_signals_sl + msg_1h
         print(msg_1h)
-        telegram.send_telegram_message(telegram.telegram_token_main,'', msg_1h)
         
         if not result_low:
             msg = f"{symbol} - RSI({rsi_1h}) 1H ≤ {rsi_low} - condition not fulfilled"
@@ -190,7 +194,6 @@ def super_rsi(symbol):
         msg_4h = f"{symbol} - RSI({rsi_4h}) 4H = {value}"
         msg_4h = telegram.telegram_prefix_signals_sl + msg_4h
         print(msg_4h)
-        telegram.send_telegram_message(telegram.telegram_token_main,'', msg_4h)
          
         if not result_low_4h:
             msg = f"{symbol} - RSI({rsi_4h}) 4H ≤ {rsi_low} - condition not fulfilled"
@@ -217,7 +220,6 @@ def super_rsi(symbol):
         msg_1d = f"{symbol} - RSI({rsi_1d}) 1D = {value}"
         msg_1d = telegram.telegram_prefix_signals_sl + msg_1d
         print(msg_1d)
-        telegram.send_telegram_message(telegram.telegram_token_main,'', msg_1d)
          
         if not result_low_1d:
             msg = f"{symbol} - RSI({rsi_1d}) 1D ≤ {rsi_low} - condition not fulfilled"

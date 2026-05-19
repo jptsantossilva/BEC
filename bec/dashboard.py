@@ -156,6 +156,41 @@ def check_app_version():
         label="User Manual",
         icon=":material/menu_book:",
     )
+    st.sidebar.markdown(
+        """
+        <div style="margin-top:0.7rem; margin-bottom:0.45rem;">
+            <a
+                href="https://ko-fi.com/C0C3TDKPG"
+                target="_blank"
+                rel="noopener noreferrer"
+                style="
+                    display:inline-flex;
+                    align-items:center;
+                    gap:0.45rem;
+                    padding:0.36rem 0.58rem;
+                    border:1px solid rgba(49, 51, 63, 0.16);
+                    border-radius:0.45rem;
+                    background:rgba(255, 255, 255, 0.45);
+                    color:rgb(49, 51, 63);
+                    text-decoration:none;
+                    font-size:0.86rem;
+                    font-weight:500;
+                    line-height:1.1;
+                "
+            >
+                <svg width="20" height="20" viewBox="0 0 241 194" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" style="flex:0 0 auto;">
+                    <path d="M96.1344 193.911C61.1312 193.911 32.6597 178.256 15.9721 149.829C1.19788 124.912 -0.00585938 97.9229 -0.00585938 67.7662C-0.00585938 49.8876 5.37293 34.3215 15.5413 22.7466C24.8861 12.1157 38.1271 5.22907 52.8317 3.35378C70.2858 1.14271 91.9848 0.958984 114.545 0.958984C151.259 0.958984 161.63 1.4088 176.075 2.85328C195.29 4.76026 211.458 11.932 222.824 23.5955C234.368 35.4428 240.469 51.2624 240.469 69.3627V72.9994C240.469 103.885 219.821 129.733 191.046 136.759C188.898 141.827 186.237 146.871 183.089 151.837L183.006 151.964C172.869 167.632 149.042 193.918 103.401 193.918H96.1281L96.1344 193.911Z" fill="white"/>
+                    <path d="M15.1975 67.7674C15.1975 37.5285 33.3866 21.164 54.7559 18.4334C70.8987 16.387 90.906 16.1589 114.544 16.1589C151.372 16.1589 160.919 16.6151 174.559 17.9772C206.617 21.1576 225.255 40.937 225.255 69.3577V72.9941C225.255 99.3687 205.932 120.966 179.786 123.234C177.74 130.058 174.559 136.874 170.238 143.698C160.235 159.156 140.228 178.707 103.4 178.707H96.1264C66.1155 178.707 42.9277 165.751 29.0595 142.107C16.7814 121.422 15.1912 98.4563 15.1912 67.7674" fill="#202020"/>
+                    <path d="M32.2469 67.9899C32.2469 97.3168 34.0654 116.184 43.6127 133.689C54.5225 153.924 74.3018 161.653 96.8117 161.653H103.857C133.411 161.653 147.736 147.329 155.693 134.829C159.558 128.462 162.966 121.417 164.784 112.547L166.147 106.864H174.332C192.521 106.864 208.208 92.09 208.208 73.2166V69.8082C208.208 48.6669 195.024 37.5228 172.058 34.7987C159.102 33.6646 151.372 33.2084 114.538 33.2084C89.7602 33.2084 72.0272 33.4364 58.6152 35.4828C39.7483 38.2134 32.2407 48.8951 32.2407 67.9899" fill="white"/>
+                    <path d="M166.158 83.6801C166.158 86.4107 168.204 88.4572 171.841 88.4572C183.435 88.4572 189.802 81.8619 189.802 70.9523C189.802 60.0427 183.435 53.2195 171.841 53.2195C168.204 53.2195 166.158 55.2657 166.158 57.9963V83.6866V83.6801Z" fill="#202020"/>
+                    <path d="M54.5321 82.3198C54.5321 95.732 62.0332 107.326 71.5807 116.424C77.9478 122.562 87.9515 128.93 94.7685 133.022C96.8147 134.157 98.8611 134.841 101.136 134.841C103.866 134.841 106.134 134.157 107.959 133.022C114.782 128.93 124.779 122.562 130.919 116.424C140.694 107.332 148.195 95.7383 148.195 82.3198C148.195 67.7673 137.286 54.8115 121.599 54.8115C112.28 54.8115 105.912 59.5882 101.136 66.1772C96.8147 59.582 90.2259 54.8115 80.9001 54.8115C64.9855 54.8115 54.5256 67.7673 54.5256 82.3198" fill="#FF5A16"/>
+                </svg>
+                <span>Buy me a coffee</span>
+            </a>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     
     st.sidebar.markdown(
         f"""
@@ -282,6 +317,14 @@ def set_pages():
         default=False,
     )
 
+    strategy_builder = st.Page(
+        "pages/strategy_builder.py",
+        title="Strategy Builder",
+        icon=":material/account_tree:",
+        url_path="strategy_builder",
+        default=False,
+    )
+
     backtesting_results = st.Page(
         "pages/backtesting_results.py",
         title="Backtesting Results",
@@ -320,6 +363,7 @@ def set_pages():
         "trading": trading,
         "balances": balances,
         "scheduled_jobs": scheduled_jobs,
+        "strategy_builder": strategy_builder,
         "backtesting_settings": backtesting_settings,
         "backtesting_results": backtesting_results,
         "monte_carlo_analysis": monte_carlo_analysis,
@@ -337,12 +381,14 @@ def set_pages():
 
     # --- Role-based pages ---
     trading_pages = [trading, balances, scheduled_jobs]
+    strategy_pages = [strategy_builder]
     backtesting_pages = [backtesting_settings, backtesting_results, monte_carlo_analysis]
     # market_analysis_pages = [bull_market_indicators_dashboard]
     page_dict = {}
     if st.session_state.authentication_status:
         if role in ["Trading", "Admin"]:
             page_dict["Trading"] = trading_pages
+            page_dict["Strategy"] = strategy_pages
             page_dict["Backtesting"] = backtesting_pages
         # if role in ["Market Analysis", "Trading", "Admin"]:
         #     page_dict["Bull Market Indicators"] = market_analysis_pages
@@ -358,6 +404,7 @@ def set_pages():
                 trading,
                 balances,
                 scheduled_jobs,
+                strategy_builder,
                 backtesting_settings,
                 backtesting_results,
                 monte_carlo_analysis,

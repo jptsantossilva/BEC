@@ -813,25 +813,27 @@ def run_backtest_for_selection(strategy_id, symbol, timeframe):
     strategy_id = str(strategy_id).strip()
     symbol = str(symbol).strip().upper()
     timeframe = str(timeframe).strip()
-    df_strategy = database.get_strategy_by_id(strategy_id)
-    optimize = (
-        bool(int(df_strategy.iloc[0]["Backtest_Optimize"]))
-        if not df_strategy.empty
-        else False
-    )
+    optimize = get_strategy_backtest_optimize(strategy_id)
 
     strategy_module = importlib.import_module("bec.my_backtesting")
-    if getattr(strategy_module, strategy_id, None) is None:
-        st.error(f"Strategy '{strategy_id}' is not available in my_backtesting.py.")
+    strategy_impl = (
+        strategy_module.resolve_strategy(strategy_id)
+        if hasattr(strategy_module, "resolve_strategy")
+        else getattr(strategy_module, strategy_id, None)
+    )
+    if strategy_impl is None:
+        st.error(f"Strategy '{strategy_id}' is not available.")
         return False
 
     status_label = f"Running backtest: {strategy_id} - {symbol} - {timeframe} (optimize={optimize})"
     with st.status(status_label, expanded=True) as status:
         log_placeholder = st.empty()
         backtesting_script = os.path.abspath(my_backtesting.__file__)
+        project_root = os.path.dirname(os.path.dirname(backtesting_script))
         command = [
             sys.executable,
-            backtesting_script,
+            "-m",
+            "bec.my_backtesting",
             "--symbol",
             symbol,
             "--timeframe",
@@ -843,7 +845,7 @@ def run_backtest_for_selection(strategy_id, symbol, timeframe):
             command.append("--optimize")
         process = subprocess.Popen(
             command,
-            cwd=os.path.dirname(backtesting_script),
+            cwd=project_root,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -900,6 +902,15 @@ def get_strategy_backtest_optimize(strategy_id):
     df_strategy = database.get_strategy_by_id(str(strategy_id).strip())
     if df_strategy.empty:
         return False
+    try:
+        definition = database.get_strategy_definition(str(strategy_id).strip())
+        parameters = definition.get("parameters", {}) if isinstance(definition, dict) else {}
+        if isinstance(parameters, dict) and any(
+            bool(spec.get("optimizable", False)) for spec in parameters.values() if isinstance(spec, dict)
+        ):
+            return True
+    except Exception:
+        pass
     return bool(int(df_strategy.iloc[0]["Backtest_Optimize"]))
 
 
@@ -949,6 +960,37 @@ def style_backtesting_job_status(value):
     }
     color = colors.get(status, "#475569")
     return f"color: {color};"
+
+
+def format_backtesting_job_timestamp(value):
+    timestamp = pd.to_datetime(value, errors="coerce")
+    if pd.isna(timestamp):
+        return ""
+    return timestamp.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def format_backtesting_job_duration(row):
+    started_at = pd.to_datetime(row.get("started_at"), errors="coerce", utc=True)
+    if pd.isna(started_at):
+        return ""
+
+    finished_at = pd.to_datetime(row.get("finished_at"), errors="coerce", utc=True)
+    if pd.isna(finished_at) and str(row.get("status", "")).strip().lower() == "running":
+        finished_at = pd.Timestamp.utcnow()
+    if pd.isna(finished_at):
+        return ""
+
+    elapsed = finished_at - started_at
+    if elapsed.total_seconds() < 0:
+        return ""
+
+    total_seconds = int(elapsed.total_seconds())
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours >= 24:
+        days, hours = divmod(hours, 24)
+        return f"{days}d {hours:02d}:{minutes:02d}:{seconds:02d}"
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
 @st.fragment(run_every=3)
@@ -1042,6 +1084,9 @@ def render_backtesting_jobs_status():
         )
         jobs_display["optimize"] = jobs_display["optimize"].astype(bool)
         jobs_display["Log"] = jobs_display["log_path"].apply(get_static_log_url)
+        jobs_display["Duration"] = jobs_display.apply(format_backtesting_job_duration, axis=1)
+        for timestamp_column in ("created_at", "started_at", "finished_at"):
+            jobs_display[timestamp_column] = jobs_display[timestamp_column].apply(format_backtesting_job_timestamp)
         jobs_display = jobs_display[
             [
                 "id",
@@ -1052,6 +1097,7 @@ def render_backtesting_jobs_status():
                 "created_at",
                 "started_at",
                 "finished_at",
+                "Duration",
                 "return_code",
                 "Log",
                 "error_message",
@@ -1077,6 +1123,7 @@ def render_backtesting_jobs_status():
                 "created_at": st.column_config.TextColumn("Created"),
                 "started_at": st.column_config.TextColumn("Started"),
                 "finished_at": st.column_config.TextColumn("Finished"),
+                "Duration": st.column_config.TextColumn("Duration"),
                 "return_code": st.column_config.NumberColumn("Return", format="%d"),
                 "Log": st.column_config.LinkColumn("Log", display_text="Open"),
                 "error_message": st.column_config.TextColumn("Error"),
@@ -1381,7 +1428,7 @@ with primary_filters:
         ),
     )
 
-    list_timeframe = ["1d", "4h", "1h"]
+    list_timeframe = ["1d", "4h", "1h", "15m"]
     restore_multiselect_filter(
         "bt_results_saved_timeframe",
         "_bt_results_timeframe",
@@ -1564,6 +1611,35 @@ def format_backtest_strategy_params(row):
         else {}
     )
     parts = []
+
+    definition_indicators = (
+        strategy_params.get("definition_indicators", [])
+        if isinstance(strategy_params, dict)
+        else []
+    )
+    if isinstance(definition_indicators, list) and definition_indicators:
+        grouped_indicators = {}
+        for indicator in definition_indicators:
+            if not isinstance(indicator, dict):
+                continue
+            name = str(indicator.get("name", "") or "").upper()
+            if not name:
+                continue
+            period = _int_label(indicator.get("period"))
+            if not period:
+                continue
+            grouped_indicators.setdefault(name, [])
+            if period not in grouped_indicators[name]:
+                grouped_indicators[name].append(period)
+        for name, periods in grouped_indicators.items():
+            if len(periods) == 1:
+                parts.append(f"{name} {periods[0]}")
+            elif len(periods) == 2:
+                parts.append(f"{name} {periods[0]}/{periods[1]}")
+            elif periods:
+                parts.append(f"{name} {','.join(periods)}")
+        if parts:
+            return " | ".join(parts)
 
     moving_averages = (
         strategy_params.get("moving_averages", {})

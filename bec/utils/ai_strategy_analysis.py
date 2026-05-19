@@ -431,9 +431,18 @@ def _take_profit_summary(config, trades):
         take_profits = {}
     take_profits_enabled = bool(take_profits.get("enabled", True)) if isinstance(take_profits, dict) else True
     levels = []
-    for name, values in take_profits.items():
-        if name == "enabled" or not isinstance(values, dict):
+    configured_levels = take_profits.get("levels", [])
+    if not isinstance(configured_levels, list):
+        configured_levels = []
+    legacy_levels = [
+        {"level": name, **values}
+        for name, values in take_profits.items()
+        if name != "enabled" and isinstance(values, dict)
+    ]
+    for values in configured_levels or legacy_levels:
+        if not isinstance(values, dict):
             continue
+        name = values.get("level", "")
         pnl_pct = _round(values.get("pnl_pct") if isinstance(values, dict) else None)
         amount_pct = _round(values.get("amount_pct") if isinstance(values, dict) else None)
         levels.append(

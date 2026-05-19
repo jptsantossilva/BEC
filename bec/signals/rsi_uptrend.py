@@ -51,9 +51,16 @@ def get_data(symbol, time_frame, start_date):
     if df.empty:
         msg = f"Failed after {max_retry} tries to get historical data. Unable to retrieve data. "
         msg = msg + sys._getframe(  ).f_code.co_name+" - "+symbol
-        msg = telegram.telegram_prefix_signals_sl + msg
         print(msg)
-        telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_WARNING, msg)
+        telegram.send_error_event(
+            action="RSI-Uptrend OHLCV load",
+            symbol=symbol,
+            timeframe=time_frame,
+            reason="Historical dataframe is empty after retries.",
+            impact="Signal calculation skipped for this symbol.",
+            next_step="Check Binance data availability and rerun the signal job.",
+            notify_main=False,
+        )
         return pd.DataFrame()
 
     return df

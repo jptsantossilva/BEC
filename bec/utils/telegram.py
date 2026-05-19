@@ -65,6 +65,17 @@ telegram_prefix_bot_4h_ml = "4h\n"
 telegram_prefix_bot_1h_sl = "1h "
 telegram_prefix_bot_1h_ml = "1h\n"
 
+# Message classes used by callers to keep Telegram channels focused:
+# routine: per-cycle status and summaries, action: order attempts/executions,
+# warning/error: exceptional conditions, signal: actionable signal alerts,
+# closed_position: realized PnL events mirrored to the closed-position bot.
+MESSAGE_CLASS_ROUTINE = "routine"
+MESSAGE_CLASS_ACTION = "action"
+MESSAGE_CLASS_WARNING = "warning"
+MESSAGE_CLASS_ERROR = "error"
+MESSAGE_CLASS_SIGNAL = "signal"
+MESSAGE_CLASS_CLOSED_POSITION = "closed_position"
+
 def read_env_var():
     # environment variables
     
@@ -110,6 +121,149 @@ def get_telegram_prefix(bot, multi_line=False):
         raise ValueError(f"Invalid bot type: {bot}")
     
     return result
+
+def _format_optional_lines(fields: list[tuple[str, object]]) -> list[str]:
+    lines = []
+    for label, value in fields:
+        if value in (None, ""):
+            continue
+        lines.append(f"{label}: {value}")
+    return lines
+
+def format_trade_event(
+    *,
+    action: str,
+    symbol: str,
+    timeframe: str,
+    strategy: str,
+    unit_price,
+    quantity,
+    notional_value,
+    reason: str = "",
+    pnl_perc=None,
+    pnl_value=None,
+    entry_price=None,
+    duration: str = "",
+    open_positions: str = "",
+):
+    action = str(action or "").upper()
+    lines = [
+        f"{timeframe} {action} {symbol}",
+        f"Strategy: {strategy}",
+    ]
+    lines.extend(
+        _format_optional_lines(
+            [
+                ("Reason", reason),
+                ("Entry", entry_price),
+                ("Price", unit_price),
+                ("Qty", quantity),
+                (trade_against, notional_value),
+                ("PnL%", pnl_perc),
+                (f"PnL {trade_against}", pnl_value),
+                ("Held", duration),
+                ("Open positions", open_positions),
+            ]
+        )
+    )
+    return "\n".join(lines)
+
+def send_trade_event(
+    *,
+    telegram_token,
+    telegram_prefix: str,
+    emoji,
+    action: str,
+    symbol: str,
+    timeframe: str,
+    strategy: str,
+    unit_price,
+    quantity,
+    notional_value,
+    reason: str = "",
+    pnl_perc=None,
+    pnl_value=None,
+    entry_price=None,
+    duration: str = "",
+    open_positions: str = "",
+):
+    msg = telegram_prefix + format_trade_event(
+        action=action,
+        symbol=symbol,
+        timeframe=timeframe,
+        strategy=strategy,
+        unit_price=unit_price,
+        quantity=quantity,
+        notional_value=notional_value,
+        reason=reason,
+        pnl_perc=pnl_perc,
+        pnl_value=pnl_value,
+        entry_price=entry_price,
+        duration=duration,
+        open_positions=open_positions,
+    )
+    print(msg)
+    send_telegram_message(telegram_token, emoji, msg)
+    if emoji in [EMOJI_TRADE_WITH_PROFIT, EMOJI_TRADE_WITH_LOSS]:
+        send_telegram_message(telegram_token_closed_position, emoji, msg)
+
+def format_error_event(
+    *,
+    action: str,
+    symbol: str = "",
+    timeframe: str = "",
+    strategy: str = "",
+    reason: str = "",
+    impact: str = "",
+    next_step: str = "",
+    exception=None,
+):
+    lines = ["Operational issue"]
+    lines.extend(
+        _format_optional_lines(
+            [
+                ("Action", action),
+                ("Symbol", symbol),
+                ("Timeframe", timeframe),
+                ("Strategy", strategy),
+                ("Reason", reason),
+                ("Impact", impact),
+                ("Next", next_step),
+                ("Exception", repr(exception) if exception is not None else ""),
+            ]
+        )
+    )
+    return "\n".join(lines)
+
+def send_error_event(
+    *,
+    action: str,
+    symbol: str = "",
+    timeframe: str = "",
+    strategy: str = "",
+    reason: str = "",
+    impact: str = "",
+    next_step: str = "",
+    exception=None,
+    main_token=None,
+    main_prefix: str = "",
+    notify_main: bool = True,
+):
+    detail = format_error_event(
+        action=action,
+        symbol=symbol,
+        timeframe=timeframe,
+        strategy=strategy,
+        reason=reason,
+        impact=impact,
+        next_step=next_step,
+        exception=exception,
+    )
+    print(detail)
+    send_telegram_message(telegram_token_errors, "", telegram_prefix_errors_sl + detail)
+    if notify_main and main_token:
+        short = f"{main_prefix}{timeframe + ' ' if timeframe else ''}{action} warning. See Errors channel."
+        send_telegram_message(main_token, EMOJI_INFORMATION, short)
 
 def send_telegram_message(
     telegram_token,
@@ -209,7 +363,8 @@ def send_telegram_message(
             params["parse_mode"] = parse_mode
 
         try:            
-            # if message is a warning, send message also to the errors telegram chat bot 
+            # Warnings are considered operational issues and are mirrored to Errors.
+            # Routine status/debug messages must not use EMOJI_WARNING.
             if emoji == EMOJI_WARNING:
                 resp = requests.post(
                     # "https://api.telegram.org/bot{}/sendMessage".format(telegram_token_errors), 

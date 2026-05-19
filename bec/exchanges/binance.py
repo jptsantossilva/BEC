@@ -15,6 +15,7 @@ from binance.helpers import round_step_size
 import bec.utils.config as config
 import bec.utils.telegram as telegram
 import bec.utils.database as database
+from bec.utils.risk import get_runtime_risk_settings
 
 _client: Optional[Client] = None # private to module
 
@@ -174,8 +175,6 @@ def calc_stake_amount(symbol, bot):
 def create_buy_order(
     symbol: str,
     bot: str,
-    fast_ema: int = 0,
-    slow_ema: int = 0,
     convert_all_balance: bool = False,
     strategy_id: str = "",
     strategy_name: str = "",
@@ -251,7 +250,13 @@ def create_buy_order(
             avg_price = round(avg_price,8)
                 
             # update position with the buy order
-            strategy_params_json = database.build_strategy_params_json(strategy_id, fast_ema, slow_ema)
+            strategy_params_json = ""
+            if position_id is not None:
+                df_position = database.get_position_by_id(position_id)
+                if not df_position.empty:
+                    strategy_params_json = str(df_position.get("Strategy_Params_JSON", "").iloc[0] or "")
+            if not strategy_params_json:
+                strategy_params_json = database.build_strategy_params_json(strategy_id)
             if not convert_all_balance:
                 database.set_position_buy(
                                         bot=bot, 
@@ -259,8 +264,6 @@ def create_buy_order(
                                         qty=float(order['executedQty']),
                                         buy_price=avg_price,
                                         date=str(pd.to_datetime(order['transactTime'], unit='ms')),
-                                        ema_fast = fast_ema,
-                                        ema_slow = slow_ema,
                                         buy_order_id=str(order['orderId']),
                                         position_id=position_id,
                                         strategy_id=strategy_id,
@@ -274,17 +277,12 @@ def create_buy_order(
                                    symbol=symbol,
                                    price=avg_price,
                                    qty=float(order['executedQty']),
-                                   ema_fast=fast_ema,
-                                   ema_slow=slow_ema,
                                    strategy_id=strategy_id,
                                    strategy_params_json=strategy_params_json)
         
             effective_strategy_id = strategy_id or (settings.main_strategy_configs[0]["id"] if settings.main_strategy_configs else "")
             base_strategy_name = strategy_name or database.get_strategy_name(effective_strategy_id) or effective_strategy_id
-            if effective_strategy_id in ["ema_cross_with_market_phases", "ema_cross", "hma_rsi_linreg"]:
-                strategy_name = str(fast_ema)+"/"+str(slow_ema)+" "+base_strategy_name
-            else:
-                strategy_name = base_strategy_name
+            strategy_name = base_strategy_name
 
             if convert_all_balance:
                 convert_message = "Trade against auto switch"
@@ -292,17 +290,29 @@ def create_buy_order(
 
             telegram_prefix = telegram.get_telegram_prefix(bot)
 
-            telegram.send_telegram_alert(telegram_token, 
-                                         telegram_prefix,
-                                         telegram.EMOJI_ENTER_TRADE,
-                                         pd.to_datetime(order['transactTime'], unit='ms'),
-                                         order['symbol'], 
-                                         bot, 
-                                         strategy_name,
-                                         order['side'],
-                                         avg_price,
-                                         order['executedQty'],
-                                         position_size)  
+            try:
+                open_positions = (
+                    f"{database.get_num_open_positions()}/{settings.max_number_of_open_positions}"
+                    if settings.stake_amount_type == "unlimited"
+                    else ""
+                )
+            except Exception:
+                open_positions = ""
+
+            telegram.send_trade_event(
+                telegram_token=telegram_token,
+                telegram_prefix=telegram_prefix,
+                emoji=telegram.EMOJI_ENTER_TRADE,
+                action=order["side"],
+                symbol=order["symbol"],
+                timeframe=bot,
+                strategy=strategy_name,
+                reason="Entry condition fulfilled",
+                unit_price=avg_price,
+                quantity=order["executedQty"],
+                notional_value=position_size,
+                open_positions=open_positions,
+            )
             
         elif position_size == -2:
             num_open_positions = database.get_num_open_positions()
@@ -315,23 +325,54 @@ def create_buy_order(
         msg = "BUY create_order - "+repr(e)
         msg = msg + " - " + symbol
         print(msg)
-        telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
+        telegram.send_error_event(
+            action="create buy order",
+            symbol=symbol,
+            timeframe=bot,
+            strategy=strategy_name,
+            reason="Binance API exception",
+            impact="Buy order was not placed.",
+            next_step="Check Binance error details, balances, symbol filters, and API connectivity.",
+            exception=e,
+            main_token=telegram_token,
+            main_prefix=telegram.get_telegram_prefix(bot),
+        )
     except BinanceOrderException as e:
         msg = "BUY create_order - "+repr(e)
         msg = msg + " - " + symbol
         print(msg)
-        telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
+        telegram.send_error_event(
+            action="create buy order",
+            symbol=symbol,
+            timeframe=bot,
+            strategy=strategy_name,
+            reason="Binance order exception",
+            impact="Buy order was not placed.",
+            next_step="Check order quantity, precision, and symbol trading rules.",
+            exception=e,
+            main_token=telegram_token,
+            main_prefix=telegram.get_telegram_prefix(bot),
+        )
     except Exception as e:
         msg = "BUY create_order - "+repr(e)
         msg = msg + " - " + symbol
         print(msg)
-        telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
+        telegram.send_error_event(
+            action="create buy order",
+            symbol=symbol,
+            timeframe=bot,
+            strategy=strategy_name,
+            reason="Unexpected exception",
+            impact="Buy order was not placed.",
+            next_step="Check logs for stack trace and verify exchange/database state.",
+            exception=e,
+            main_token=telegram_token,
+            main_prefix=telegram.get_telegram_prefix(bot),
+        )
 
 def create_sell_order(
     symbol,
     bot,
-    fast_ema=0,
-    slow_ema=0,
     reason='',
     percentage=100,
     take_profit_num=0,
@@ -427,15 +468,14 @@ def create_sell_order(
                         new_qty = previous_qty - order_qty
                         database.set_position_qty( bot=bot, symbol=symbol, qty=new_qty, position_id=position_id)
 
-                        # update take profit to inform that we already took profit 1, 2, 3 or 4
-                        if take_profit_num == 1:
-                            database.set_position_take_profit_1( bot=bot, symbol=symbol, take_profit_1=1, position_id=position_id)
-                        elif take_profit_num == 2:
-                            database.set_position_take_profit_2( bot=bot, symbol=symbol, take_profit_2=1, position_id=position_id)
-                        elif take_profit_num == 3:
-                            database.set_position_take_profit_3( bot=bot, symbol=symbol, take_profit_3=1, position_id=position_id)
-                        elif take_profit_num == 4:
-                            database.set_position_take_profit_4( bot=bot, symbol=symbol, take_profit_4=1, position_id=position_id)
+                        # Mark the fired take-profit level. The JSON state supports any level;
+                        # legacy TP1..TP4 columns are kept in sync by the database helper.
+                        database.mark_position_take_profit(
+                            bot=bot,
+                            symbol=symbol,
+                            take_profit_num=take_profit_num,
+                            position_id=position_id,
+                        )
                         
                         # lock values from parcial sales amounts
                         lock_values = settings.lock_values
@@ -476,15 +516,20 @@ def create_sell_order(
                     buy_price_for_stop = 0.0 if pd.isna(buy_raw) else float(buy_raw)
 
             if stop_type in {"hard_sl", "atr_trailing"}:
+                effective_strategy_id = str(strategy_id or "").strip()
+                pos_row = df_pos.iloc[0] if not df_pos.empty else None
+                if not effective_strategy_id and pos_row is not None:
+                    effective_strategy_id = str(pos_row.get("Strategy_Id", "") or "").strip()
+                risk_settings = get_runtime_risk_settings(settings, effective_strategy_id, pos_row=pos_row)
                 atr_params_at_exit = (
-                    f'{{"period":{int(settings.atr_period)},'
-                    f'"multiplier":{float(settings.atr_multiplier)},'
-                    f'"activation_pnl":{float(settings.atr_activation_pnl)}}}'
+                    f'{{"period":{int(risk_settings["atr_period"])},'
+                    f'"multiplier":{float(risk_settings["atr_multiplier"])},'
+                    f'"activation_pnl":{float(risk_settings["atr_activation_pnl"])}}}'
                 )
                 if stop_type == "atr_trailing" and trail_stop_atr_at_exit > 0:
                     stop_trigger_price = trail_stop_atr_at_exit
-                elif stop_type == "hard_sl" and buy_price_for_stop > 0 and float(settings.stop_loss) > 0:
-                    stop_trigger_price = buy_price_for_stop * (1 - (float(settings.stop_loss) / 100))
+                elif stop_type == "hard_sl" and buy_price_for_stop > 0 and float(risk_settings["stop_loss"]) > 0:
+                    stop_trigger_price = buy_price_for_stop * (1 - (float(risk_settings["stop_loss"]) / 100))
                 if stop_trigger_price <= 0:
                     stop_trigger_price = order_avg_price
 
@@ -493,7 +538,7 @@ def create_sell_order(
             if not df_pos.empty:
                 strategy_params_json = str(df_pos.get("Strategy_Params_JSON", "").iloc[0] or "")
             if not strategy_params_json:
-                strategy_params_json = database.build_strategy_params_json(strategy_id, fast_ema, slow_ema)
+                strategy_params_json = database.build_strategy_params_json(strategy_id)
             pnl_value, pnl_perc = database.add_order_sell(
                 sell_order_id = sell_order_id,
                 buy_order_id = buy_order_id,
@@ -502,8 +547,6 @@ def create_sell_order(
                 symbol = symbol,
                 price = order_avg_price,
                 qty = order_qty,
-                ema_fast = fast_ema,
-                ema_slow = slow_ema,
                 strategy_id=strategy_id,
                 strategy_params_json=strategy_params_json,
                 exit_reason = reason,
@@ -523,10 +566,7 @@ def create_sell_order(
 
             effective_strategy_id = strategy_id or (settings.main_strategy_configs[0]["id"] if settings.main_strategy_configs else "")
             base_strategy_name = strategy_name or database.get_strategy_name(effective_strategy_id) or effective_strategy_id
-            if effective_strategy_id in ["ema_cross_with_market_phases", "ema_cross", "hma_rsi_linreg"]:
-                strategy_name = str(fast_ema)+"/"+str(slow_ema)+" "+base_strategy_name
-            else:
-                strategy_name = base_strategy_name
+            strategy_name = base_strategy_name
             
             if convert_all_balance:
                 convert_message = "Trade against auto switch"
@@ -534,25 +574,32 @@ def create_sell_order(
 
             telegram_prefix = telegram.get_telegram_prefix(bot)
 
-            # if is a sale from crossover
-            if (slow_ema != 0 and fast_ema != 0) and reason == "":
-                reason = strategy_name
-
             # call send_telegram_alert with the appropriate alert type
-            telegram.send_telegram_alert(telegram_token=telegram_token,
-                                         telegram_prefix=telegram_prefix,
-                                         emoji=alert_type,
-                                         date=order_sell_date, 
-                                         symbol=order_symbol, 
-                                         timeframe=bot,
-                                         strategy=strategy_name,
-                                         ordertype=order_side,
-                                         unitValue=order_avg_price,
-                                         amount=order_qty,
-                                         trade_against_value=order_avg_price*order_qty,
-                                         pnlPerc=pnl_perc,
-                                         pnl_trade_against=pnl_value,
-                                         exit_reason=reason)
+            entry_price = ""
+            duration = ""
+            if not df_pos.empty:
+                if "Buy_Price" in df_pos.columns:
+                    entry_price = df_pos["Buy_Price"].iloc[0]
+                if "Duration" in df_pos.columns:
+                    duration = str(df_pos["Duration"].iloc[0] or "")
+
+            telegram.send_trade_event(
+                telegram_token=telegram_token,
+                telegram_prefix=telegram_prefix,
+                emoji=alert_type,
+                action=order_side,
+                symbol=order_symbol,
+                timeframe=bot,
+                strategy=strategy_name,
+                reason=reason or "Strategy exit",
+                unit_price=order_avg_price,
+                quantity=order_qty,
+                notional_value=order_avg_price * order_qty,
+                pnl_perc=round(float(pnl_perc), 2),
+                pnl_value=float(pnl_value),
+                entry_price=entry_price,
+                duration=duration,
+            )
         else:
             # if there is no qty on balance to sell we set the qty on positions table to zero
             # this can happen if we sell on the exchange before the bot sells it. 
@@ -569,17 +616,50 @@ def create_sell_order(
         else:
             msg = f"create_sell_order - {bot} - {symbol} - {repr(e)}"
         # print(msg)
-        telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
+        telegram.send_error_event(
+            action="create sell order",
+            symbol=symbol,
+            timeframe=bot,
+            strategy=strategy_name,
+            reason="Binance API exception",
+            impact="Sell order was not placed.",
+            next_step="Check Binance error details, balance quantity, minimum notional, and symbol filters.",
+            exception=e,
+            main_token=telegram_token,
+            main_prefix=telegram.get_telegram_prefix(bot),
+        )
     except BinanceOrderException as e:
         result = False
         msg = f"create_sell_order - {bot} - {symbol} - {repr(e)}"
         # print(msg)
-        telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
+        telegram.send_error_event(
+            action="create sell order",
+            symbol=symbol,
+            timeframe=bot,
+            strategy=strategy_name,
+            reason="Binance order exception",
+            impact="Sell order was not placed.",
+            next_step="Check sell quantity, precision, and symbol trading rules.",
+            exception=e,
+            main_token=telegram_token,
+            main_prefix=telegram.get_telegram_prefix(bot),
+        )
     except Exception as e:
         result = False
         msg = f"create_sell_order - {bot} - {symbol} - {repr(e)}"
         # print(msg)
-        telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
+        telegram.send_error_event(
+            action="create sell order",
+            symbol=symbol,
+            timeframe=bot,
+            strategy=strategy_name,
+            reason="Unexpected exception",
+            impact="Sell order may not have completed.",
+            next_step="Check logs for stack trace and verify exchange/database state.",
+            exception=e,
+            main_token=telegram_token,
+            main_prefix=telegram.get_telegram_prefix(bot),
+        )
 
     return result, msg
 
@@ -950,11 +1030,12 @@ def sync_ohlcv_binance_daily(conn: sqlite3.Connection,
 
     return len(rows)
         
-def create_balance_snapshot(telegram_prefix: str):
+def create_balance_snapshot(telegram_prefix: str, notify: bool = True):
     msg = "Creating balance snapshot. It can take a few minutes..."
     msg = telegram_prefix + msg
     print(msg)
-    telegram.send_telegram_message(telegram.telegram_token_main, "", msg)
+    if notify:
+        telegram.send_telegram_message(telegram.telegram_token_main, "", msg)
 
     
 
@@ -968,8 +1049,11 @@ def create_balance_snapshot(telegram_prefix: str):
     ticker_prices = {ticker['symbol']: float(ticker['price']) for ticker in ticker_info}
     btc_price = ticker_prices.get('BTCUSDC') or ticker_prices.get('BTCUSDT')
     if btc_price is None:
-        telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_WARNING,
-            "[create_balance_snapshot] BTC price not found (BTCUSDC/USDT). Aborting.")
+        msg = "[create_balance_snapshot] BTC price not found (BTCUSDC/USDT). Aborting."
+        if notify:
+            telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_WARNING, msg)
+        else:
+            print(msg)
         return
 
     # Calculate yesterday's date
@@ -1059,4 +1143,5 @@ def create_balance_snapshot(telegram_prefix: str):
     msg = "Balance snapshot finished"
     msg = telegram_prefix + msg
     print(msg)
-    telegram.send_telegram_message(telegram.telegram_token_main, "", msg)
+    if notify:
+        telegram.send_telegram_message(telegram.telegram_token_main, "", msg)

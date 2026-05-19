@@ -14,6 +14,10 @@ import bec.exchanges.binance as binance
 import bec.utils.config as config
 import bec.utils.database as database
 import bec.utils.telegram as telegram
+from bec.utils import telegram_reporting
+from bec.strategy_builder import engine as strategy_engine
+from bec.utils.risk import get_runtime_risk_settings
+from bec.utils.take_profit import normalize_take_profit_levels, take_profit_enabled
 
 # sets the output display precision in terms of decimal places to 8.
 # this is helpful when trading against BTC. The value in the dataframe has the precision 8 but when we display it
@@ -47,7 +51,7 @@ def read_arguments():
 
     if n < 2:
         print("Argument is missing")
-        time_frame = input("Enter time frame (1d, 4h or 1h):")
+        time_frame = input("Enter time frame (15m, 1d, 4h or 1h):")
         # run_mode = input('Enter run mode (test, prod):')
     else:
         # argv[0] in Python is always the name of the script.
@@ -65,7 +69,10 @@ def apply_arguments(time_frame):
 
     global telegram_token, telegram_prefix_ml, telegram_prefix_sl
 
-    if time_frame == "1h":
+    if time_frame == "15m":
+        telegram_prefix_sl = telegram.telegram_prefix_bot_1h_sl
+        telegram_prefix_ml = telegram.telegram_prefix_bot_1h_ml
+    elif time_frame == "1h":
         telegram_prefix_sl = telegram.telegram_prefix_bot_1h_sl
         telegram_prefix_ml = telegram.telegram_prefix_bot_1h_ml
     elif time_frame == "4h":
@@ -76,25 +83,7 @@ def apply_arguments(time_frame):
         telegram_prefix_ml = telegram.telegram_prefix_bot_1d_ml
     else:
         # Invalid timeframe
-        raise ValueError("Incorrect time frame. Use one of: 1h, 4h, 1d")
-
-
-def get_backtesting_results(strategy_id, symbol, time_frame):
-
-    # get best ema
-    df = database.get_backtesting_results_by_symbol_timeframe_strategy(
-        symbol=symbol, time_frame=time_frame, strategy_id=strategy_id
-    )
-
-    if not df.empty:
-        fast_ema = int(df.Ema_Fast.values[0])
-        slow_ema = int(df.Ema_Slow.values[0])
-    else:
-        fast_ema = 0
-        slow_ema = 0
-
-    # if bestEMA does not exist return empty dataframe in order to no use that trading pair
-    return fast_ema, slow_ema
+        raise ValueError("Incorrect time frame. Use one of: 15m, 1h, 4h, 1d")
 
 
 def get_data(symbol, timeframe):
@@ -105,7 +94,9 @@ def get_data(symbol, timeframe):
     today = datetime.now(timezone.utc)
 
     pastdate = None
-    if timeframe == "1h":
+    if timeframe == "15m":
+        pastdate = today - relativedelta(minutes=15 * 200 * 8)
+    elif timeframe == "1h":
         pastdate = today - relativedelta(hours=200 * 8)
     elif timeframe == "4h":
         # Use 4x hours to match 4h candles (approx. 1600 bars for 200*8)
@@ -114,7 +105,7 @@ def get_data(symbol, timeframe):
         pastdate = today - relativedelta(days=200 * 8)
     else:
         raise ValueError(
-            f"Invalid timeframe '{timeframe}'. Expected one of: 1h, 4h, 1d."
+            f"Invalid timeframe '{timeframe}'. Expected one of: 15m, 1h, 4h, 1d."
         )
     
     start_ms = int(pastdate.timestamp() * 1000)
@@ -133,90 +124,18 @@ def get_data(symbol, timeframe):
         msg = msg + sys._getframe().f_code.co_name + " - " + symbol
         msg = telegram_prefix_sl + msg
         print(msg)
-        telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
+        telegram.send_error_event(
+            action="load OHLCV",
+            symbol=symbol,
+            timeframe=timeframe,
+            reason="Historical dataframe is empty after retries.",
+            impact="Symbol was skipped in this cycle.",
+            next_step="Check Binance OHLCV availability and request logs.",
+            notify_main=False,
+        )
         return pd.DataFrame()
 
     return df
-
-
-# calculates moving averages
-def apply_technicals(df, fast_ema=0, slow_ema=0):
-    df["FastEMA"] = df["Close"].ewm(span=fast_ema, adjust=False).mean() if fast_ema > 0 else np.nan
-    df["SlowEMA"] = df["Close"].ewm(span=slow_ema, adjust=False).mean() if slow_ema > 0 else np.nan
-    df["SMA50"] = df["Close"].rolling(50).mean()
-    df["SMA200"] = df["Close"].rolling(200).mean()
-
-
-def calculate_wma(values, period):
-    period = max(int(period), 1)
-    weights = np.arange(1, period + 1)
-    return pd.Series(values).rolling(period).apply(
-        lambda prices: np.dot(prices, weights) / weights.sum(),
-        raw=True,
-    )
-
-
-def calculate_hma(values, period):
-    period = max(int(period), 1)
-    half_period = max(int(period / 2), 1)
-    sqrt_period = max(int(np.sqrt(period)), 1)
-    values = pd.Series(values)
-    return calculate_wma(
-        2 * calculate_wma(values, half_period) - calculate_wma(values, period),
-        sqrt_period,
-    )
-
-
-def calculate_rsi(values, period):
-    period = max(int(period), 1)
-    close = pd.Series(values)
-    delta = close.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
-    avg_loss = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-    rsi = 100 - (100 / (1 + rs))
-    return rsi.fillna(100).where(avg_loss != 0, 100)
-
-
-def calculate_linreg(values, period):
-    period = max(int(period), 1)
-    x = np.arange(period, dtype=float)
-    x_mean = x.mean()
-    denominator = ((x - x_mean) ** 2).sum()
-
-    def _linreg_endpoint(y):
-        y_mean = y.mean()
-        slope = ((x - x_mean) * (y - y_mean)).sum() / denominator if denominator else 0.0
-        intercept = y_mean - slope * x_mean
-        return intercept + slope * (period - 1)
-
-    return pd.Series(values).rolling(period).apply(_linreg_endpoint, raw=True)
-
-
-def apply_hma_rsi_linreg_technicals(df, fast_hma=16, slow_hma=65):
-    df["HMAFast"] = calculate_hma(df["Close"], fast_hma)
-    df["HMASlow"] = calculate_hma(df["Close"], slow_hma)
-    df["RSI14"] = calculate_rsi(df["Close"], 14)
-
-
-def get_daily_linreg_condition(symbol):
-    df_daily = get_data(symbol=symbol, timeframe="1d")
-    if df_daily.empty:
-        return False, "Daily dataframe empty"
-
-    df_daily["LINREG50"] = calculate_linreg(df_daily["Close"], 50)
-    last_daily = df_daily.iloc[-1]
-    if pd.isna(last_daily.LINREG50):
-        return False, "Daily LINREG50 not ready"
-
-    condition = float(last_daily.Close) > float(last_daily.LINREG50)
-    detail = (
-        f"Daily Close: {float(last_daily.Close):.8f} | "
-        f"LINREG50: {float(last_daily.LINREG50):.8f} | Close>LINREG50: {condition}"
-    )
-    return condition, detail
 
 
 def calculate_atr(df: pd.DataFrame, period: int) -> float:
@@ -270,7 +189,17 @@ def get_current_pnl(symbol, current_price, timeframe, position_id=None):
         msg = sys._getframe().f_code.co_name + " - " + repr(e)
         msg = telegram_prefix_sl + msg
         print(msg)
-        telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
+        telegram.send_error_event(
+            action="calculate current PnL",
+            symbol=symbol,
+            timeframe=timeframe,
+            reason="Unexpected exception",
+            impact="PnL-dependent exit checks may be incomplete for this symbol.",
+            next_step="Check position data and logs.",
+            exception=e,
+            main_token=telegram_token,
+            main_prefix=telegram_prefix_sl,
+        )
 
 
 def get_strategy_display_name(strategy_id: str) -> str:
@@ -283,100 +212,305 @@ def get_default_main_strategy_id(settings) -> str:
 
 
 def strategy_uses_tuned_parameters(strategy_id: str) -> bool:
-    return strategy_id in ["ema_cross_with_market_phases", "ema_cross", "hma_rsi_linreg"]
+    try:
+        definition = database.get_strategy_definition(strategy_id)
+    except Exception:
+        return False
+    return bool(_optimizable_parameter_names(definition))
+
+
+def strategy_uses_declarative_engine(strategy_id: str) -> bool:
+    try:
+        definition = database.get_strategy_definition(strategy_id)
+    except Exception:
+        return False
+    return isinstance(definition, dict) and definition.get("engine") == "bec_strategy_ast_v2"
+
+
+def _safe_int_or_zero(value) -> int:
+    try:
+        if pd.isna(value):
+            return 0
+    except TypeError:
+        pass
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _strategy_parameter_names(definition: dict) -> list[str]:
+    parameters = definition.get("parameters", {}) if isinstance(definition, dict) else {}
+    return list(parameters.keys()) if isinstance(parameters, dict) else []
+
+
+def _optimizable_parameter_names(definition: dict) -> list[str]:
+    parameters = definition.get("parameters", {}) if isinstance(definition, dict) else {}
+    if not isinstance(parameters, dict):
+        return []
+    return [name for name, spec in parameters.items() if isinstance(spec, dict) and bool(spec.get("optimizable", False))]
+
+
+def _primary_parameter_pair_names(definition: dict) -> tuple[str, str]:
+    names = _strategy_parameter_names(definition)
+    fast_name = next((name for name in names if str(name).lower() == "fast" or "fast" in str(name).lower()), "")
+    slow_name = next((name for name in names if str(name).lower() == "slow" or "slow" in str(name).lower()), "")
+    if fast_name and slow_name:
+        return fast_name, slow_name
+
+    optimizable = _optimizable_parameter_names(definition)
+    if len(optimizable) >= 2:
+        return optimizable[0], optimizable[1]
+    if len(names) >= 2:
+        return names[0], names[1]
+    return "", ""
+
+
+def _snapshot_parameters(pos_row=None) -> dict:
+    if pos_row is None:
+        return {}
+    snapshot = database.parse_strategy_params(pos_row.get("Strategy_Params_JSON", ""))
+    if not isinstance(snapshot, dict):
+        return {}
+    parameters = snapshot.get("parameters")
+    if isinstance(parameters, dict):
+        return dict(parameters)
+    return {
+        key: value
+        for key, value in snapshot.items()
+        if key not in {"engine", "definition", "risk"}
+    }
+
+
+def _snapshot_definition(pos_row=None) -> dict:
+    if pos_row is None:
+        return {}
+    snapshot = database.parse_strategy_params(pos_row.get("Strategy_Params_JSON", ""))
+    definition = snapshot.get("definition") if isinstance(snapshot, dict) else None
+    return definition if isinstance(definition, dict) else {}
+
+
+def _apply_pair_to_parameters(definition: dict, parameters: dict, first_value=0, second_value=0, *, overwrite: bool = True) -> dict:
+    first_name, second_name = _primary_parameter_pair_names(definition)
+    result = dict(parameters)
+    first = _safe_int_or_zero(first_value)
+    second = _safe_int_or_zero(second_value)
+    if first_name and first and (overwrite or first_name not in result):
+        result[first_name] = first
+    if second_name and second and (overwrite or second_name not in result):
+        result[second_name] = second
+    return result
+
+
+def _backtesting_parameter_overrides(strategy_id: str, symbol: str, timeframe: str, definition: dict) -> tuple[dict, int, int]:
+    df = database.get_backtesting_results_by_symbol_timeframe_strategy(
+        symbol=symbol,
+        time_frame=timeframe,
+        strategy_id=strategy_id,
+    )
+    if df.empty:
+        return {}, 0, 0
+
+    row = df.iloc[0]
+    config = database.parse_strategy_params(row.get("Backtest_Config_JSON", ""))
+    strategy_parameters = config.get("strategy_parameters") if isinstance(config, dict) else {}
+    parameters = strategy_parameters.get("parameters") if isinstance(strategy_parameters, dict) else {}
+    if isinstance(parameters, dict) and parameters:
+        first_name, second_name = _primary_parameter_pair_names(definition)
+        return (
+            dict(parameters),
+            _safe_int_or_zero(parameters.get(first_name, 0)),
+            _safe_int_or_zero(parameters.get(second_name, 0)),
+        )
+
+    return {}, 0, 0
+
+
+def get_strategy_parameter_overrides(strategy_id: str, first_value=0, second_value=0, pos_row=None) -> dict:
+    try:
+        definition = database.get_strategy_definition(strategy_id)
+    except Exception:
+        definition = {}
+    overrides = _snapshot_parameters(pos_row)
+    return _apply_pair_to_parameters(definition, overrides, first_value, second_value)
+
+
+def get_strategy_runtime_context(
+    strategy_id: str,
+    symbol: str,
+    timeframe: str,
+    pos_row=None,
+    *,
+    prefer_position_params: bool = False,
+) -> dict:
+    definition = _snapshot_definition(pos_row)
+    if not definition:
+        try:
+            definition = database.get_strategy_definition(strategy_id)
+        except Exception:
+            definition = {}
+
+    declarative = isinstance(definition, dict) and definition.get("engine") == "bec_strategy_ast_v2"
+    defaults = strategy_engine.resolve_parameters(definition) if declarative else {}
+    snapshot = _snapshot_parameters(pos_row)
+    backtesting_parameters, bt_first, bt_second = _backtesting_parameter_overrides(
+        strategy_id,
+        symbol,
+        timeframe,
+        definition,
+    )
+
+    parameters = dict(defaults)
+    if prefer_position_params:
+        parameters.update(backtesting_parameters)
+        parameters.update(snapshot)
+    else:
+        parameters.update(snapshot)
+        parameters.update(backtesting_parameters)
+
+    first_name, second_name = _primary_parameter_pair_names(definition)
+    first_value = _safe_int_or_zero(parameters.get(first_name, bt_first))
+    second_value = _safe_int_or_zero(parameters.get(second_name, bt_second))
+
+    return {
+        "definition": definition,
+        "declarative": declarative,
+        "parameters": parameters,
+        "primary_parameter_names": (first_name, second_name),
+        "order_first": first_value,
+        "order_second": second_value,
+        "setup": "" if first_value == 0 or second_value == 0 else f"{first_value}/{second_value}",
+    }
 
 
 def get_strategy_parameters(strategy_id: str, symbol: str, timeframe: str, pos_row=None, prefer_position_params: bool = False):
-    fast_ema = 0
-    slow_ema = 0
-    if strategy_uses_tuned_parameters(strategy_id):
-        if prefer_position_params and pos_row is not None:
-            params = database.parse_strategy_params(pos_row.get("Strategy_Params_JSON", ""))
-            if strategy_id in ["ema_cross", "ema_cross_with_market_phases"]:
-                fast_raw = params.get("ema_fast", 0)
-                slow_raw = params.get("ema_slow", 0)
-            elif strategy_id == "hma_rsi_linreg":
-                fast_raw = params.get("hma_fast", 0)
-                slow_raw = params.get("hma_slow", 0)
-            else:
-                fast_raw = params.get("fast", 0)
-                slow_raw = params.get("slow", 0)
-            fast_ema = 0 if pd.isna(fast_raw) else int(fast_raw)
-            slow_ema = 0 if pd.isna(slow_raw) else int(slow_raw)
-        if fast_ema == 0 or slow_ema == 0:
-            fast_ema, slow_ema = get_backtesting_results(
-                strategy_id=strategy_id, symbol=symbol, time_frame=timeframe
-            )
-        if (fast_ema == 0 or slow_ema == 0) and pos_row is not None:
-            fast_raw = pos_row.get("Ema_Fast", 0)
-            slow_raw = pos_row.get("Ema_Slow", 0)
-            fast_ema = 0 if pd.isna(fast_raw) else int(fast_raw)
-            slow_ema = 0 if pd.isna(slow_raw) else int(slow_raw)
-    return fast_ema, slow_ema
+    context = get_strategy_runtime_context(
+        strategy_id,
+        symbol,
+        timeframe,
+        pos_row=pos_row,
+        prefer_position_params=prefer_position_params,
+    )
+    return context["order_first"], context["order_second"]
 
 
-def apply_strategy_technicals(df, strategy_id: str, fast_ema: int, slow_ema: int):
-    apply_technicals(df, fast_ema, slow_ema)
-    if strategy_id == "hma_rsi_linreg":
-        apply_hma_rsi_linreg_technicals(df, fast_hma=fast_ema, slow_hma=slow_ema)
+def apply_strategy_technicals(df, strategy_id: str, first_value: int = 0, second_value: int = 0, symbol: str = "", timeframe: str = "current", parameters: dict | None = None):
+    if strategy_uses_declarative_engine(strategy_id):
+        definition = database.get_strategy_definition(strategy_id)
+        parameters = parameters or get_strategy_parameter_overrides(strategy_id, first_value, second_value)
+        prepared = strategy_engine.add_indicators(
+            df,
+            definition,
+            parameters,
+            symbol=symbol,
+            base_timeframe=timeframe,
+            data_loader=get_data,
+        )
+        for column in prepared.columns:
+            if column not in df.columns:
+                df[column] = prepared[column].to_numpy()
+        return
+    return
 
 
-def get_strategy_sell_condition(strategy_id: str, df, lastrow):
-    if strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
-        return lastrow.SlowEMA > lastrow.FastEMA
-    if strategy_id in ["market_phases"]:
-        return (lastrow.Close < lastrow.SMA50) or (lastrow.Close < lastrow.SMA200)
-    if strategy_id == "hma_rsi_linreg":
-        return crossover(df.HMASlow, df.HMAFast)
+def get_strategy_sell_condition(strategy_id: str, symbol: str, timeframe: str, df, lastrow, parameters: dict | None = None):
+    if strategy_uses_declarative_engine(strategy_id):
+        definition = database.get_strategy_definition(strategy_id)
+        parameters = parameters or get_strategy_parameter_overrides(strategy_id)
+        return strategy_engine.evaluate_exit(
+            df,
+            definition,
+            parameters,
+            symbol=symbol,
+            base_timeframe=timeframe,
+            data_loader=get_data,
+        )
     return False
 
 
-def get_strategy_buy_condition(strategy_id: str, symbol: str, df, lastrow):
+def get_strategy_buy_condition(strategy_id: str, symbol: str, timeframe: str, df, lastrow, parameters: dict | None = None):
     detail = ""
-    if strategy_id in ["ema_cross_with_market_phases"]:
-        accumulation_phase = (
-            (lastrow.Close > lastrow.SMA50)
-            and (lastrow.Close > lastrow.SMA200)
-            and (lastrow.SMA50 < lastrow.SMA200)
+    if strategy_uses_declarative_engine(strategy_id):
+        definition = database.get_strategy_definition(strategy_id)
+        parameters = parameters or get_strategy_parameter_overrides(strategy_id)
+        entry_ok = strategy_engine.evaluate_entry(
+            df,
+            definition,
+            parameters,
+            symbol=symbol,
+            base_timeframe=timeframe,
+            data_loader=get_data,
         )
-        bullish_phase = (
-            (lastrow.Close > lastrow.SMA50)
-            and (lastrow.Close > lastrow.SMA200)
-            and (lastrow.SMA50 > lastrow.SMA200)
-        )
-        condition_phase = accumulation_phase or bullish_phase
-        return condition_phase and crossover(df.FastEMA, df.SlowEMA), detail
-
-    if strategy_id in ["market_phases"]:
-        accumulation_phase = (
-            (lastrow.Close > lastrow.SMA50)
-            and (lastrow.Close > lastrow.SMA200)
-            and (lastrow.SMA50 < lastrow.SMA200)
-        )
-        bullish_phase = (
-            (lastrow.Close > lastrow.SMA50)
-            and (lastrow.Close > lastrow.SMA200)
-            and (lastrow.SMA50 > lastrow.SMA200)
-        )
-        return accumulation_phase or bullish_phase, detail
-
-    if strategy_id in ["ema_cross"]:
-        return crossover(df.FastEMA, df.SlowEMA), detail
-
-    if strategy_id == "hma_rsi_linreg":
-        daily_linreg_condition, daily_linreg_detail = get_daily_linreg_condition(symbol)
-        return (
-            crossover(df.HMAFast, df.HMASlow)
-            and float(lastrow.RSI14) > 52
-            and daily_linreg_condition
-        ), daily_linreg_detail
-
+        return entry_ok, f"Entry: {entry_ok}"
     return False, detail
 
 
-def trade(timeframe, run_mode, settings=None):
+def _lastrow_float(lastrow, column: str) -> float | None:
+    if column not in lastrow.index:
+        return None
+    try:
+        value = float(lastrow[column])
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(value):
+        return None
+    return value
+
+
+def _new_trade_cycle_summary(timeframe: str, routine_log_mode: str) -> dict:
+    return {
+        "timeframe": timeframe,
+        "routine_log_mode": str(routine_log_mode or "summary").strip().lower(),
+        "sell_evaluated": 0,
+        "buy_evaluated": 0,
+        "sell_no_action": 0,
+        "buy_no_action": 0,
+        "sell_actions": 0,
+        "buy_actions": 0,
+        "take_profit_actions": 0,
+        "missing_parameters": 0,
+        "empty_data": 0,
+        "warnings": 0,
+        "examples": [],
+    }
+
+
+def _track_trade_cycle_example(summary: dict, msg: str):
+    if len(summary["examples"]) < 5:
+        summary["examples"].append(msg)
+
+
+def _send_trade_cycle_summary(summary: dict):
+    msg = telegram_prefix_sl + format_trade_cycle_summary(summary)
+    print(msg)
+    telegram.send_telegram_message(telegram_token, "", msg)
+
+
+def format_trade_cycle_summary(summary: dict) -> str:
+    lines = [
+        "Cycle",
+        f"Sell checked: {summary['sell_evaluated']} | actions: {summary['sell_actions']}",
+        f"Buy checked: {summary['buy_evaluated']} | actions: {summary['buy_actions']}",
+        f"No action: sell {summary['sell_no_action']}, buy {summary['buy_no_action']}",
+        f"Skipped: {summary['missing_parameters'] + summary['empty_data']} | warnings: {summary['warnings']}",
+    ]
+    if summary["take_profit_actions"] > 0:
+        lines.append(f"Take profits: {summary['take_profit_actions']}")
+    if summary["warnings"] > 0:
+        lines.append("Warning detail: See Errors channel.")
+    if summary["examples"] and summary["routine_log_mode"] == "detailed":
+        lines.append("Examples without action:")
+        lines.extend(summary["examples"])
+    return "\n".join(lines)
+
+
+def trade(timeframe, run_mode, settings=None, send_summary=True):
+    del run_mode  # Kept for compatibility with older callers; exchange order functions enforce settings.run_mode.
     if settings is None:
         settings = config.load_settings(refresh=True)
+    routine_log_mode = getattr(settings, "telegram_routine_trade_logs", "summary")
+    cycle_summary = _new_trade_cycle_summary(timeframe, routine_log_mode)
+    send_detailed_routine_logs = cycle_summary["routine_log_mode"] == "detailed"
 
     # Make sure we are only trying to buy positions on symbols included on market phases table
     database.delete_positions_not_top_rank()
@@ -395,43 +529,39 @@ def trade(timeframe, run_mode, settings=None):
 
     # check open positions and SELL if conditions are fulfilled
     for _, pos_row in df_sell.iterrows():
+        cycle_summary["sell_evaluated"] += 1
         symbol = str(pos_row["Symbol"])
         position_id = int(pos_row["Id"])
         strategy_id = str(pos_row.get("Strategy_Id") or get_default_main_strategy_id(settings))
         strategy_name = str(pos_row.get("Strategy_Name") or get_strategy_display_name(strategy_id))
-
-        # initialize vars
-        fast_ema = 0
-        slow_ema = 0
-
-        # get best backtesting results for the strategy
-        if strategy_uses_tuned_parameters(strategy_id):
-            fast_ema, slow_ema = get_strategy_parameters(
-                strategy_id,
-                symbol,
-                timeframe,
-                pos_row=pos_row,
-                prefer_position_params=True,
-            )
-
-            if fast_ema == 0 or slow_ema == 0:
-                parameter_name = "HMA" if strategy_id == "hma_rsi_linreg" else "EMA"
-                msg = f"{symbol} - {strategy_name} - Best {parameter_name} values missing"
-                msg = telegram_prefix_sl + msg
-                print(msg)
-                telegram.send_telegram_message(
-                    telegram_token, telegram.EMOJI_WARNING, msg
-                )
-                continue
+        strategy_context = get_strategy_runtime_context(
+            strategy_id,
+            symbol,
+            timeframe,
+            pos_row=pos_row,
+            prefer_position_params=True,
+        )
+        strategy_parameters = strategy_context["parameters"]
+        order_first = strategy_context["order_first"]
+        order_second = strategy_context["order_second"]
 
         # get latest price data
         df = get_data(symbol=symbol, timeframe=timeframe)
 
         # Check if df is empty
         if df.empty:
+            cycle_summary["empty_data"] += 1
             continue  # Skip to the next iteration
 
-        apply_strategy_technicals(df, strategy_id, fast_ema, slow_ema)
+        apply_strategy_technicals(
+            df,
+            strategy_id,
+            order_first,
+            order_second,
+            symbol=symbol,
+            timeframe=timeframe,
+            parameters=strategy_parameters,
+        )
 
         # last row
         lastrow = df.iloc[-1]
@@ -450,18 +580,19 @@ def trade(timeframe, run_mode, settings=None):
         existing_highest = 0.0 if pd.isna(highest_raw) else float(highest_raw)
         existing_trail_stop = 0.0 if pd.isna(trail_stop_raw) else float(trail_stop_raw)
 
-        atr_trailing_enabled = bool(settings.atr_trailing_enabled)
-        atr_period = int(settings.atr_period)
-        atr_multiplier = float(settings.atr_multiplier)
-        atr_activation_pnl = float(settings.atr_activation_pnl)
+        risk_settings = get_runtime_risk_settings(settings, strategy_id, pos_row=pos_row)
+        atr_trailing_enabled = bool(risk_settings["atr_trailing_enabled"])
+        atr_period = int(risk_settings["atr_period"])
+        atr_multiplier = float(risk_settings["atr_multiplier"])
+        atr_activation_pnl = float(risk_settings["atr_activation_pnl"])
         atr_value = calculate_atr(df, period=atr_period)
 
         base_highest = existing_highest if existing_highest > 0 else buy_price
         highest_price_since_entry = max(base_highest, float(current_price))
 
         hard_stop_price = (
-            float(buy_price) * (1 - (float(settings.stop_loss) / 100))
-            if float(settings.stop_loss) > 0 and float(buy_price) > 0
+            float(buy_price) * (1 - (float(risk_settings["stop_loss"]) / 100))
+            if float(risk_settings["stop_loss"]) > 0 and float(buy_price) > 0
             else 0.0
         )
 
@@ -493,7 +624,7 @@ def trade(timeframe, run_mode, settings=None):
 
         # if using stop loss (hard SL and/or ATR trailing stop)
         sell_stop_loss = False
-        stop_loss_reason = f"Stop loss {settings.stop_loss}%"
+        stop_loss_reason = f"Stop loss {risk_settings['stop_loss']}%"
         if active_stop_price > 0:
             sell_stop_loss = float(current_price) <= float(active_stop_price)
             if sell_stop_loss and trail_stop_atr > 0 and abs(active_stop_price - trail_stop_atr) < 1e-12:
@@ -502,45 +633,27 @@ def trade(timeframe, run_mode, settings=None):
                     f"| Trigger: {active_stop_price:.8f}"
                 )
 
-        # if using take profit 1
-        take_profit_enabled = bool(settings.take_profit_enabled)
-        sell_tp_1 = False
-        if take_profit_enabled and settings.take_profit_1 > 0:
-            tp1_raw = pos_row.get("Take_Profit_1", 0)
-            tp1_occurred = 0 if pd.isna(tp1_raw) else int(tp1_raw)
-            # if not occurred
-            if tp1_occurred == 0:
-                sell_tp_1 = current_pnl >= settings.take_profit_1
-
-        # if using take profit 2
-        sell_tp_2 = False
-        if take_profit_enabled and settings.take_profit_2 > 0:
-            tp2_raw = pos_row.get("Take_Profit_2", 0)
-            tp2_occurred = 0 if pd.isna(tp2_raw) else int(tp2_raw)
-            # if not occurred
-            if tp2_occurred == 0:
-                sell_tp_2 = current_pnl >= settings.take_profit_2
-
-        # if using take profit 3
-        sell_tp_3 = False
-        if take_profit_enabled and settings.take_profit_3 > 0:
-            tp3_raw = pos_row.get("Take_Profit_3", 0)
-            tp3_occurred = 0 if pd.isna(tp3_raw) else int(tp3_raw)
-            # if not occurred
-            if tp3_occurred == 0:
-                sell_tp_3 = current_pnl >= settings.take_profit_3
-
-        # if using take profit 3
-        sell_tp_4 = False
-        if take_profit_enabled and settings.take_profit_4 > 0:
-            tp4_raw = pos_row.get("Take_Profit_4", 0)
-            tp4_occurred = 0 if pd.isna(tp4_raw) else int(tp4_raw)
-            # if not occurred
-            if tp4_occurred == 0:
-                sell_tp_4 = current_pnl >= settings.take_profit_4
+        take_profit_enabled = bool(risk_settings["take_profit_enabled"])
+        executed_tp_levels = database.get_position_executed_take_profit_levels(position_id=position_id)
+        tp_steps = []
+        if take_profit_enabled:
+            for tp in normalize_take_profit_levels(risk_settings.get("take_profits", [])):
+                tp_num = int(tp.get("level", 0) or 0)
+                tp_pnl = float(tp.get("pnl_pct", 0.0) or 0.0)
+                tp_amount = float(tp.get("amount_pct", 0.0) or 0.0)
+                if tp_num <= 0 or tp_pnl <= 0 or tp_amount <= 0 or tp_num in executed_tp_levels:
+                    continue
+                tp_steps.append((tp_num, current_pnl >= tp_pnl, tp_pnl, tp_amount))
 
         # check sell condition for the strategy
-        sell_condition = get_strategy_sell_condition(strategy_id, df, lastrow)
+        sell_condition = get_strategy_sell_condition(
+            strategy_id,
+            symbol,
+            timeframe,
+            df,
+            lastrow,
+            parameters=strategy_parameters,
+        )
 
         # set current PnL
         current_price = lastrow.Close
@@ -552,19 +665,15 @@ def trade(timeframe, run_mode, settings=None):
         if (
             sell_stop_loss
             or sell_condition
-            or sell_tp_1
-            or sell_tp_2
-            or sell_tp_3
-            or sell_tp_4
+            or any(tp_flag for _tp_num, tp_flag, _tp_pnl, _tp_amount in tp_steps)
         ):
 
             # stop loss
             if sell_stop_loss:
+                cycle_summary["sell_actions"] += 1
                 binance.create_sell_order(
                     symbol=symbol,
                     bot=timeframe,
-                    fast_ema=fast_ema,
-                    slow_ema=slow_ema,
                     strategy_id=strategy_id,
                     strategy_name=strategy_name,
                     position_id=position_id,
@@ -574,47 +683,19 @@ def trade(timeframe, run_mode, settings=None):
 
             # sell_codition
             if sell_condition:
+                cycle_summary["sell_actions"] += 1
                 binance.create_sell_order(
                     symbol=symbol,
                     bot=timeframe,
-                    fast_ema=fast_ema,
-                    slow_ema=slow_ema,
                     strategy_id=strategy_id,
                     strategy_name=strategy_name,
                     position_id=position_id,
                 )
                 continue
 
-            # Take-Profits in cascade (TP1 -> TP2 -> TP3 -> TP4)
+            # Take-Profits in cascade.
             # Each 'percentage' is applied to the remaining open position.
             # If any TP sells 100% of the position, stop immediately (skip further TPs).
-            tp_steps = [
-                (
-                    1,
-                    sell_tp_1,
-                    settings.take_profit_1,
-                    float(settings.take_profit_1_amount),
-                ),
-                (
-                    2,
-                    sell_tp_2,
-                    settings.take_profit_2,
-                    float(settings.take_profit_2_amount),
-                ),
-                (
-                    3,
-                    sell_tp_3,
-                    settings.take_profit_3,
-                    float(settings.take_profit_3_amount),
-                ),
-                (
-                    4,
-                    sell_tp_4,
-                    settings.take_profit_4,
-                    float(settings.take_profit_4_amount),
-                ),
-            ]
-
             tp_executed = False
             for tp_num, tp_flag, tp_pnl, tp_amount in tp_steps:
                 if not tp_flag:
@@ -625,8 +706,6 @@ def trade(timeframe, run_mode, settings=None):
                 binance.create_sell_order(
                     symbol=symbol,
                     bot=timeframe,
-                    fast_ema=fast_ema,
-                    slow_ema=slow_ema,
                     strategy_id=strategy_id,
                     strategy_name=strategy_name,
                     position_id=position_id,
@@ -636,6 +715,8 @@ def trade(timeframe, run_mode, settings=None):
                 )
 
                 tp_executed = True
+                cycle_summary["sell_actions"] += 1
+                cycle_summary["take_profit_actions"] += 1
                 # If this level sold 100%, there's no remaining position; stop chaining TPs
                 if tp_amount >= 100.0:
                     break
@@ -645,55 +726,33 @@ def trade(timeframe, run_mode, settings=None):
                 continue
 
         else:
-            best_emas = (
-                "" if fast_ema == 0 or slow_ema == 0 else f"{fast_ema}/{slow_ema}"
-            )
-            ema_debug = ""
-            if strategy_id in ["ema_cross_with_market_phases", "ema_cross"]:
-                fast_ema_value = float(lastrow.FastEMA)
-                slow_ema_value = float(lastrow.SlowEMA)
-                ema_debug = (
-                    f" | FastEMA: {fast_ema_value:.8f} | SlowEMA: {slow_ema_value:.8f} "
-                    f"| Slow>Fast: {slow_ema_value > fast_ema_value}"
-                )
-            elif strategy_id == "hma_rsi_linreg":
-                ema_debug = (
-                    f" | HMA{fast_ema}: {float(lastrow.HMAFast):.8f} | HMA{slow_ema}: {float(lastrow.HMASlow):.8f} "
-                    f"| HMA{fast_ema}<HMA{slow_ema} cross: {crossover(df.HMASlow, df.HMAFast)}"
-                )
-
+            setup = strategy_context["setup"]
             msg = (
-                f"{symbol} - {best_emas} {strategy_name} - Sell condition not fulfilled"
-                f"{ema_debug}"
+                f"{symbol} - {setup} {strategy_name} - Sell condition not fulfilled"
             )
             msg = telegram_prefix_sl + msg
             print(msg)
-            telegram.send_telegram_message(telegram_token, "", msg)
+            cycle_summary["sell_no_action"] += 1
+            _track_trade_cycle_example(cycle_summary, msg)
+            if send_detailed_routine_logs:
+                telegram.send_telegram_message(telegram_token, "", msg)
 
     # check symbols not in positions and BUY if conditions are fulfilled
     for _, pos_row in df_buy.iterrows():
+        cycle_summary["buy_evaluated"] += 1
         symbol = str(pos_row["Symbol"])
         position_id = int(pos_row["Id"])
         strategy_id = str(pos_row.get("Strategy_Id") or get_default_main_strategy_id(settings))
         strategy_name = str(pos_row.get("Strategy_Name") or get_strategy_display_name(strategy_id))
-
-        # initialize vars
-        fast_ema = 0
-        slow_ema = 0
-
-        # get best backtesting results for the strategy
-        if strategy_uses_tuned_parameters(strategy_id):
-            fast_ema, slow_ema = get_strategy_parameters(strategy_id, symbol, timeframe, pos_row=pos_row)
-
-            if fast_ema == 0 or slow_ema == 0:
-                parameter_name = "HMA" if strategy_id == "hma_rsi_linreg" else "EMA"
-                msg = f"{symbol} - {strategy_name} - Best {parameter_name} values missing"
-                msg = telegram_prefix_sl + msg
-                print(msg)
-                telegram.send_telegram_message(
-                    telegram_token, telegram.EMOJI_WARNING, msg
-                )
-                continue
+        strategy_context = get_strategy_runtime_context(
+            strategy_id,
+            symbol,
+            timeframe,
+            pos_row=pos_row,
+        )
+        strategy_parameters = strategy_context["parameters"]
+        order_first = strategy_context["order_first"]
+        order_second = strategy_context["order_second"]
 
         df = get_data(symbol=symbol, timeframe=timeframe)
 
@@ -702,142 +761,116 @@ def trade(timeframe, run_mode, settings=None):
             msg = f"{symbol} - {strategy_name} - Empty dataframe on BUY loop"
             msg = telegram_prefix_sl + msg
             print(msg)
-            telegram.send_telegram_message(telegram_token, telegram.EMOJI_WARNING, msg)
+            cycle_summary["empty_data"] += 1
+            cycle_summary["warnings"] += 1
+            telegram.send_error_event(
+                action="buy data load",
+                symbol=symbol,
+                timeframe=timeframe,
+                strategy=strategy_name,
+                reason="Empty dataframe on BUY loop",
+                impact="Symbol was skipped for entry in this cycle.",
+                next_step="Check Binance data availability and OHLCV fetch logs.",
+                notify_main=False,
+            )
             continue
 
-        apply_strategy_technicals(df, strategy_id, fast_ema, slow_ema)
+        apply_strategy_technicals(
+            df,
+            strategy_id,
+            order_first,
+            order_second,
+            symbol=symbol,
+            timeframe=timeframe,
+            parameters=strategy_parameters,
+        )
 
         # last row
         lastrow = df.iloc[-1]
 
-        buy_condition, buy_detail = get_strategy_buy_condition(strategy_id, symbol, df, lastrow)
+        buy_condition, buy_detail = get_strategy_buy_condition(
+            strategy_id,
+            symbol,
+            timeframe,
+            df,
+            lastrow,
+            parameters=strategy_parameters,
+        )
 
         if buy_condition:
+            cycle_summary["buy_actions"] += 1
             binance.create_buy_order(
                 symbol=symbol,
                 bot=timeframe,
-                fast_ema=fast_ema,
-                slow_ema=slow_ema,
                 strategy_id=strategy_id,
                 strategy_name=strategy_name,
                 position_id=position_id,
             )
         else:
-            best_emas = (
-                "" if fast_ema == 0 or slow_ema == 0 else f"{fast_ema}/{slow_ema}"
-            )
-
-            msg = f"{symbol} - {best_emas} {strategy_name} - Buy condition not fulfilled"
-            if strategy_id == "hma_rsi_linreg":
-                msg = (
-                    f"{symbol} - {fast_ema}/{slow_ema} {strategy_name} - Buy condition not fulfilled"
-                    f" | HMA{fast_ema}>HMA{slow_ema} cross: {crossover(df.HMAFast, df.HMASlow)}"
-                    f" | RSI14: {float(lastrow.RSI14):.2f} > 52: {float(lastrow.RSI14) > 52}"
-                    f" | {buy_detail}"
-                )
+            setup = strategy_context["setup"]
+            detail = f" | {buy_detail}" if buy_detail else ""
+            msg = f"{symbol} - {setup} {strategy_name} - Buy condition not fulfilled{detail}"
             msg = telegram_prefix_sl + msg
             print(msg)
-            telegram.send_telegram_message(telegram_token, "", msg)
+            cycle_summary["buy_no_action"] += 1
+            _track_trade_cycle_example(cycle_summary, msg)
+            if send_detailed_routine_logs:
+                telegram.send_telegram_message(telegram_token, "", msg)
+
+    if send_summary and not send_detailed_routine_logs:
+        _send_trade_cycle_summary(cycle_summary)
+    return cycle_summary
 
 
-def positions_summary(timeframe, settings=None):
+def positions_summary(timeframe, settings=None, send=True):
     if settings is None:
         settings = config.load_settings(refresh=True)
-
-    df_summary = database.get_positions_by_bot_position(bot=timeframe, position=1)
-
-    # remove unwanted columns
-    df_dropped = df_summary.drop(
-        columns=[
-            "Id",
-            "Date",
-            "Bot",
-            "Position",
-            "Rank",
-            "Qty",
-            "Ema_Fast",
-            "Ema_Slow",
-            "Buy_Order_Id",
-            "Duration",
-        ]
-    )
-
-    # sort by symbol
-    df_sorted = df_dropped.sort_values("Symbol")
-
-    # df_cp_to_print.rename(columns={"Currency": "Symbol", "Close": "Price", }, inplace=True)
-    df_sorted.reset_index(
-        drop=True, inplace=True
-    )  # gives consecutive numbers to each row
-    if df_sorted.empty:
-        msg = "Positions Summary: no open positions"
-        msg = telegram_prefix_sl + msg
-        print(msg)
-        telegram.send_telegram_message(telegram_token, "", msg)
-    else:
-        msg = df_sorted.to_string()
-        msg = telegram_prefix_sl + "Positions Summary:\n" + msg
-        print(msg)
-        telegram.send_telegram_message(telegram_token, "", msg)
-
-    if settings.stake_amount_type == "unlimited":
-        num_open_positions = database.get_num_open_positions()
-        msg = f"{str(num_open_positions)}/{str(settings.max_number_of_open_positions)} positions occupied"
-        msg = telegram_prefix_sl + msg
-        print(msg)
-        telegram.send_telegram_message(telegram_token, "", msg)
+    msg = telegram_reporting.format_positions_summary(timeframe, settings=settings)
+    if send:
+        lmsg = telegram_prefix_sl + msg
+        print(lmsg)
+        telegram.send_telegram_message(telegram_token, "", lmsg)
+    return msg
 
 
-def run(timeframe, run_mode):
+def send_daily_summary(settings=None):
+    if settings is None:
+        settings = config.load_settings(refresh=True)
+    msg = telegram_reporting.format_daily_summary(settings=settings)
+    print(msg)
+    telegram.send_telegram_message(telegram_token, "", msg)
+
+
+def run(timeframe, run_mode=None):
+    del run_mode  # Kept for compatibility with the root main.py wrapper.
     settings = config.load_settings(refresh=True)
-
-    # if timeframe == "1h" and not config.bot_1h:
-    #     msg = f"Bot {timeframe} is inactive. Check Dashboard - Settings. Bye"
-    #     print(msg)
-    #     return
-    # elif timeframe == "4h" and not config.bot_4h:
-    #     msg = f"Bot {timeframe} is inactive. Check Dashboard - Settings. Bye"
-    #     print(msg)
-    #     return
-    # elif timeframe == "1d" and not config.bot_1d:
-    #     msg = f"Bot {timeframe} is inactive. Check Dashboard - Settings. Bye"
-    #     print(msg)
-    #     return
 
     # calculate program run time
     start = timeit.default_timer()
 
-    # inform that bot has started
-    msg = "Start"
-    msg = telegram_prefix_sl + msg
-    telegram.send_telegram_message(telegram_token, telegram.EMOJI_START, msg)
-
-    trade(timeframe, run_mode, settings=settings)
-
-    positions_summary(timeframe, settings=settings)
+    cycle_summary = trade(timeframe, settings.run_mode, settings=settings, send_summary=False)
 
     # exchange.create_balance_snapshot(telegram_prefix="")
 
     # calculate execution time
     stop = timeit.default_timer()
     total_seconds = stop - start
-    duration = database.calc_duration(total_seconds)
+    duration = " ".join(str(database.calc_duration(total_seconds)).split())
 
-    msg = f"Execution Time: {duration}"
-    msg = telegram_prefix_sl + msg
+    summary_msg = (
+        "Report\n"
+        f"Status: completed in {duration}\n\n"
+        + format_trade_cycle_summary(cycle_summary)
+        + "\n\n"
+        + positions_summary(timeframe, settings=settings, send=False)
+    )
+    msg = telegram_prefix_sl + summary_msg
     print(msg)
     telegram.send_telegram_message(telegram_token, "", msg)
-
-    # inform that bot has finished
-    msg = "End"
-    msg = telegram_prefix_sl + msg
-    print(msg)
-    telegram.send_telegram_message(telegram_token, telegram.EMOJI_STOP, msg)
 
 
 if __name__ == "__main__":
     time_frame = read_arguments()
-    run_mode = config.load_settings(refresh=True).run_mode
 
     try:
         # Validate timeframe and prefixes first
@@ -854,7 +887,7 @@ if __name__ == "__main__":
         sys.exit(2)
 
     try:
-        run(timeframe=time_frame, run_mode=run_mode)
+        run(timeframe=time_frame)
     except Exception as e:
         # Unexpected runtime error: keep stacktrace in logs and notify
         logging.exception("Unhandled exception during bot run")

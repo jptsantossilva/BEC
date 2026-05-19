@@ -42,8 +42,6 @@ def test_add_order_sell_persists_atr_stop_metadata(db_path, test_ids):
         symbol=test_ids["symbol"],
         price=100.0,
         qty=1.0,
-        ema_fast=0,
-        ema_slow=0,
     )
 
     database.add_order_sell(
@@ -54,8 +52,6 @@ def test_add_order_sell_persists_atr_stop_metadata(db_path, test_ids):
         symbol=test_ids["symbol"],
         price=95.0,
         qty=1.0,
-        ema_fast=0,
-        ema_slow=0,
         exit_reason="ATR Trailing Stop - test",
         sell_percentage=100,
         stop_type="atr_trailing",
@@ -82,4 +78,3 @@ def test_add_order_sell_persists_atr_stop_metadata(db_path, test_ids):
     assert abs(float(row[2]) - 96.5) < 1e-12
     assert abs(float(row[3]) - 104.2) < 1e-12
     assert '"period":14' in (row[4] or "")
-

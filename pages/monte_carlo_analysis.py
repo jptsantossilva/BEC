@@ -637,7 +637,7 @@ def main():
         return
 
     strategy_options = list(strategy_map.keys())
-    timeframes = ["1d", "4h", "1h"]
+    timeframes = ["1d", "4h", "1h", "15m"]
 
     primary_filters = st.container(horizontal=True)
     with primary_filters:

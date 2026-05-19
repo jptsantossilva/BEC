@@ -28,9 +28,6 @@ def delete_position(symbol, bot, unit_price: float = 0.0, reason: str = "Symbol 
     # Format the date and time as 'YYYY-MM-DD HH:MM:SS'
     order_sell_date = current_datetime.strftime("%Y-%m-%d %H:%M:%S")
 
-    fast_ema = 0
-    slow_ema = 0
-
     # add to orders database table
     pnl_value, pnl_perc = database.add_order_sell(
         sell_order_id=0,
@@ -40,8 +37,6 @@ def delete_position(symbol, bot, unit_price: float = 0.0, reason: str = "Symbol 
         symbol=symbol,
         price=unit_price,
         qty=qty,
-        ema_fast=fast_ema,
-        ema_slow=slow_ema,
         exit_reason=reason,
         strategy_id=strategy_id,
         strategy_params_json=strategy_params_json,

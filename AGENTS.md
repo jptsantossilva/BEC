@@ -19,6 +19,8 @@ Keep this file brief and focused. Put longer task-specific guidance in
   local state, not source code.
 
 ## Setup and Commands
+- A local Python virtual environment exists at `.venv/`; prefer
+  `.venv/bin/python` and `.venv/bin/streamlit` when running project commands.
 - Install Python dependencies: `python -m pip install -r requirements.txt`
 - Run dashboard locally: `streamlit run dashboard.py --server.port=8080`
 - Run scheduler locally: `python jobs_runner.py`

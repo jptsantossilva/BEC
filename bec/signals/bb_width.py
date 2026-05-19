@@ -52,9 +52,16 @@ def get_data(symbol, time_frame, start_date):
     if df.empty:
         msg = f"Failed after {max_retry} tries to get historical data. Unable to retrieve data. "
         msg = msg + sys._getframe(  ).f_code.co_name+" - "+symbol
-        msg = telegram.telegram_prefix_signals_sl + msg
         print(msg)
-        telegram.send_telegram_message(telegram.telegram_token_main, telegram.EMOJI_WARNING, msg)
+        telegram.send_error_event(
+            action="Bollinger Bands Width OHLCV load",
+            symbol=symbol,
+            timeframe=time_frame,
+            reason="Historical dataframe is empty after retries.",
+            impact="Signal calculation skipped for this symbol.",
+            next_step="Check Binance data availability and rerun the signal job.",
+            notify_main=False,
+        )
         return pd.DataFrame()
     return df
 
@@ -109,7 +116,6 @@ def _check_bb_width(symbol, time_frame, timeframe_label, lookback_days):
               f"[p{int(BB_WIDTH_LOW_Q*100)}={low_thr}% p{int(BB_WIDTH_HIGH_Q*100)}={high_thr}% {regime_note}]")
     msg_tf = telegram.telegram_prefix_signals_sl + msg_tf
     print(msg_tf)
-    telegram.send_telegram_message(telegram.telegram_token_main, '', msg_tf)
 
     if width <= low_thr or width >= high_thr:
         now = datetime.datetime.now()

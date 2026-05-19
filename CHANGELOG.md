@@ -2,6 +2,17 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-05-19]
+- Strategy Builder - Added a no-code page to create, edit, clone, import and export custom trading strategies.
+- Strategy Builder - Added AI-assisted strategy creation from plain language prompts.
+- Backtesting - Custom strategies can now be backtested, optimized and shown in results like built-in strategies.
+- Backtesting - Strategy reports now include the indicators used by custom strategies, including higher-timeframe indicators.
+- Backtesting - Fixed higher-timeframe indicators in the price chart so daily indicators display at the correct price scale on 4h/1h backtests.
+- Trading - Live trading can now use approved custom strategies with their saved rules and risk settings.
+- Trading Dashboard - Open positions now show take-profit progress and ATR trailing stop details more clearly.
+- Telegram - Added compact daily and routine trading summaries to reduce noisy trade-cycle messages.
+- Database - Added automatic support for custom strategy definitions, strategy packages and flexible take-profit tracking.
+
 ## [2026-05-12]
 - Dashboard Authentication - Fixed login, logout, cookie handling, logout confirmation and default dashboard redirect after login.
 - Dashboard Layout - Fixed Streamlit wide mode setup for the main dashboard entrypoint.
