@@ -41,6 +41,8 @@ def initialize_session_state():
         "role": None,
         "logout": False,
         "redirect_to_dashboard_after_login": False,
+        "show_docker_update_instructions": False,
+        "run_local_update": False,
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -204,11 +206,16 @@ def check_app_version():
     )
 
     def _running_in_docker() -> bool:
+        if os.getenv("BEC_UPDATE_MODE", "").lower() == "docker":
+            return True
         if os.path.exists("/.dockerenv"):
+            return True
+        if os.path.exists("/app/docker/entrypoint.sh") and os.path.exists("/app/persist"):
             return True
         try:
             with open("/proc/1/cgroup", "r", encoding="utf-8") as f:
                 data = f.read()
+                data = "docker"
             return "docker" in data or "containerd" in data
         except Exception:
             return False
@@ -226,6 +233,33 @@ def check_app_version():
             pass
         return "http://localhost:5001"
 
+    def _show_docker_update_panel() -> None:
+        with st.container(border=True):
+            st.markdown("**Update via Docker**")
+            st.write("Update is managed via Docker, run this command in your server terminal:")
+            st.code(
+                "docker compose pull && docker compose up -d",
+                language="bash",
+            )
+            st.link_button(
+                "Open Dockge",
+                os.getenv("BEC_DOCKGE_URL") or _default_dockge_url(),
+                icon=":material/open_in_new:",
+            )
+
+    def _docker_update_requested() -> bool:
+        return (
+            bool(st.session_state.show_docker_update_instructions)
+            or st.query_params.get("docker_update") == "1"
+        )
+
+    def _request_app_update() -> None:
+        if _running_in_docker():
+            st.session_state.show_docker_update_instructions = True
+            st.query_params["docker_update"] = "1"
+        else:
+            st.session_state.run_local_update = True
+
     github_last_date = general.extract_date_from_github_changelog()
     if github_last_date != last_date:
         # Render the banner at the very top, using the global placeholder
@@ -235,45 +269,42 @@ def check_app_version():
                 "🚀 New version available! Click **UPDATE** to get the latest features. "
                 "See the [Change Log](https://github.com/jptsantossilva/BEC/blob/main/CHANGELOG.md) for details."
             )
-            update_version = st.button(
-                "Update", key="update_version", icon=":material/deployed_code_update:"
+            st.button(
+                "Update",
+                key="update_version",
+                icon=":material/deployed_code_update:",
+                on_click=_request_app_update,
             )
-            if update_version:
-                if _running_in_docker():
-                    with st.container(border=True):
-                        st.markdown("**Update via Docker**")
-                        st.write("Update is managed via Docker, run this command in your server terminal:")
-                        st.code(
-                            "docker compose pull && docker compose up -d",
-                            language="bash",
-                        )
-                        st.link_button(
-                            "Open Dockge",
-                            _default_dockge_url(),
-                            icon=":material/open_in_new:",
-                        )
-                else:
-                    with st.spinner(
-                        "🎉 Hold on tight! 🎉 Our elves are sprinkling magic dust on the app to make it even better."
-                    ):
-                        result = update.main()
-                        st.code(result)
 
-                        restart_time = 10
-                        progress_text = f"App will restart in {restart_time} seconds."
-                        my_bar = st.progress(0, text=progress_text)
+            if st.session_state.pop("run_local_update", False):
+                with st.spinner(
+                    "🎉 Hold on tight! 🎉 Our elves are sprinkling magic dust on the app to make it even better."
+                ):
+                    result = update.main()
+                    st.code(result)
 
-                        for step in range(restart_time + 1):
-                            progress_percent = step * 10
-                            if progress_percent != 0:
-                                restart_time -= 1
-                                progress_text = (
-                                    f"App will restart in {restart_time} seconds."
-                                )
-                            my_bar.progress(progress_percent, text=progress_text)
-                            time.sleep(1)
+                    restart_time = 10
+                    progress_text = f"App will restart in {restart_time} seconds."
+                    my_bar = st.progress(0, text=progress_text)
 
-                    # st.rerun()
+                    for step in range(restart_time + 1):
+                        progress_percent = step * 10
+                        if progress_percent != 0:
+                            restart_time -= 1
+                            progress_text = (
+                                f"App will restart in {restart_time} seconds."
+                            )
+                        my_bar.progress(progress_percent, text=progress_text)
+                        time.sleep(1)
+
+                # st.rerun()
+
+            if _docker_update_requested():
+                _show_docker_update_panel()
+    else:
+        st.session_state.show_docker_update_instructions = False
+        if st.query_params.get("docker_update"):
+            del st.query_params["docker_update"]
 
 
 def set_pages():
