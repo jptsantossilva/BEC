@@ -131,6 +131,67 @@ def _start_next_backtesting_job():
     )
     return {"job": job, "process": process, "log_file": log_file}
 
+
+def _write_backtesting_job_log(log_file, message: str):
+    if log_file is None:
+        return
+    log_file.write(f"{message}\n")
+    log_file.flush()
+
+
+def _sync_backtesting_result_to_existing_position(job, log_file=None):
+    strategy_id = str(job["strategy_id"]).strip()
+    symbol = str(job["symbol"]).strip().upper()
+    timeframe = str(job["timeframe"]).strip()
+
+    try:
+        df_result = database.get_backtesting_results_by_symbol_timeframe_strategy(
+            symbol=symbol,
+            time_frame=timeframe,
+            strategy_id=strategy_id,
+        )
+        if df_result.empty:
+            _write_backtesting_job_log(
+                log_file,
+                "No backtesting result found; existing position strategy params not synced.",
+            )
+            return False
+
+        position_exists = database.get_all_positions_by_bot_symbol_strategy(
+            bot=timeframe,
+            symbol=symbol,
+            strategy_id=strategy_id,
+        )
+        if not position_exists:
+            _write_backtesting_job_log(
+                log_file,
+                "No existing matching position found; strategy params not synced.",
+            )
+            return False
+
+        strategy_params_json = database.build_strategy_params_json_from_backtest_result(
+            strategy_id,
+            df_result.iloc[0],
+        )
+        database.set_backtesting_results_from_position_strategy(
+            symbol=symbol,
+            timeframe=timeframe,
+            strategy_id=strategy_id,
+            strategy_params_json=strategy_params_json,
+        )
+        _write_backtesting_job_log(
+            log_file,
+            "Updated existing position strategy params.",
+        )
+        return True
+    except Exception as exc:
+        _write_backtesting_job_log(
+            log_file,
+            f"Failed to sync existing position strategy params: {repr(exc)}",
+        )
+        return False
+
+
 def _finish_backtesting_job(running_job):
     job = running_job["job"]
     process = running_job["process"]
@@ -142,9 +203,11 @@ def _finish_backtesting_job(running_job):
     finished_at = datetime.now(timezone.utc).isoformat()
     log_file.write(f"\n[{finished_at}] Backtest job finished with return code {return_code}.\n")
     log_file.flush()
-    log_file.close()
+    if return_code == 0:
+        _sync_backtesting_result_to_existing_position(job, log_file=log_file)
     error_message = "" if return_code == 0 else "Backtest subprocess failed. Check the job log."
     database.complete_backtesting_job(job["id"], return_code, error_message)
+    log_file.close()
     print(f"[{finished_at}] Backtest job {job['id']} finished with return code {return_code}")
     return True
 

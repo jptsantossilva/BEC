@@ -3420,6 +3420,7 @@ sql_create_backtesting_settings_table = """
         Market_Phase_1d_SMA_Fast INTEGER NOT NULL DEFAULT 50,
         Market_Phase_1d_SMA_Slow INTEGER NOT NULL DEFAULT 200,
         Buy_Hold_Start_Mode TEXT NOT NULL DEFAULT 'indicator_warmup',
+        Optimization_Max_Combinations INTEGER NOT NULL DEFAULT 1000,
         Strategy_Quality_Return_Weight REAL NOT NULL DEFAULT 20,
         Strategy_Quality_Risk_Weight REAL NOT NULL DEFAULT 25,
         Strategy_Quality_Risk_Adjusted_Weight REAL NOT NULL DEFAULT 20,
@@ -3578,6 +3579,7 @@ DEFAULT_BACKTESTING_SETTINGS = {
     "Market_Phase_1d_SMA_Fast": 50,
     "Market_Phase_1d_SMA_Slow": 200,
     "Buy_Hold_Start_Mode": "indicator_warmup",
+    "Optimization_Max_Combinations": 1000,
     "Strategy_Quality_Return_Weight": 20.0,
     "Strategy_Quality_Risk_Weight": 25.0,
     "Strategy_Quality_Risk_Adjusted_Weight": 20.0,
@@ -3993,6 +3995,7 @@ def _ensure_backtesting_settings_columns(connection):
         "Market_Phase_1d_SMA_Fast": "INTEGER NOT NULL DEFAULT 50",
         "Market_Phase_1d_SMA_Slow": "INTEGER NOT NULL DEFAULT 200",
         "Buy_Hold_Start_Mode": "TEXT NOT NULL DEFAULT 'indicator_warmup'",
+        "Optimization_Max_Combinations": "INTEGER NOT NULL DEFAULT 1000",
         "Strategy_Quality_Return_Weight": "REAL NOT NULL DEFAULT 20",
         "Strategy_Quality_Risk_Weight": "REAL NOT NULL DEFAULT 25",
         "Strategy_Quality_Risk_Adjusted_Weight": "REAL NOT NULL DEFAULT 20",
@@ -4492,7 +4495,17 @@ def get_backtesting_jobs(limit: int = 50):
             log_path,
             error_message
         FROM Backtesting_Jobs
-        ORDER BY COALESCE(started_at, created_at) DESC, id DESC
+        ORDER BY
+            CASE status
+                WHEN 'running' THEN 0
+                WHEN 'queued' THEN 1
+                ELSE 2
+            END,
+            CASE
+                WHEN status = 'queued' THEN created_at
+                ELSE COALESCE(started_at, finished_at, created_at)
+            END DESC,
+            id DESC
         LIMIT ?
         """,
         connection,
@@ -5162,12 +5175,13 @@ def ensure_backtesting_settings():
                     Market_Phase_1d_SMA_Fast,
                     Market_Phase_1d_SMA_Slow,
                     Buy_Hold_Start_Mode,
+                    Optimization_Max_Combinations,
                     Strategy_Quality_Return_Weight,
                     Strategy_Quality_Risk_Weight,
                     Strategy_Quality_Risk_Adjusted_Weight,
                     Strategy_Quality_Trade_Quality_Weight,
                     Strategy_Quality_Robustness_Weight
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     float(DEFAULT_BACKTESTING_SETTINGS["Commission_Value"]),
@@ -5185,6 +5199,7 @@ def ensure_backtesting_settings():
                     int(DEFAULT_BACKTESTING_SETTINGS["Market_Phase_1d_SMA_Fast"]),
                     int(DEFAULT_BACKTESTING_SETTINGS["Market_Phase_1d_SMA_Slow"]),
                     str(DEFAULT_BACKTESTING_SETTINGS["Buy_Hold_Start_Mode"]),
+                    int(DEFAULT_BACKTESTING_SETTINGS["Optimization_Max_Combinations"]),
                     float(
                         DEFAULT_BACKTESTING_SETTINGS["Strategy_Quality_Return_Weight"]
                     ),
@@ -5225,6 +5240,7 @@ def get_backtesting_settings():
             Market_Phase_1d_SMA_Fast,
             Market_Phase_1d_SMA_Slow,
             Buy_Hold_Start_Mode,
+            Optimization_Max_Combinations,
             Strategy_Quality_Return_Weight,
             Strategy_Quality_Risk_Weight,
             Strategy_Quality_Risk_Adjusted_Weight,
@@ -5252,6 +5268,9 @@ def get_backtesting_settings():
         "Market_Phase_1d_SMA_Slow": int(df.iloc[0]["Market_Phase_1d_SMA_Slow"]),
         "Buy_Hold_Start_Mode": str(
             df.iloc[0]["Buy_Hold_Start_Mode"] or "indicator_warmup"
+        ),
+        "Optimization_Max_Combinations": int(
+            df.iloc[0]["Optimization_Max_Combinations"]
         ),
         "Strategy_Quality_Return_Weight": float(
             df.iloc[0]["Strategy_Quality_Return_Weight"]
@@ -5283,6 +5302,7 @@ def update_backtesting_settings(
     market_phase_1d_sma_fast: int = 50,
     market_phase_1d_sma_slow: int = 200,
     buy_hold_start_mode: str = "indicator_warmup",
+    optimization_max_combinations: int = 1000,
     strategy_quality_return_weight: float = 20.0,
     strategy_quality_risk_weight: float = 25.0,
     strategy_quality_risk_adjusted_weight: float = 20.0,
@@ -5306,6 +5326,7 @@ def update_backtesting_settings(
                 Market_Phase_1d_SMA_Fast = ?,
                 Market_Phase_1d_SMA_Slow = ?,
                 Buy_Hold_Start_Mode = ?,
+                Optimization_Max_Combinations = ?,
                 Strategy_Quality_Return_Weight = ?,
                 Strategy_Quality_Risk_Weight = ?,
                 Strategy_Quality_Risk_Adjusted_Weight = ?,
@@ -5325,6 +5346,7 @@ def update_backtesting_settings(
                 int(market_phase_1d_sma_fast),
                 int(market_phase_1d_sma_slow),
                 str(buy_hold_start_mode),
+                int(optimization_max_combinations),
                 float(strategy_quality_return_weight),
                 float(strategy_quality_risk_weight),
                 float(strategy_quality_risk_adjusted_weight),

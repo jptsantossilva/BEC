@@ -5,9 +5,12 @@ import os
 import json
 import re
 import argparse
+import builtins
 import html
 from numbers import Real
 from datetime import date
+from itertools import product
+from types import SimpleNamespace
 from dateutil.relativedelta import relativedelta
 import time
 import logging
@@ -54,6 +57,7 @@ FOLDER_BACKTEST_RESULTS = (
 FOLDER_BACKTEST_RESULTS_FALLBACK = os.path.join(
     PROJECT_ROOT, FOLDER_BACKTEST_RESULTS_URL
 )
+DEFAULT_OPTIMIZATION_MAX_COMBINATIONS = 300
 
 # backtest with 4 years of price data
 # -------------------------------------
@@ -336,6 +340,115 @@ def build_declarative_optimize_params(definition: dict, maximize: str):
     if constraint_fn is not None:
         optimize_params["constraint"] = constraint_fn
     return optimize_params, optimized_names
+
+
+def _serial_grid_maximize_value(stats, maximize):
+    if callable(maximize):
+        return maximize(stats)
+    try:
+        return stats[maximize]
+    except Exception:
+        return np.nan
+
+
+def run_serial_grid_optimize(bt, optimize_params: dict):
+    maximize = optimize_params.get("maximize", "SQN")
+    constraint = optimize_params.get("constraint")
+    max_tries = optimize_params.get("max_tries")
+    return_heatmap = bool(optimize_params.get("return_heatmap", False))
+    reserved_keys = {
+        "constraint",
+        "maximize",
+        "max_tries",
+        "method",
+        "random_state",
+        "return_heatmap",
+        "return_optimization",
+    }
+    param_grid = {
+        str(name): list(values)
+        for name, values in optimize_params.items()
+        if name not in reserved_keys
+    }
+    param_names = list(param_grid.keys())
+    param_combos = []
+    for values in product(*(param_grid[name] for name in param_names)):
+        params = dict(zip(param_names, values))
+        if constraint is not None and not constraint(SimpleNamespace(**params)):
+            continue
+        param_combos.append(params)
+
+    if not param_combos:
+        raise ValueError("No admissible parameter combinations to test")
+
+    total_param_combos = len(param_combos)
+    if max_tries is not None:
+        try:
+            max_tries = int(float(max_tries))
+        except (TypeError, ValueError):
+            max_tries = None
+    if max_tries is not None and 0 < max_tries < len(param_combos):
+        sampled_indexes = np.linspace(
+            0,
+            len(param_combos) - 1,
+            num=max_tries,
+            dtype=int,
+        )
+        param_combos = [param_combos[index] for index in dict.fromkeys(sampled_indexes)]
+
+    print(
+        "Declarative optimization grid = "
+        f"{len(param_combos)}/{total_param_combos} combinations",
+        flush=True,
+    )
+
+    heatmap = pd.Series(
+        np.nan,
+        name=maximize if isinstance(maximize, str) else None,
+        index=pd.MultiIndex.from_tuples(
+            [builtins.tuple(params.values()) for params in param_combos],
+            names=param_names,
+        ),
+    )
+    for params in param_combos:
+        stats = bt.run(**params)
+        if stats is not None:
+            heatmap.loc[builtins.tuple(params.values())] = _serial_grid_maximize_value(
+                stats, maximize
+            )
+
+    if pd.isnull(heatmap).all():
+        stats = bt.run(**param_combos[0])
+    else:
+        best_params = heatmap.idxmax(skipna=True)
+        if not isinstance(best_params, builtins.tuple):
+            best_params = (best_params,)
+        stats = bt.run(**dict(zip(heatmap.index.names, best_params)))
+
+    if return_heatmap:
+        return stats, heatmap
+    return stats
+
+
+def count_declarative_optimization_combinations(
+    definition: dict,
+    maximize: str = "SQN",
+) -> builtins.tuple[int, list[str]]:
+    optimize_params, optimized_names = build_declarative_optimize_params(
+        definition,
+        maximize,
+    )
+    if not optimized_names:
+        return 0, optimized_names
+
+    constraint = optimize_params.get("constraint")
+    total = 0
+    for values in product(*(list(optimize_params[name]) for name in optimized_names)):
+        params = dict(zip(optimized_names, values))
+        if constraint is not None and not constraint(SimpleNamespace(**params)):
+            continue
+        total += 1
+    return total, optimized_names
 
 
 class RiskManagedStrategy(Strategy):
@@ -855,6 +968,7 @@ def build_declarative_strategy_class(strategy_id: str):
         "parameter_values": parameter_values,
         "strategy_id": str(strategy_id),
         "__module__": __name__,
+        "__qualname__": class_name,
     }
     for parameter_name, value in parameter_values.items():
         class_attrs[str(parameter_name)] = value
@@ -863,6 +977,7 @@ def build_declarative_strategy_class(strategy_id: str):
         (DeclarativeStrategy,),
         class_attrs,
     )
+    globals()[class_name] = strategy_class
     return strategy_class
 
 
@@ -3855,6 +3970,12 @@ def run_backtest(symbol, timeframe, strategy, optimize):
                 strategy_definition,
                 bt_settings["Maximize"],
             )
+            optimize_params["max_tries"] = int(
+                bt_settings.get(
+                    "Optimization_Max_Combinations",
+                    DEFAULT_OPTIMIZATION_MAX_COMBINATIONS,
+                )
+            )
         else:
             optimize_params = {
                 "n1": range(10, 101, 10),
@@ -3872,7 +3993,10 @@ def run_backtest(symbol, timeframe, strategy, optimize):
                 for param_name in optimize_params
                 if param_name not in {"constraint", "maximize", "return_heatmap"}
             ]
-        stats, heatmap = bt.optimize(**optimize_params)
+        if is_declarative_strategy:
+            stats, heatmap = run_serial_grid_optimize(bt, optimize_params)
+        else:
+            stats, heatmap = bt.optimize(**optimize_params)
 
         if not is_declarative_strategy:
             dfbema = pd.DataFrame(heatmap.sort_values().iloc[-1:])

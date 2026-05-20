@@ -393,6 +393,92 @@ def test_declarative_optimize_params_hma_constraint_from_definition():
     assert optimize_params["constraint"](SimpleNamespace(hma_fast=30, hma_slow=20)) is False
 
 
+def test_serial_grid_optimize_applies_constraints_and_returns_best_heatmap():
+    class FakeBacktest:
+        def __init__(self):
+            self.runs = []
+
+        def run(self, **params):
+            self.runs.append(params)
+            return pd.Series({"SQN": params["hma_slow"] - params["hma_fast"]})
+
+    optimize_params = {
+        "hma_fast": [10, 20],
+        "hma_slow": [10, 30],
+        "constraint": lambda param: param.hma_fast < param.hma_slow,
+        "maximize": "SQN",
+        "return_heatmap": True,
+    }
+
+    stats, heatmap = my_backtesting.run_serial_grid_optimize(FakeBacktest(), optimize_params)
+
+    assert stats["SQN"] == 20
+    assert list(heatmap.dropna().index) == [(10, 30), (20, 30)]
+    assert heatmap.loc[(10, 30)] == 20
+    assert heatmap.loc[(20, 30)] == 10
+
+
+def test_serial_grid_optimize_limits_large_grids_deterministically():
+    class FakeBacktest:
+        def __init__(self):
+            self.runs = []
+
+        def run(self, **params):
+            self.runs.append(params)
+            return pd.Series({"SQN": params["slow"] - params["fast"]})
+
+    bt = FakeBacktest()
+    optimize_params = {
+        "fast": range(1, 21),
+        "slow": range(1, 21),
+        "constraint": lambda param: param.fast < param.slow,
+        "maximize": "SQN",
+        "max_tries": 5,
+        "return_heatmap": True,
+    }
+
+    _stats, heatmap = my_backtesting.run_serial_grid_optimize(bt, optimize_params)
+
+    assert len(heatmap) == 5
+    assert len(bt.runs) == 6  # sampled runs plus final best-params run
+    assert heatmap.index[0] == (1, 2)
+    assert heatmap.index[-1] == (19, 20)
+
+
+def test_count_declarative_optimization_combinations_respects_constraints():
+    definition = {
+        "parameters": {
+            "fast": {
+                "type": "int",
+                "default": 5,
+                "min": 1,
+                "max": 3,
+                "step": 1,
+                "optimizable": True,
+            },
+            "slow": {
+                "type": "int",
+                "default": 10,
+                "min": 1,
+                "max": 4,
+                "step": 1,
+                "optimizable": True,
+            },
+        },
+        "parameter_constraints": [
+            {"left": "fast", "operator": "less_than", "right": "slow"},
+        ],
+    }
+
+    count, names = my_backtesting.count_declarative_optimization_combinations(
+        definition,
+        "SQN",
+    )
+
+    assert names == ["fast", "slow"]
+    assert count == 6
+
+
 def test_builtin_templates_include_parameter_constraints():
     ema_definition = get_builtin_template("ema_cross")
     hma_definition = get_builtin_template("hma_rsi_linreg")

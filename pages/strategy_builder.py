@@ -2667,6 +2667,28 @@ def render_optimization_parameters_editor(definition: dict, strategy_id: str) ->
         strategy_id,
         parameter_names,
     )
+    try:
+        settings = database.get_backtesting_settings()
+        max_combinations = int(settings.get("Optimization_Max_Combinations", 300))
+        combination_count, optimized_names = (
+            my_backtesting.count_declarative_optimization_combinations(
+                edited,
+                str(settings.get("Maximize", "SQN")),
+            )
+        )
+        if optimized_names:
+            st.caption(
+                f"Optimization combinations: {combination_count:,} "
+                f"(maximum per backtest: {max_combinations:,})."
+            )
+        if combination_count > max_combinations:
+            st.warning(
+                "This strategy defines more optimization parameter combinations "
+                f"({combination_count:,}) than the configured maximum "
+                f"({max_combinations:,}). Backtesting will sample up to the maximum."
+            )
+    except Exception:
+        pass
     return edited
 
 

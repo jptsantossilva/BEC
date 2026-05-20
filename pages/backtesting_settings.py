@@ -230,13 +230,25 @@ def render_backtest_settings():
             )
 
         st.subheader("Optimization")
-        st.caption("Metric used when strategy parameters are optimized.")
+        st.caption("Controls used when strategy parameters are optimized.")
 
         maximize = st.radio(
             label="Optimize strategy parameter to an optimal combination",
             options=list(MAXIMIZE_OPTIONS.keys()),
             index=list(MAXIMIZE_OPTIONS.keys()).index(settings["Maximize"]) if settings["Maximize"] in MAXIMIZE_OPTIONS else 0,
             captions=[MAXIMIZE_OPTIONS[k] for k in MAXIMIZE_OPTIONS],
+        )
+
+        optimization_max_combinations = st.number_input(
+            "Maximum parameter combinations per optimization",
+            min_value=1,
+            step=50,
+            value=int(settings.get("Optimization_Max_Combinations", 300)),
+            help=(
+                "Caps how many parameter combinations are tested when optimizing a strategy. "
+                "Higher values can improve the search but make queued backtests take longer."
+            ),
+            width=350
         )
 
         st.subheader("Buy & Hold Benchmark")
@@ -432,6 +444,7 @@ def render_backtest_settings():
             cash_value=cash_value,
             maximize=maximize,
             buy_hold_start_mode=buy_hold_start_mode,
+            optimization_max_combinations=optimization_max_combinations,
             use_intraday_current_timeframe_market_phase_filter=use_intraday_current_timeframe_market_phase_filter,
             market_phase_1h_sma_fast=market_phase_1h_sma_fast,
             market_phase_1h_sma_slow=market_phase_1h_sma_slow,

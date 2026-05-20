@@ -928,6 +928,91 @@ def enqueue_backtesting_rows(rows):
     return database.enqueue_backtesting_jobs(jobs)
 
 
+def get_optimization_combination_warnings(rows):
+    settings = database.get_backtesting_settings()
+    max_combinations = int(settings.get("Optimization_Max_Combinations", 300))
+    maximize = str(settings.get("Maximize", "SQN"))
+    warnings = []
+    for row in rows:
+        strategy_id = str(row["Strategy_Id"]).strip()
+        if not get_strategy_backtest_optimize(strategy_id):
+            continue
+        try:
+            definition = database.get_strategy_definition(strategy_id)
+            combination_count, optimized_names = (
+                my_backtesting.count_declarative_optimization_combinations(
+                    definition,
+                    maximize,
+                )
+            )
+        except Exception:
+            continue
+        if optimized_names and combination_count > max_combinations:
+            warnings.append(
+                {
+                    "Strategy": format_func_strategies(strategy_id),
+                    "Strategy_Id": strategy_id,
+                    "Symbol": str(row["Symbol"]).strip().upper(),
+                    "Time_Frame": str(row["Time_Frame"]).strip(),
+                    "Combinations": int(combination_count),
+                    "Maximum": int(max_combinations),
+                }
+            )
+    return warnings
+
+
+def queue_backtesting_rows_with_message(rows):
+    enqueue_result = enqueue_backtesting_rows(rows)
+    queued_count = len(enqueue_result["queued"])
+    skipped_count = len(enqueue_result["skipped"])
+    if queued_count:
+        first_job = enqueue_result["queued"][0]
+        st.session_state["bt_results_pending_selection"] = {
+            "strategy_id": str(first_job["strategy_id"]),
+            "symbol": str(first_job["symbol"]),
+            "timeframe": str(first_job["timeframe"]),
+        }
+        st.session_state["bt_results_queue_message"] = (
+            "success",
+            f"Queued {queued_count} backtesting job(s). "
+            f"Skipped {skipped_count} already queued/running job(s).",
+        )
+    elif skipped_count:
+        st.session_state["bt_results_queue_message"] = (
+            "info",
+            "All selected backtests are already queued or running.",
+        )
+
+
+@st.dialog("Large optimization")
+def confirm_large_optimization_dialog(rows, warnings):
+    st.write(
+        "Some selected backtests define more parameter combinations than the "
+        "configured maximum. They will be sampled up to the maximum if you continue."
+    )
+    st.dataframe(
+        pd.DataFrame(warnings),
+        hide_index=True,
+        width="content",
+        column_config={
+            "Strategy_Id": None,
+            "Combinations": st.column_config.NumberColumn("Combinations", format="%d"),
+            "Maximum": st.column_config.NumberColumn("Maximum", format="%d"),
+            "Time_Frame": st.column_config.TextColumn("TF"),
+        },
+    )
+    actions = st.container(horizontal=True)
+    if actions.button("Continue", type="primary", icon=":material/play_arrow:"):
+        queue_backtesting_rows_with_message(rows)
+        st.session_state.pop("bt_results_pending_large_optimization_rows", None)
+        st.session_state.pop("bt_results_pending_large_optimization_warnings", None)
+        st.rerun()
+    if actions.button("Cancel", icon=":material/cancel:"):
+        st.session_state.pop("bt_results_pending_large_optimization_rows", None)
+        st.session_state.pop("bt_results_pending_large_optimization_warnings", None)
+        st.rerun()
+
+
 def get_static_log_url(log_path):
     if not log_path:
         return ""
@@ -1890,16 +1975,19 @@ if selected_target_rows:
     st.caption(f"{len(selected_target_rows)} result row(s) selected for backtesting.")
 
 can_run_from_filters = (
-    len(search_strategy) == 1 and len(search_timeframe) == 1 and len(search_symbol) == 1
+    len(search_strategy) >= 1 and len(search_timeframe) >= 1 and len(search_symbol) >= 1
 )
 run_target_rows = selected_target_rows
 if not run_target_rows and can_run_from_filters:
     run_target_rows = [
         build_selected_backtest_row(
-        strategy_id=search_strategy[0],
-        symbol=search_symbol[0],
-        timeframe=search_timeframe[0],
+            strategy_id=strategy_id,
+            symbol=symbol,
+            timeframe=timeframe,
         )
+        for strategy_id in search_strategy
+        for timeframe in search_timeframe
+        for symbol in search_symbol
     ]
 
 cont_buttons = st.container(horizontal=True)
@@ -1916,7 +2004,7 @@ if queue_message:
     else:
         st.info(message_text)
 
-run_help = "Select one or more result rows, or choose exactly one Strategy, one Time-Frame and one Symbol with filters."
+run_help = "Select one or more result rows, or choose one or more Strategies, Time-Frames and Symbols with filters."
 if cont_buttons.button(
     "Run Selected Backtests",
     key="enqueue_selected_backtests",
@@ -1924,31 +2012,33 @@ if cont_buttons.button(
     disabled=not run_target_rows,
     help=run_help,
 ):
-    enqueue_result = enqueue_backtesting_rows(run_target_rows)
-    queued_count = len(enqueue_result["queued"])
-    skipped_count = len(enqueue_result["skipped"])
-    if queued_count:
-        first_job = enqueue_result["queued"][0]
-        st.session_state["bt_results_pending_selection"] = {
-            "strategy_id": str(first_job["strategy_id"]),
-            "symbol": str(first_job["symbol"]),
-            "timeframe": str(first_job["timeframe"]),
-        }
-        st.session_state["bt_results_queue_message"] = (
-            "success",
-            f"Queued {queued_count} backtesting job(s). "
-            f"Skipped {skipped_count} already queued/running job(s).",
+    optimization_warnings = get_optimization_combination_warnings(run_target_rows)
+    if optimization_warnings:
+        st.session_state["bt_results_pending_large_optimization_rows"] = [
+            dict(row) for row in run_target_rows
+        ]
+        st.session_state["bt_results_pending_large_optimization_warnings"] = (
+            optimization_warnings
         )
-    elif skipped_count:
-        st.session_state["bt_results_queue_message"] = (
-            "info",
-            "All selected backtests are already queued or running.",
-        )
+    else:
+        queue_backtesting_rows_with_message(run_target_rows)
     st.rerun()
+
+pending_large_optimization_rows = st.session_state.get(
+    "bt_results_pending_large_optimization_rows"
+)
+pending_large_optimization_warnings = st.session_state.get(
+    "bt_results_pending_large_optimization_warnings"
+)
+if pending_large_optimization_rows and pending_large_optimization_warnings:
+    confirm_large_optimization_dialog(
+        pending_large_optimization_rows,
+        pending_large_optimization_warnings,
+    )
 
 if not run_target_rows:
     st.caption(
-        "To run a new backtest without existing results, select exactly one Strategy, one Time-Frame and one Symbol."
+        "To run new backtests without existing results, select one or more Strategies, Time-Frames and Symbols."
     )
 
 render_backtesting_jobs_status()

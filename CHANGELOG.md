@@ -2,6 +2,16 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-05-20]
+- Backtesting - Improved reliability for migrated built-in and custom strategy backtests, including queued jobs, optimized runs and scheduled market-phase backtests.
+- Backtesting - Fixed declarative strategy result handling so reports, trades, strategy status and results grids remain aligned with the selected strategy.
+- Backtesting - Added a configurable maximum for optimization parameter combinations to keep optimized backtests from running for excessive durations.
+- Backtesting Results - Running backtests from filters now supports multiple selected strategies, timeframes and symbols, even when no result rows exist yet.
+- Backtesting Results - Added warnings and confirmation before running optimized backtests that exceed the configured parameter-combination limit.
+- Backtesting Queue - Existing matching positions now receive updated strategy parameters after successful queued backtests.
+- Backtesting Queue - Queue display now prioritizes running jobs first, then queued jobs, then historical jobs.
+- Top Performers - Strategy resolution is now consistent across migrated built-in and custom strategies.
+
 ## [2026-05-19]
 - Strategy Builder - Added a no-code page to create, edit, clone, import and export custom trading strategies.
 - Strategy Builder - Added AI-assisted strategy creation from plain language prompts.

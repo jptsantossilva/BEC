@@ -1,4 +1,5 @@
 import json
+import pickle
 import sqlite3
 import uuid
 
@@ -62,6 +63,29 @@ def test_builtin_strategy_resolves_to_declarative_strategy(monkeypatch):
 
     assert issubclass(strategy_class, my_backtesting.DeclarativeStrategy)
     assert strategy_class.definition["engine"] == "bec_strategy_ast_v2"
+
+
+def test_declarative_strategy_class_is_picklable(monkeypatch):
+    definition = get_builtin_template("ema_cross")
+    monkeypatch.setattr(
+        database,
+        "get_strategy_by_id",
+        lambda strategy_id: pd.DataFrame(
+            [
+                {
+                    "Id": strategy_id,
+                    "Type": "builtin",
+                    "Definition_JSON": json.dumps(definition),
+                }
+            ]
+        ),
+    )
+
+    strategy_class = my_backtesting.resolve_strategy("ema_cross")
+    restored = pickle.loads(pickle.dumps(strategy_class))
+
+    assert restored is strategy_class
+    assert getattr(my_backtesting, "ema_cross_declarative") is strategy_class
 
 
 def test_live_declarative_helpers_use_parameter_overrides(monkeypatch):

@@ -50,7 +50,14 @@ def run(settings=None):
         strategy_id = row["Id"]
         strategy_name = row["Name"]
         strategy_backtest_optimize = row["Backtest_Optimize"]
-        strategy = getattr(strategy_module, strategy_id)
+        strategy = (
+            strategy_module.resolve_strategy(strategy_id)
+            if hasattr(strategy_module, "resolve_strategy")
+            else getattr(strategy_module, strategy_id)
+        )
+        if strategy is None:
+            print(f"Skipping unavailable strategy: {strategy_id}")
+            continue
         stats["strategies_tested"] += 1
 
         print(f"Backtesting the strategy {strategy_name}")
