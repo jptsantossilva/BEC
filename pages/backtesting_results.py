@@ -1482,7 +1482,7 @@ def load_top_performer_symbols():
         return
 
     st.session_state["bt_results_saved_symbol"] = top_perf_symbol_list
-    st.session_state["_bt_results_symbol"] = top_perf_symbol_list
+    st.session_state["bt_results_apply_saved_symbol"] = True
     st.session_state["bt_results_top_performers_message"] = (
         "success",
         f"Loaded {len(top_perf_symbol_list)} top performer symbol(s).",
@@ -1532,6 +1532,15 @@ with primary_filters:
 
 # search by symbol
 list_symbols = sorted(df_bt_results["Symbol"].dropna().astype(str).unique().tolist())
+if "bt_results_saved_symbol" in st.session_state:
+    list_symbols = sorted(
+        set(list_symbols).union(st.session_state["bt_results_saved_symbol"])
+    )
+if st.session_state.pop("bt_results_apply_saved_symbol", False):
+    st.session_state["_bt_results_symbol"] = st.session_state.get(
+        "bt_results_saved_symbol",
+        [],
+    )
 
 symbol_filters = st.container(horizontal=True, vertical_alignment="bottom")
 with symbol_filters:
@@ -1559,11 +1568,6 @@ with symbol_filters:
     ):
         load_top_performer_symbols()
         st.rerun()
-
-    if "bt_results_saved_symbol" in st.session_state:
-        list_symbols = sorted(
-            set(list_symbols).union(st.session_state["bt_results_saved_symbol"])
-        )
 
 top_performers_message = st.session_state.pop("bt_results_top_performers_message", None)
 if top_performers_message:
