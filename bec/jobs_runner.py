@@ -4,6 +4,7 @@ import time
 from datetime import datetime, timezone, timedelta
 import subprocess
 import shlex
+import fcntl
 
 import bec.utils.database as database
 import bec.utils.telegram as telegram
@@ -13,6 +14,29 @@ PYTHON = sys.executable
 MAX_PARALLEL = 10
 BACKTESTING_JOBS_DIR = os.path.join("static", "backtest_results", "jobs")
 MONTE_CARLO_JOBS_DIR = os.path.join("static", "backtest_results", "monte_carlo", "jobs")
+RUNNER_LOCK_PATH = os.path.join(ROOT_DIR, "static", "backtest_results", "jobs_runner.lock")
+_RUNNER_LOCK_FILE = None
+
+
+def _acquire_runner_lock() -> bool:
+    global _RUNNER_LOCK_FILE
+    if _RUNNER_LOCK_FILE is not None:
+        return True
+
+    os.makedirs(os.path.dirname(RUNNER_LOCK_PATH), exist_ok=True)
+    lock_file = open(RUNNER_LOCK_PATH, "w", encoding="utf-8")
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock_file.close()
+        return False
+
+    lock_file.seek(0)
+    lock_file.truncate()
+    lock_file.write(f"{os.getpid()}\n")
+    lock_file.flush()
+    _RUNNER_LOCK_FILE = lock_file
+    return True
 
 
 def _resolve_schedule_script(script: str) -> str:
@@ -277,6 +301,10 @@ def _finish_monte_carlo_job(running_job):
     return True
 
 def run_loop():
+    if not _acquire_runner_lock():
+        print("jobs_runner already running; exiting duplicate process.")
+        return
+
     print("jobs_runner started (UTC).")
     database.reset_running_backtesting_jobs("jobs_runner restarted before this job completed.")
     database.reset_running_monte_carlo_jobs("jobs_runner restarted before this job completed.")

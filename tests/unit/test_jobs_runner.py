@@ -17,6 +17,28 @@ def test_resolve_schedule_script_keeps_unknown_path_for_subprocess_error():
     assert jobs_runner._resolve_schedule_script("missing/script.py") == "missing/script.py"
 
 
+def test_run_loop_exits_when_runner_lock_unavailable(monkeypatch, capsys):
+    monkeypatch.setattr(jobs_runner, "_acquire_runner_lock", lambda: False)
+    monkeypatch.setattr(
+        jobs_runner.database,
+        "reset_running_backtesting_jobs",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("runner should exit before resetting jobs")
+        ),
+    )
+    monkeypatch.setattr(
+        jobs_runner.database,
+        "reset_running_monte_carlo_jobs",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("runner should exit before resetting jobs")
+        ),
+    )
+
+    jobs_runner.run_loop()
+
+    assert "jobs_runner already running" in capsys.readouterr().out
+
+
 def _backtesting_job():
     return {
         "id": 42,

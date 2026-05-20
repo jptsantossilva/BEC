@@ -15,6 +15,7 @@ from dateutil.relativedelta import relativedelta
 import time
 import logging
 import timeit
+import multiprocessing
 import numpy as np
 import plotly.graph_objects as go
 
@@ -430,6 +431,27 @@ def run_serial_grid_optimize(bt, optimize_params: dict):
     return stats
 
 
+def run_declarative_native_optimize(
+    bt,
+    optimize_params: dict,
+    combination_count: int,
+    max_combinations: int,
+):
+    print(
+        "Declarative optimization grid = "
+        f"{int(combination_count)} combinations "
+        f"(overfitting alert threshold: {int(max_combinations)})",
+        flush=True,
+    )
+    if int(combination_count) > int(max_combinations):
+        print(
+            "Warning: declarative optimization combinations exceed the configured "
+            "overfitting alert threshold. Continuing with the full native optimizer.",
+            flush=True,
+        )
+    return bt.optimize(**optimize_params)
+
+
 def count_declarative_optimization_combinations(
     definition: dict,
     maximize: str = "SQN",
@@ -449,6 +471,37 @@ def count_declarative_optimization_combinations(
             continue
         total += 1
     return total, optimized_names
+
+
+def build_declarative_strategy_data_cache(
+    definition: dict,
+    symbol: str,
+    base_timeframe: str,
+) -> dict:
+    if not isinstance(definition, dict):
+        return {}
+
+    normalized_symbol = str(symbol).strip().upper()
+    normalized_base_timeframe = str(base_timeframe).strip()
+    cache = {}
+    for timeframe in sorted(strategy_engine.ast_timeframes(definition)):
+        normalized_timeframe = str(timeframe).strip()
+        if normalized_timeframe in {"", "current", normalized_base_timeframe}:
+            continue
+        df_timeframe = get_data(normalized_symbol, normalized_timeframe)
+        cache[(normalized_symbol, normalized_timeframe)] = df_timeframe
+        print(
+            f"Declarative data cache: loaded {normalized_symbol} {normalized_timeframe}",
+            flush=True,
+        )
+    return cache
+
+
+def set_declarative_strategy_data_cache(strategy, cache: dict | None):
+    if strategy is None:
+        return
+    strategy.strategy_data_cache = dict(cache or {})
+    strategy._strategy_data_cache_log_seen = set()
 
 
 class RiskManagedStrategy(Strategy):
@@ -829,6 +882,8 @@ class DeclarativeStrategy(RiskManagedStrategy):
     definition = {}
     parameter_values = {}
     data_price_scale = 1.0
+    strategy_data_cache = {}
+    _strategy_data_cache_log_seen = set()
 
     def init(self):
         super().init()
@@ -908,33 +963,40 @@ class DeclarativeStrategy(RiskManagedStrategy):
 
         current_df = self._current_slice()
         if not self.position:
-            if strategy_engine.evaluate_entry(
+            if strategy_engine.evaluate_ast_group(
                 current_df,
-                self._definition,
+                self._definition.get("entry", {}),
                 self._parameters,
-                symbol=str(getattr(self, "execution_symbol", "") or ""),
-                base_timeframe=str(
-                    getattr(self, "execution_timeframe", "current") or "current"
-                ),
-                data_loader=self._load_strategy_data,
             ):
                 self.buy()
         else:
-            if strategy_engine.evaluate_exit(
+            if strategy_engine.evaluate_ast_group(
                 current_df,
-                self._definition,
+                self._definition.get("exit", {}),
                 self._parameters,
-                symbol=str(getattr(self, "execution_symbol", "") or ""),
-                base_timeframe=str(
-                    getattr(self, "execution_timeframe", "current") or "current"
-                ),
-                data_loader=self._load_strategy_data,
             ):
                 self._queue_exit_reason("strategy")
                 self.position.close()
 
     def _load_strategy_data(self, symbol, timeframe):
-        df = get_data(symbol, timeframe)
+        cache_key = (str(symbol).strip().upper(), str(timeframe).strip())
+        cache = getattr(self, "strategy_data_cache", {}) or {}
+        if cache_key in cache:
+            df = cache[cache_key]
+            log_seen = getattr(self, "_strategy_data_cache_log_seen", set())
+            if (
+                multiprocessing.current_process().name == "MainProcess"
+                and cache_key not in log_seen
+            ):
+                print(
+                    f"Declarative data cache: using {cache_key[0]} {cache_key[1]}",
+                    flush=True,
+                )
+                log_seen = set(log_seen)
+                log_seen.add(cache_key)
+                self._strategy_data_cache_log_seen = log_seen
+        else:
+            df = get_data(symbol, timeframe)
         scale = float(getattr(self, "data_price_scale", 1.0) or 1.0)
         if scale == 1.0 or df.empty:
             return df
@@ -3853,7 +3915,14 @@ def run_backtest(symbol, timeframe, strategy, optimize):
     strategy.execution_timeframe = str(timeframe)
 
     if is_declarative_strategy:
-        pass
+        set_declarative_strategy_data_cache(
+            strategy,
+            build_declarative_strategy_data_cache(
+                strategy_definition,
+                symbol,
+                timeframe,
+            ),
+        )
     elif (
         strategy_name in {"ema_cross", "ema_cross_with_market_phases"}
         and str(timeframe) != "1d"
@@ -3970,7 +4039,11 @@ def run_backtest(symbol, timeframe, strategy, optimize):
                 strategy_definition,
                 bt_settings["Maximize"],
             )
-            optimize_params["max_tries"] = int(
+            optimization_combination_count, _ = count_declarative_optimization_combinations(
+                strategy_definition,
+                bt_settings["Maximize"],
+            )
+            optimization_max_combinations = int(
                 bt_settings.get(
                     "Optimization_Max_Combinations",
                     DEFAULT_OPTIMIZATION_MAX_COMBINATIONS,
@@ -3994,7 +4067,12 @@ def run_backtest(symbol, timeframe, strategy, optimize):
                 if param_name not in {"constraint", "maximize", "return_heatmap"}
             ]
         if is_declarative_strategy:
-            stats, heatmap = run_serial_grid_optimize(bt, optimize_params)
+            stats, heatmap = run_declarative_native_optimize(
+                bt,
+                optimize_params,
+                optimization_combination_count,
+                optimization_max_combinations,
+            )
         else:
             stats, heatmap = bt.optimize(**optimize_params)
 
@@ -4249,6 +4327,8 @@ def calc_backtesting(symbol, time_frame, strategy, optimize):
         )
 
         return False
+    finally:
+        set_declarative_strategy_data_cache(strategy, {})
 
 
 def main():

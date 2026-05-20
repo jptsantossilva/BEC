@@ -224,7 +224,7 @@ def test_declarative_indicator_plot_specs_include_definition_indicators_without_
     assert all(spec["overlay"] for spec in specs)
 
 
-def test_declarative_strategy_loader_scales_higher_timeframe_price_data(monkeypatch):
+def test_declarative_strategy_loader_uses_cache_and_scales_price_data(monkeypatch):
     daily = pd.DataFrame(
         {
             "Open": [0.01, 0.02],
@@ -234,8 +234,17 @@ def test_declarative_strategy_loader_scales_higher_timeframe_price_data(monkeypa
             "Volume": [1000, 2000],
         }
     )
-    monkeypatch.setattr(my_backtesting, "get_data", lambda symbol, timeframe: daily)
-    strategy = SimpleNamespace(data_price_scale=1e-8)
+    monkeypatch.setattr(
+        my_backtesting,
+        "get_data",
+        lambda symbol, timeframe: (_ for _ in ()).throw(
+            AssertionError("cache should avoid get_data")
+        ),
+    )
+    strategy = SimpleNamespace(
+        data_price_scale=1e-8,
+        strategy_data_cache={("BABYUSDC", "1d"): daily},
+    )
 
     scaled = my_backtesting.DeclarativeStrategy._load_strategy_data(
         strategy,
@@ -246,6 +255,87 @@ def test_declarative_strategy_loader_scales_higher_timeframe_price_data(monkeypa
     assert scaled["Close"].iloc[-1] == daily["Close"].iloc[-1] * 1e-8
     assert scaled["Volume"].iloc[-1] == daily["Volume"].iloc[-1]
     assert daily["Close"].iloc[-1] == 0.021
+
+
+def test_build_declarative_strategy_data_cache_loads_only_external_timeframes(monkeypatch):
+    loaded = []
+    daily = pd.DataFrame(
+        {
+            "Open": [1.0],
+            "High": [1.0],
+            "Low": [1.0],
+            "Close": [1.0],
+            "Volume": [100.0],
+        }
+    )
+
+    def fake_get_data(symbol, timeframe):
+        loaded.append((symbol, timeframe))
+        return daily
+
+    monkeypatch.setattr(my_backtesting, "get_data", fake_get_data)
+    definition = {
+        "entry": {
+            "conditions": [
+                {
+                    "left": {"type": "price", "field": "Close", "timeframe": "current"},
+                    "operator": "greater_than",
+                    "right": {
+                        "type": "indicator",
+                        "name": "LINREG",
+                        "timeframe": "1d",
+                        "source": {
+                            "type": "price",
+                            "field": "Close",
+                            "timeframe": "1d",
+                        },
+                        "params": {"period": 50},
+                    },
+                }
+            ]
+        },
+        "exit": {"conditions": []},
+    }
+
+    cache = my_backtesting.build_declarative_strategy_data_cache(
+        definition,
+        "babyusdc",
+        "4h",
+    )
+
+    assert loaded == [("BABYUSDC", "1d")]
+    assert list(cache.keys()) == [("BABYUSDC", "1d")]
+    assert cache[("BABYUSDC", "1d")].equals(daily)
+
+
+def test_build_declarative_strategy_data_cache_skips_current_and_base(monkeypatch):
+    loaded = []
+    monkeypatch.setattr(
+        my_backtesting,
+        "get_data",
+        lambda symbol, timeframe: loaded.append((symbol, timeframe)) or pd.DataFrame(),
+    )
+    definition = {
+        "entry": {
+            "conditions": [
+                {
+                    "left": {"type": "price", "field": "Close", "timeframe": "current"},
+                    "operator": "greater_than",
+                    "right": {"type": "price", "field": "Close", "timeframe": "4h"},
+                }
+            ]
+        },
+        "exit": {"conditions": []},
+    }
+
+    cache = my_backtesting.build_declarative_strategy_data_cache(
+        definition,
+        "BABYUSDC",
+        "4h",
+    )
+
+    assert cache == {}
+    assert loaded == []
 
 
 def test_declarative_strategy_parameters_config_uses_definition_indicators_only():
@@ -443,6 +533,163 @@ def test_serial_grid_optimize_limits_large_grids_deterministically():
     assert len(bt.runs) == 6  # sampled runs plus final best-params run
     assert heatmap.index[0] == (1, 2)
     assert heatmap.index[-1] == (19, 20)
+
+
+def test_declarative_native_optimize_uses_full_definition_params(capsys):
+    class FakeBacktest:
+        def __init__(self):
+            self.optimize_calls = []
+
+        def optimize(self, **params):
+            self.optimize_calls.append(params)
+            return pd.Series({"SQN": 1.0}), pd.Series(
+                [1.0],
+                index=pd.MultiIndex.from_tuples(
+                    [(10, 20)],
+                    names=["hma_fast", "hma_slow"],
+                ),
+            )
+
+    optimize_params = {
+        "hma_fast": [10, 20],
+        "hma_slow": [20, 30],
+        "constraint": lambda param: param.hma_fast < param.hma_slow,
+        "maximize": "SQN",
+        "return_heatmap": True,
+    }
+    bt = FakeBacktest()
+
+    stats, heatmap = my_backtesting.run_declarative_native_optimize(
+        bt,
+        optimize_params,
+        combination_count=3,
+        max_combinations=10,
+    )
+
+    assert stats["SQN"] == 1.0
+    assert heatmap.index.names == ["hma_fast", "hma_slow"]
+    assert bt.optimize_calls == [optimize_params]
+    assert "max_tries" not in bt.optimize_calls[0]
+    assert "3 combinations" in capsys.readouterr().out
+
+
+def test_declarative_native_optimize_warns_without_limiting(capsys):
+    class FakeBacktest:
+        def __init__(self):
+            self.optimize_calls = []
+
+        def optimize(self, **params):
+            self.optimize_calls.append(params)
+            return pd.Series({"SQN": 2.0}), pd.Series(dtype=float)
+
+    optimize_params = {
+        "fast": [1, 2, 3],
+        "slow": [4, 5, 6],
+        "maximize": "SQN",
+        "return_heatmap": True,
+    }
+    bt = FakeBacktest()
+
+    my_backtesting.run_declarative_native_optimize(
+        bt,
+        optimize_params,
+        combination_count=9,
+        max_combinations=5,
+    )
+
+    assert bt.optimize_calls == [optimize_params]
+    output = capsys.readouterr().out
+    assert "overfitting alert threshold" in output
+    assert "Continuing with the full native optimizer" in output
+
+
+def test_declarative_strategy_next_reuses_prepared_indicators(monkeypatch):
+    definition = {
+        "schema_version": 2,
+        "engine": "bec_strategy_ast_v2",
+        "name": "Prepared Eval",
+        "description": "test",
+        "constraints": {
+            "market": "spot",
+            "side": "long",
+            "order_type": "market",
+            "allowed_actions": ["buy", "sell"],
+            "allowed_timeframes": ["1h"],
+        },
+        "parameters": {},
+        "entry": {
+            "logic": "all",
+            "conditions": [
+                {
+                    "type": "comparison",
+                    "left": {"type": "price", "field": "Close", "timeframe": "current"},
+                    "operator": "greater_than",
+                    "right": {"type": "value", "value": 0},
+                }
+            ],
+            "action": {"type": "buy", "order_type": "market", "size_pct": 100},
+        },
+        "exit": {
+            "logic": "any",
+            "conditions": [
+                {
+                    "type": "comparison",
+                    "left": {"type": "price", "field": "Close", "timeframe": "current"},
+                    "operator": "less_than",
+                    "right": {"type": "value", "value": 0},
+                }
+            ],
+            "action": {"type": "sell", "order_type": "market", "size_pct": 100},
+        },
+    }
+    strategy = type(
+        "prepared_eval_declarative",
+        (my_backtesting.DeclarativeStrategy,),
+        {
+            "definition": definition,
+            "parameter_values": {},
+            "execution_symbol": "BTCUSDC",
+            "execution_timeframe": "1h",
+        },
+    )
+    df = pd.DataFrame(
+        {
+            "Open": [1.0, 1.0, 1.0, 1.0],
+            "High": [1.1, 1.1, 1.1, 1.1],
+            "Low": [0.9, 0.9, 0.9, 0.9],
+            "Close": [1.0, 1.0, 1.0, 1.0],
+            "Volume": [100.0, 100.0, 100.0, 100.0],
+        },
+        index=pd.date_range("2026-01-01", periods=4, freq="h"),
+    )
+    add_indicator_calls = 0
+    original_add_indicators = my_backtesting.strategy_engine.add_indicators
+
+    def count_add_indicators(*args, **kwargs):
+        nonlocal add_indicator_calls
+        add_indicator_calls += 1
+        return original_add_indicators(*args, **kwargs)
+
+    monkeypatch.setattr(
+        my_backtesting.strategy_engine,
+        "add_indicators",
+        count_add_indicators,
+    )
+
+    bt = my_backtesting.FractionalBacktest(
+        df,
+        strategy=strategy,
+        cash=1000,
+        commission=0,
+        finalize_trades=True,
+        exclusive_orders=True,
+        trade_on_close=True,
+    )
+
+    stats = bt.run()
+
+    assert stats["# Trades"] == 1
+    assert add_indicator_calls == 1
 
 
 def test_count_declarative_optimization_combinations_respects_constraints():

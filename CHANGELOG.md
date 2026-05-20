@@ -6,10 +6,14 @@ All notable changes to this project will be documented in this file.
 - Backtesting - Improved reliability for migrated built-in and custom strategy backtests, including queued jobs, optimized runs and scheduled market-phase backtests.
 - Backtesting - Fixed declarative strategy result handling so reports, trades, strategy status and results grids remain aligned with the selected strategy.
 - Backtesting - Added a configurable maximum for optimization parameter combinations to keep optimized backtests from running for excessive durations.
+- Backtesting - Declarative strategy optimization now uses the native `bt.optimize()` path with parameters from `Definition_JSON`; `Optimization_Max_Combinations` is now an overfitting alert instead of a hard execution limit.
+- Backtesting - Improved declarative strategy performance by reusing precomputed indicators during candle iteration and caching external timeframe data for optimized runs.
 - Backtesting Results - Running backtests from filters now supports multiple selected strategies, timeframes and symbols, even when no result rows exist yet.
-- Backtesting Results - Added warnings and confirmation before running optimized backtests that exceed the configured parameter-combination limit.
+- Backtesting Results - Added warnings and confirmation before running optimized backtests that exceed the configured parameter-combination overfitting alert threshold.
 - Backtesting Queue - Existing matching positions now receive updated strategy parameters after successful queued backtests.
 - Backtesting Queue - Queue display now prioritizes running jobs first, then queued jobs, then historical jobs.
+- Jobs Runner - Added a single-runner lock to avoid multiple queue runners processing the same local database concurrently.
+- Monte Carlo Analysis - Candles-based simulations now support declarative strategies from My Strategies, apply saved optimized parameters from backtest results and reuse declarative multi-timeframe data cache.
 - Top Performers - Strategy resolution is now consistent across migrated built-in and custom strategies.
 
 ## [2026-05-19]

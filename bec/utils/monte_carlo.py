@@ -948,6 +948,26 @@ def run_trade_order_shuffle(symbol, timeframe, strategy_id, scenarios=1000, seed
 
 def _apply_saved_strategy_parameters(strategy, backtest_row):
     try:
+        config = database.parse_strategy_params(backtest_row.get("Backtest_Config_JSON", ""))
+    except Exception:
+        config = {}
+    strategy_parameters = (
+        config.get("strategy_parameters") if isinstance(config, dict) else {}
+    )
+    parameters = (
+        strategy_parameters.get("parameters")
+        if isinstance(strategy_parameters, dict)
+        else {}
+    )
+    if isinstance(parameters, dict) and parameters:
+        current_values = dict(getattr(strategy, "parameter_values", {}) or {})
+        for name, value in parameters.items():
+            setattr(strategy, str(name), value)
+            current_values[str(name)] = value
+        strategy.parameter_values = current_values
+        return
+
+    try:
         n1 = int(float(backtest_row.get("Ema_Fast", 0) or 0))
         n2 = int(float(backtest_row.get("Ema_Slow", 0) or 0))
     except Exception:
@@ -1024,6 +1044,14 @@ def _prepare_backtest_df(df, symbol, timeframe, strategy_id, strategy, daily_fas
     return df
 
 
+def _resolve_strategy(strategy_id):
+    if hasattr(my_backtesting, "resolve_strategy"):
+        strategy = my_backtesting.resolve_strategy(str(strategy_id))
+        if strategy is not None:
+            return strategy
+    return getattr(my_backtesting, str(strategy_id), None)
+
+
 def _run_strategy_on_df(df, strategy, cash, commission):
     bt = FractionalBacktest(
         df,
@@ -1072,7 +1100,7 @@ def run_candles_based(symbol, timeframe, strategy_id, scenarios=200, seed=42):
     settings = database.get_backtesting_settings()
     initial_cash = float(settings["Cash_Value"])
     commission = float(settings["Commission_Value"])
-    strategy = getattr(my_backtesting, str(strategy_id), None)
+    strategy = _resolve_strategy(strategy_id)
     if strategy is None:
         raise ValueError(f"Strategy '{strategy_id}' is not available.")
 
@@ -1086,28 +1114,41 @@ def run_candles_based(symbol, timeframe, strategy_id, scenarios=200, seed=42):
     df = my_backtesting.get_data(symbol, timeframe)
     if df.empty:
         raise ValueError(f"No OHLCV data found for {symbol} - {timeframe}.")
+    definition = getattr(strategy, "definition", None)
+    if isinstance(definition, dict) and definition.get("engine") == "bec_strategy_ast_v2":
+        my_backtesting.set_declarative_strategy_data_cache(
+            strategy,
+            my_backtesting.build_declarative_strategy_data_cache(
+                definition,
+                symbol,
+                timeframe,
+            ),
+        )
 
-    prepared_original = _prepare_backtest_df(df.copy(), symbol, timeframe, strategy_id, strategy, daily_fast, daily_slow)
-    original_stats = _run_strategy_on_df(prepared_original, strategy, initial_cash, commission)
-    original_curve = _stats_equity_curve(original_stats, initial_cash)
-    original_metrics = _stats_to_metrics(original_stats)
+    try:
+        prepared_original = _prepare_backtest_df(df.copy(), symbol, timeframe, strategy_id, strategy, daily_fast, daily_slow)
+        original_stats = _run_strategy_on_df(prepared_original, strategy, initial_cash, commission)
+        original_curve = _stats_equity_curve(original_stats, initial_cash)
+        original_metrics = _stats_to_metrics(original_stats)
 
-    rng = np.random.default_rng(int(seed))
-    scenario_curves = []
-    scenario_metrics = []
-    for index in range(int(scenarios)):
-        try:
-            scenario_df = _perturb_candles(df, rng)
-            if scenario_df.empty:
-                continue
-            scenario_df = _prepare_backtest_df(scenario_df, symbol, timeframe, strategy_id, strategy, daily_fast, daily_slow)
-            stats = _run_strategy_on_df(scenario_df, strategy, initial_cash, commission)
-            scenario_curves.append(_stats_equity_curve(stats, initial_cash))
-            scenario_metrics.append(_stats_to_metrics(stats))
-        except Exception as exc:
-            print(f"Invalid candles scenario {index + 1}: {repr(exc)}", flush=True)
-        if (index + 1) % 5 == 0 or index + 1 == int(scenarios):
-            print(f"Running Candles Simulation... ({index + 1}/{int(scenarios)})", flush=True)
+        rng = np.random.default_rng(int(seed))
+        scenario_curves = []
+        scenario_metrics = []
+        for index in range(int(scenarios)):
+            try:
+                scenario_df = _perturb_candles(df, rng)
+                if scenario_df.empty:
+                    continue
+                scenario_df = _prepare_backtest_df(scenario_df, symbol, timeframe, strategy_id, strategy, daily_fast, daily_slow)
+                stats = _run_strategy_on_df(scenario_df, strategy, initial_cash, commission)
+                scenario_curves.append(_stats_equity_curve(stats, initial_cash))
+                scenario_metrics.append(_stats_to_metrics(stats))
+            except Exception as exc:
+                print(f"Invalid candles scenario {index + 1}: {repr(exc)}", flush=True)
+            if (index + 1) % 5 == 0 or index + 1 == int(scenarios):
+                print(f"Running Candles Simulation... ({index + 1}/{int(scenarios)})", flush=True)
+    finally:
+        my_backtesting.set_declarative_strategy_data_cache(strategy, {})
 
     return _build_result(
         symbol,

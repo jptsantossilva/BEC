@@ -988,7 +988,8 @@ def queue_backtesting_rows_with_message(rows):
 def confirm_large_optimization_dialog(rows, warnings):
     st.write(
         "Some selected backtests define more parameter combinations than the "
-        "configured maximum. They will be sampled up to the maximum if you continue."
+        "configured overfitting alert threshold. They will still run with the full "
+        "native optimizer if you continue."
     )
     st.dataframe(
         pd.DataFrame(warnings),
@@ -1179,10 +1180,10 @@ def render_backtesting_jobs_status():
                 "Target",
                 "optimize",
                 "status",
+                "Duration",
                 "created_at",
                 "started_at",
                 "finished_at",
-                "Duration",
                 "return_code",
                 "Log",
                 "error_message",
@@ -1205,10 +1206,10 @@ def render_backtesting_jobs_status():
                 "Target": st.column_config.TextColumn("Backtest"),
                 "optimize": st.column_config.CheckboxColumn("Optimize"),
                 "status": st.column_config.TextColumn("Status"),
+                "Duration": st.column_config.TextColumn("Duration"),
                 "created_at": st.column_config.TextColumn("Created"),
                 "started_at": st.column_config.TextColumn("Started"),
                 "finished_at": st.column_config.TextColumn("Finished"),
-                "Duration": st.column_config.TextColumn("Duration"),
                 "return_code": st.column_config.NumberColumn("Return", format="%d"),
                 "Log": st.column_config.LinkColumn("Log", display_text="Open"),
                 "error_message": st.column_config.TextColumn("Error"),
