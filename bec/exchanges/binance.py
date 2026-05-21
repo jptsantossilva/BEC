@@ -69,6 +69,57 @@ def get_client() -> Client:
         return connect()
     return _client
 
+
+def _primary_parameter_pair_names_from_definition(definition: dict) -> tuple[str, str]:
+    parameters = definition.get("parameters", {}) if isinstance(definition, dict) else {}
+    if not isinstance(parameters, dict):
+        return "", ""
+
+    names = list(parameters.keys())
+    fast_name = next(
+        (name for name in names if str(name).lower() == "fast" or "fast" in str(name).lower()),
+        "",
+    )
+    slow_name = next(
+        (name for name in names if str(name).lower() == "slow" or "slow" in str(name).lower()),
+        "",
+    )
+    if fast_name and slow_name:
+        return fast_name, slow_name
+
+    optimizable = [
+        name
+        for name, spec in parameters.items()
+        if isinstance(spec, dict) and bool(spec.get("optimizable", False))
+    ]
+    if len(optimizable) >= 2:
+        return optimizable[0], optimizable[1]
+    if len(names) >= 2:
+        return names[0], names[1]
+    return "", ""
+
+
+def _format_strategy_name_with_setup(strategy_id: str, strategy_name: str, strategy_params_json: str) -> str:
+    name = str(strategy_name or "").strip() or str(strategy_id or "").strip()
+    snapshot = database.parse_strategy_params(strategy_params_json)
+    definition = snapshot.get("definition") if isinstance(snapshot, dict) else {}
+    parameters = snapshot.get("parameters") if isinstance(snapshot, dict) else {}
+    if not isinstance(definition, dict) or not isinstance(parameters, dict):
+        return name
+
+    first_name, second_name = _primary_parameter_pair_names_from_definition(definition)
+    try:
+        first_value = int(float(parameters.get(first_name, 0)))
+        second_value = int(float(parameters.get(second_name, 0)))
+    except (TypeError, ValueError):
+        return name
+
+    if first_value <= 0 or second_value <= 0:
+        return name
+
+    setup = f"{first_value}/{second_value}"
+    return name if name.startswith(f"{setup} ") else f"{setup} {name}"
+
 def get_exchange_info():
     try:
         return get_client().get_exchange_info()
@@ -282,7 +333,11 @@ def create_buy_order(
         
             effective_strategy_id = strategy_id or (settings.main_strategy_configs[0]["id"] if settings.main_strategy_configs else "")
             base_strategy_name = strategy_name or database.get_strategy_name(effective_strategy_id) or effective_strategy_id
-            strategy_name = base_strategy_name
+            strategy_name = _format_strategy_name_with_setup(
+                effective_strategy_id,
+                base_strategy_name,
+                strategy_params_json,
+            )
 
             if convert_all_balance:
                 convert_message = "Trade against auto switch"
@@ -566,7 +621,11 @@ def create_sell_order(
 
             effective_strategy_id = strategy_id or (settings.main_strategy_configs[0]["id"] if settings.main_strategy_configs else "")
             base_strategy_name = strategy_name or database.get_strategy_name(effective_strategy_id) or effective_strategy_id
-            strategy_name = base_strategy_name
+            strategy_name = _format_strategy_name_with_setup(
+                effective_strategy_id,
+                base_strategy_name,
+                strategy_params_json,
+            )
             
             if convert_all_balance:
                 convert_message = "Trade against auto switch"

@@ -119,3 +119,177 @@ def test_position_signal_setup_requires_strategy_params_snapshot():
     )
 
     assert trading._format_position_signal_setup(row) == ""
+
+
+def _realized_trades_sample():
+    return pd.DataFrame(
+        [
+            {
+                "Bot": "1d",
+                "Strategy_Id": "alpha",
+                "Strategy_Name": "Alpha",
+                "Sell_Date": "2026-01-05 10:00:00",
+                "PnL_Perc": 10.0,
+                "PnL_Value": 10.0,
+                "Sell_Position_Value": 100.0,
+                "Exit_Reason": "Take-Profit 1",
+                "Stop_Type": "tp",
+            },
+            {
+                "Bot": "4h",
+                "Strategy_Id": "alpha",
+                "Strategy_Name": "Alpha",
+                "Sell_Date": "2026-01-07 10:00:00",
+                "PnL_Perc": -5.0,
+                "PnL_Value": -10.0,
+                "Sell_Position_Value": 200.0,
+                "Exit_Reason": "Hard stop",
+                "Stop_Type": "hard_sl",
+            },
+            {
+                "Bot": "1h",
+                "Strategy_Id": "beta",
+                "Strategy_Name": "Beta",
+                "Sell_Date": "2026-02-02 10:00:00",
+                "PnL_Perc": 4.0,
+                "PnL_Value": 4.0,
+                "Sell_Position_Value": 100.0,
+                "Exit_Reason": "Strategy exit",
+                "Stop_Type": "strategy",
+            },
+            {
+                "Bot": "1d",
+                "Strategy_Id": "",
+                "Strategy_Name": "",
+                "Sell_Date": "2026-02-04 10:00:00",
+                "PnL_Perc": 2.0,
+                "PnL_Value": 1.0,
+                "Sell_Position_Value": 50.0,
+                "Exit_Reason": "",
+                "Stop_Type": "",
+            },
+        ]
+    )
+
+
+def test_realized_strategy_summary_groups_named_and_missing_strategies():
+    trades = trading._normalize_realized_strategy_columns(_realized_trades_sample())
+
+    summary = trading._build_realized_strategy_summary(trades)
+
+    alpha = summary[summary["Strategy"] == "Alpha"].iloc[0]
+    missing = summary[summary["Strategy"] == trading.MISSING_STRATEGY_LABEL].iloc[0]
+    assert round(float(alpha["PnL_Perc"]), 4) == 0.0
+    assert float(alpha["PnL_Value"]) == 0.0
+    assert int(alpha["Positions"]) == 2
+    assert float(alpha["Win_Rate"]) == 50.0
+    assert float(missing["PnL_Perc"]) == 2.0
+    assert int(missing["Positions"]) == 1
+
+
+def test_realized_strategy_filter_supports_all_specific_and_missing():
+    trades = trading._normalize_realized_strategy_columns(_realized_trades_sample())
+
+    all_trades = trading._filter_realized_trades_by_strategy(
+        trades, trading.ALL_STRATEGIES_FILTER
+    )
+    alpha_trades = trading._filter_realized_trades_by_strategy(trades, "alpha")
+    missing_trades = trading._filter_realized_trades_by_strategy(
+        trades, trading.MISSING_STRATEGY_FILTER
+    )
+
+    assert len(all_trades) == 4
+    assert set(alpha_trades["Strategy"]) == {"Alpha"}
+    assert len(alpha_trades) == 2
+    assert len(missing_trades) == 1
+    assert missing_trades.iloc[0]["Strategy"] == trading.MISSING_STRATEGY_LABEL
+
+
+def test_realized_strategy_filter_options_include_only_period_strategies():
+    trades = trading._normalize_realized_strategy_columns(_realized_trades_sample())
+    trades = trades[trades["Strategy_Id"].isin(["alpha", ""])]
+
+    options, labels = trading.get_realized_strategy_filter_options(trades)
+
+    assert options == [
+        trading.ALL_STRATEGIES_FILTER,
+        "alpha",
+        trading.MISSING_STRATEGY_FILTER,
+    ]
+    assert labels[trading.ALL_STRATEGIES_FILTER] == "All strategies"
+    assert labels["alpha"] == "Alpha"
+    assert labels[trading.MISSING_STRATEGY_FILTER] == trading.MISSING_STRATEGY_LABEL
+    assert "beta" not in options
+
+
+def test_realized_all_time_period_loads_without_year_filter(monkeypatch):
+    calls = []
+    sample = _realized_trades_sample()
+
+    def fake_get_orders_by_side_year_month(side, year, month):
+        calls.append((side, year, month))
+        return sample
+
+    monkeypatch.setattr(
+        trading.database,
+        "get_orders_by_side_year_month",
+        fake_get_orders_by_side_year_month,
+    )
+
+    trades = trading._get_realized_trades_for_period(trading.ALL_TIME_FILTER, "13")
+
+    assert calls == [("SELL", trading.ALL_TIME_FILTER, "13")]
+    assert len(trades) == len(sample)
+
+
+def test_monthly_realized_returns_respects_strategy_filter(monkeypatch):
+    trading.num_decimals = 2
+    trades = trading._normalize_realized_strategy_columns(_realized_trades_sample())
+    monkeypatch.setattr(
+        trading,
+        "_get_realized_trades_for_year",
+        lambda year, strategy_filter=trading.ALL_STRATEGIES_FILTER: (
+            trading._filter_realized_trades_by_strategy(trades, strategy_filter)
+        ),
+    )
+
+    alpha_months = trading.calculate_monthly_realized_returns(["2026"], "alpha")
+    all_months = trading.calculate_monthly_realized_returns(
+        ["2026"], trading.ALL_STRATEGIES_FILTER
+    )
+
+    alpha_jan = alpha_months[alpha_months["Month"] == "Jan"].iloc[0]
+    all_feb = all_months[all_months["Month"] == "Feb"].iloc[0]
+    assert round(float(alpha_jan["PnL_Perc"]), 4) == 0.0
+    assert int(alpha_jan["Positions"]) == 2
+    assert round(float(all_feb["PnL_Perc"]), 4) == 3.3333
+    assert int(all_feb["Positions"]) == 2
+
+
+def test_live_vs_backtest_summary_joins_on_strategy_timeframe_and_symbol(monkeypatch):
+    trades = trading._normalize_realized_strategy_columns(_realized_trades_sample())
+    backtests = pd.DataFrame(
+        [
+            {
+                "Strategy_Id": "beta",
+                "Symbol": "BETAUSDC",
+                "Time_Frame": "1h",
+                "Return_Perc": 12.5,
+                "Win_Rate_Perc": 60.0,
+                "Trades": 20,
+                "Quality_Grade": "B",
+                "Quality_Score": 72.0,
+                "Trading_Approved": 1,
+            }
+        ]
+    )
+    trades.loc[trades["Strategy_Id"] == "beta", "Symbol"] = "BETAUSDC"
+    monkeypatch.setattr(trading.database, "get_all_backtesting_results", lambda: backtests)
+
+    summary = trading._build_live_vs_backtest_summary(trades)
+
+    beta = summary[summary["Strategy"] == "Beta"].iloc[0]
+    assert float(beta["Live_PnL_Perc"]) == 4.0
+    assert float(beta["Backtest_Return_Perc"]) == 12.5
+    assert beta["Quality_Grade"] == "B"
+    assert int(beta["Trading_Approved"]) == 1

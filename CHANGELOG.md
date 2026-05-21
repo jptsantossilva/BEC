@@ -9,6 +9,10 @@ All notable changes to this project will be documented in this file.
 - Strategy Builder - Added `1w` timeframe support in strategy conditions, backtesting controls and declarative strategy validation.
 - Strategy Builder - Reduced built-in strategy optimization parameter grids to avoid excessive overfitting combinations and long backtest runtimes.
 - Trading Dashboard - Bitcoin Strategy labels now show latest BTC backtesting Quality and Grade when available, or `NA` when no result exists.
+- Trading Dashboard - Realized PnL now supports multi-strategy analysis with per-period strategy filters, strategy ranking, strategy/timeframe matrix, overview KPIs, exit reason analytics, live vs backtest comparison, and CSV export for closed trades.
+- Trading Dashboard - Realized PnL now includes an `All time` period option while defaulting to the current year and month when available.
+- Trading Dashboard - Realized PnL year/month filters now use closed `SELL` trades only, and strategy options are limited to strategies that actually have closed trades in the selected period.
+- Trading Dashboard - Added monthly realized returns heatmap and monthly returns distribution for closed trades, with strategy filtering and explicit `(Missing strategy)` handling for historical trades without strategy metadata.
 - Backtesting Results - Added `1w` as an available timeframe option.
 - Trading Auto-Switch - Bitcoin auto-switch now evaluates approved Strategy Builder strategies instead of legacy hardcoded strategy branches.
 - Trading Auto-Switch - Added idempotent signal processing by strategy, BTC pair, signal direction, effective signal timeframe and candle id so weekly BTC strategies can be checked daily without repeating the same weekly conversion.
@@ -16,6 +20,7 @@ All notable changes to this project will be documented in this file.
 - Strategy Builder - Added builtin Bitcoin strategy templates for `bullmarketsupportband` and `wema20` so production updates can seed them automatically.
 - Strategy Builder - Fixed saving drafts after metadata JSON was moved out of the editor advanced panel.
 - Market Phases - Removed the TradingView top performers file export and kept Telegram reports focused on the actual ranked top performers.
+- Telegram - Fixed closed-position trade messages to show the timeframe only once and preserve saved strategy setup parameters such as `30/90 HMA RSI LINREG`.
 
 ## [2026-05-20]
 - Backtesting - Improved reliability for migrated built-in and custom strategy backtests, including queued jobs, optimized runs and scheduled market-phase backtests.

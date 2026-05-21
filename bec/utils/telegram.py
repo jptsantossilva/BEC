@@ -187,7 +187,10 @@ def send_trade_event(
     duration: str = "",
     open_positions: str = "",
 ):
-    msg = telegram_prefix + format_trade_event(
+    prefix_label = str(telegram_prefix or "").strip()
+    timeframe_label = str(timeframe or "").strip()
+    effective_prefix = "" if prefix_label == timeframe_label else telegram_prefix
+    msg = effective_prefix + format_trade_event(
         action=action,
         symbol=symbol,
         timeframe=timeframe,

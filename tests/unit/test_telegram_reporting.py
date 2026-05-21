@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import json
 from types import SimpleNamespace
 
 import pandas as pd
@@ -604,7 +605,36 @@ def test_trade_event_formatting_and_closed_position_copy(monkeypatch):
     assert len(sent) == 2
     assert sent[0][0] == "main-token"
     assert sent[1][0] == telegram.telegram_token_closed_position
+    assert sent[0][2].startswith("1h SELL BTCUSDC")
+    assert "1h 1h SELL" not in sent[0][2]
     assert "PnL%: 10.0" in sent[0][2]
+
+
+def test_strategy_setup_is_preserved_in_trade_event_name():
+    definition = get_builtin_template("hma_rsi_linreg")
+    strategy_params_json = json.dumps(
+        {
+            "engine": "bec_strategy_ast_v2",
+            "definition": definition,
+            "parameters": {"hma_fast": 30, "hma_slow": 90},
+        }
+    )
+
+    strategy_name = binance._format_strategy_name_with_setup(
+        "hma_rsi_linreg",
+        "HMA RSI LINREG",
+        strategy_params_json,
+    )
+
+    assert strategy_name == "30/90 HMA RSI LINREG"
+    assert (
+        binance._format_strategy_name_with_setup(
+            "hma_rsi_linreg",
+            strategy_name,
+            strategy_params_json,
+        )
+        == "30/90 HMA RSI LINREG"
+    )
 
 
 def test_positions_summary_is_compact_and_sorted(monkeypatch):

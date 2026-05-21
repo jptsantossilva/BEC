@@ -50,6 +50,15 @@ POSITIONS_DISPLAY_COLUMNS = [
     "Signal_Setup",
 ]
 TAKE_PROFIT_NOT_DEFINED_LABEL = "No TP Defined"
+REALIZED_PNL_BOTS = ("1d", "4h", "1h")
+ALL_TIME_FILTER = "__all_time__"
+ALL_STRATEGIES_FILTER = "__all_strategies__"
+MISSING_STRATEGY_FILTER = "__missing_strategy__"
+MISSING_STRATEGY_LABEL = "(Missing strategy)"
+MONTHLY_RETURNS_MONTHS = [
+    {"Month_Number": month, "Month": calendar.month_abbr[month]}
+    for month in range(1, 13)
+]
 
 # for testing purposes
 # st.session_state
@@ -57,6 +66,9 @@ TAKE_PROFIT_NOT_DEFINED_LABEL = "No TP Defined"
 
 def realized_pnl():
     with tab_rpnl:
+
+        st.header("Realized PnL")
+
         # get years
         years = get_years()
 
@@ -65,23 +77,56 @@ def realized_pnl():
             st.info("There are no closed positions 🤞")
             year = str(datetime.now().year)
             month_number = 13
+            strategy_filter = ALL_STRATEGIES_FILTER
+            strategy_labels = {ALL_STRATEGIES_FILTER: "All strategies"}
         else:
             filter_rpnl = st.container(horizontal=True, vertical_alignment="bottom")
             # col1, col2, col3, col4 = st.columns([4, 6, 4, 10], vertical_alignment='bottom')
             # years selectbox
-            year = filter_rpnl.selectbox("Year", (years), width=150)
+            year_options = [ALL_TIME_FILTER] + years
+            current_year = str(datetime.now().year)
+            default_year_index = (
+                year_options.index(current_year) if current_year in year_options else 0
+            )
+            year = filter_rpnl.selectbox(
+                "Year",
+                year_options,
+                index=default_year_index,
+                format_func=lambda option: "All time"
+                if option == ALL_TIME_FILTER
+                else option,
+                width=150,
+            )
 
             # get months
-            months_dict = get_orders_by_month(year)
-            month_names = list(months_dict.values())
+            if year == ALL_TIME_FILTER:
+                months_dict = {}
+                month_names = []
+            else:
+                months_dict = get_orders_by_month(year)
+                month_names = list(months_dict.values())
+            current_month_name = calendar.month_name[datetime.now().month]
+            default_month_index = (
+                month_names.index(current_month_name)
+                if current_month_name in month_names
+                else 0
+            )
 
             # months selectbox
             month_selected_name = filter_rpnl.selectbox(
-                "Month", (month_names), width=200
+                "Month",
+                month_names,
+                index=default_month_index,
+                width=200,
+                disabled=year == ALL_TIME_FILTER,
             )
 
-            disable_full_year = month_selected_name == None
-            if month_selected_name == None:
+            disable_full_year = (
+                year == ALL_TIME_FILTER or month_selected_name == None
+            )
+            if year == ALL_TIME_FILTER:
+                month_number = 13
+            elif month_selected_name == None:
                 month_number = 1
             else:  # get month number from month name using months dictionary
                 month_number = list(months_dict.keys())[
@@ -91,17 +136,121 @@ def realized_pnl():
             if filter_rpnl.checkbox("Full Year", disabled=disable_full_year):
                 month_number = 13
 
-        result_closed_positions, trades_month_1d, trades_month_4h, trades_month_1h = (
-            calculate_realized_pnl(str(year), str(month_number))
-        )
+            period_trades = _get_realized_trades_for_period(str(year), str(month_number))
+            strategy_options, strategy_labels = get_realized_strategy_filter_options(
+                period_trades
+            )
+            strategy_filter = filter_rpnl.selectbox(
+                "Strategy",
+                strategy_options,
+                format_func=lambda option: strategy_labels.get(option, option),
+                width=300,
+            )
+
+        (
+            result_closed_positions,
+            trades_month_1d,
+            trades_month_4h,
+            trades_month_1h,
+            trades_all,
+            strategy_summary,
+            strategy_timeframe_matrix,
+            exit_reason_summary,
+            live_vs_backtest,
+            kpis,
+        ) = calculate_realized_pnl(str(year), str(month_number), strategy_filter)
         # print("\nPnL - Total")
         # print(result_closed_positions)
+
+        render_realized_kpis(kpis)
 
         st.header("Realized PnL - Total")
         result_closed_positions = result_closed_positions.style.map(
             set_pnl_color, subset=["PnL_Perc", "PnL_Value"]
         )
         st.dataframe(result_closed_positions, width="content", hide_index=True)
+
+        render_realized_monthly_returns(years, strategy_filter, strategy_labels)
+
+        st.header("Realized PnL - Strategies")
+        if strategy_summary.empty:
+            st.info("No closed trades for this strategy filter.")
+        else:
+            st.dataframe(
+                strategy_summary.style.map(
+                    set_pnl_color,
+                    subset=["PnL_Perc", "PnL_Value", "Best_Trade", "Worst_Trade"],
+                ),
+                width="content",
+                hide_index=True,
+                column_config={
+                    "PnL_Perc": st.column_config.NumberColumn(format="%.2f"),
+                    "PnL_Value": st.column_config.NumberColumn(
+                        format=f"%.{num_decimals}f"
+                    ),
+                    "Win_Rate": st.column_config.NumberColumn(format="%.2f"),
+                    "Best_Trade": st.column_config.NumberColumn(format="%.2f"),
+                    "Worst_Trade": st.column_config.NumberColumn(format="%.2f"),
+                    "Avg_Trade": st.column_config.NumberColumn(format="%.2f"),
+                },
+            )
+
+        with st.expander("Strategy x Timeframe Matrix", expanded=False):
+            if strategy_timeframe_matrix.empty:
+                st.info("No strategy/timeframe data for this filter.")
+            else:
+                st.dataframe(
+                    strategy_timeframe_matrix.style.map(
+                        set_pnl_color, subset=["1d", "4h", "1h", "TOTAL"]
+                    ),
+                    width="content",
+                    hide_index=True,
+                )
+
+        with st.expander("Exit Reason Analytics", expanded=False):
+            if exit_reason_summary.empty:
+                st.info("No exit reason data for this filter.")
+            else:
+                st.dataframe(
+                    exit_reason_summary.style.map(
+                        set_pnl_color, subset=["PnL_Perc", "PnL_Value"]
+                    ),
+                    width="content",
+                    hide_index=True,
+                    column_config={
+                        "PnL_Perc": st.column_config.NumberColumn(format="%.2f"),
+                        "PnL_Value": st.column_config.NumberColumn(
+                            format=f"%.{num_decimals}f"
+                        ),
+                    },
+                )
+
+        with st.expander("Live vs Backtest", expanded=False):
+            if live_vs_backtest.empty:
+                st.info("No backtest comparison data for this filter.")
+            else:
+                st.dataframe(
+                    live_vs_backtest.style.map(
+                        set_pnl_color,
+                        subset=["Live_PnL_Perc", "Live_PnL_Value", "Backtest_Return_Perc"],
+                    ),
+                    width="content",
+                    hide_index=True,
+                    column_config={
+                        "Live_PnL_Perc": st.column_config.NumberColumn(format="%.2f"),
+                        "Live_PnL_Value": st.column_config.NumberColumn(
+                            format=f"%.{num_decimals}f"
+                        ),
+                        "Live_Win_Rate": st.column_config.NumberColumn(format="%.2f"),
+                        "Backtest_Return_Perc": st.column_config.NumberColumn(
+                            format="%.2f"
+                        ),
+                        "Backtest_Win_Rate_Perc": st.column_config.NumberColumn(
+                            format="%.2f"
+                        ),
+                        "Quality_Score": st.column_config.NumberColumn(format="%.2f"),
+                    },
+                )
 
         # print("Realized PnL - Detail")
         # print(trades_month_1d)
@@ -110,52 +259,46 @@ def realized_pnl():
 
         st.header("Realized PnL - Detail")
 
+        with st.expander("All closed trades", expanded=False):
+            if trades_all.empty:
+                st.info("No closed trades for this filter.")
+            else:
+                period_label = "all_time" if year == ALL_TIME_FILTER else f"{year}_{month_number}"
+                st.download_button(
+                    "Export CSV",
+                    trades_all.to_csv(index=False).encode("utf-8"),
+                    file_name=f"realized_pnl_{period_label}.csv",
+                    mime="text/csv",
+                    icon=":material/download:",
+                )
+                st.dataframe(
+                    trades_all.style.map(
+                        set_pnl_color, subset=["PnL_Perc", "PnL_Value"]
+                    ),
+                    width="content",
+                    hide_index=True,
+                    column_config=realized_detail_column_config(),
+                )
+
         st.subheader("Bot 1d")
         st.dataframe(
             trades_month_1d.style.map(set_pnl_color, subset=["PnL_Perc", "PnL_Value"]),
             width="content",
-            column_config={
-                "PnL_Perc": st.column_config.NumberColumn(format="%.2f"),
-                "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"),
-                "Exit_Reason": st.column_config.TextColumn(width="large"),
-                "Stop_Details": st.column_config.JsonColumn(
-                    "Stop_Details",
-                    width="large",
-                    help="Structured stop metadata saved at trade exit.",
-                ),
-            },
+            column_config=realized_detail_column_config(),
         )
 
         st.subheader("Bot 4h")
         st.dataframe(
             trades_month_4h.style.map(set_pnl_color, subset=["PnL_Perc", "PnL_Value"]),
             width="content",
-            column_config={
-                "PnL_Perc": st.column_config.NumberColumn(format="%.2f"),
-                "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"),
-                "Exit_Reason": st.column_config.TextColumn(width="large"),
-                "Stop_Details": st.column_config.JsonColumn(
-                    "Stop_Details",
-                    width="large",
-                    help="Structured stop metadata saved at trade exit.",
-                ),
-            },
+            column_config=realized_detail_column_config(),
         )
 
         st.subheader("Bot 1h")
         st.dataframe(
             trades_month_1h.style.map(set_pnl_color, subset=["PnL_Perc", "PnL_Value"]),
             width="content",
-            column_config={
-                "PnL_Perc": st.column_config.NumberColumn(format="%.2f"),
-                "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"),
-                "Exit_Reason": st.column_config.TextColumn(width="large"),
-                "Stop_Details": st.column_config.JsonColumn(
-                    "Stop_Details",
-                    width="large",
-                    help="Structured stop metadata saved at trade exit.",
-                ),
-            },
+            column_config=realized_detail_column_config(),
         )
 
         # print('\n----------------------------\n')
@@ -1235,14 +1378,14 @@ def show_main_page():
 
 # Get years from orders
 def get_years():
-    years = database.get_years_from_orders()
+    years = database.get_years_from_orders_by_side("SELL")
     return years
 
 
 # get months with orders within the year
 def get_orders_by_month(year: str):
 
-    months = database.get_months_from_orders_by_year(year)
+    months = database.get_months_from_orders_by_year_side(year, "SELL")
 
     month_dict = {}
     for month in months:
@@ -1251,7 +1394,711 @@ def get_orders_by_month(year: str):
     return month_dict
 
 
-def calculate_realized_pnl(year: str, month: str):
+def get_realized_strategy_filter_options(
+    trades: pd.DataFrame | None = None,
+) -> tuple[list[str], dict[str, str]]:
+    labels = {ALL_STRATEGIES_FILTER: "All strategies"}
+    options = [ALL_STRATEGIES_FILTER]
+
+    if trades is None or trades.empty:
+        return options, labels
+
+    trades = _normalize_realized_strategy_columns(trades)
+    strategies = (
+        trades[["Strategy_Id", "Strategy"]]
+        .drop_duplicates()
+        .sort_values("Strategy", kind="stable")
+    )
+    has_missing = False
+    for _, strategy in strategies.iterrows():
+        strategy_id = str(strategy.get("Strategy_Id", "") or "").strip()
+        strategy_label = str(strategy.get("Strategy", "") or "").strip()
+        if not strategy_id:
+            has_missing = True
+            continue
+        options.append(strategy_id)
+        labels[strategy_id] = strategy_label or strategy_id
+
+    if has_missing:
+        options.append(MISSING_STRATEGY_FILTER)
+        labels[MISSING_STRATEGY_FILTER] = MISSING_STRATEGY_LABEL
+    return options, labels
+
+
+def _realized_strategy_label(row: pd.Series) -> str:
+    strategy_name = str(row.get("Strategy_Name", "") or "").strip()
+    strategy_id = str(row.get("Strategy_Id", "") or "").strip()
+    return strategy_name or strategy_id or MISSING_STRATEGY_LABEL
+
+
+def _normalize_realized_strategy_columns(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df.copy()
+    df = df.copy()
+    if "Strategy_Id" not in df.columns:
+        df["Strategy_Id"] = ""
+    if "Strategy_Name" not in df.columns:
+        df["Strategy_Name"] = ""
+    df["Strategy_Id"] = df["Strategy_Id"].fillna("").astype(str).str.strip()
+    df["Strategy_Name"] = df["Strategy_Name"].fillna("").astype(str).str.strip()
+    df["Strategy"] = df.apply(_realized_strategy_label, axis=1)
+    return df
+
+
+def _filter_realized_trades_by_strategy(
+    df: pd.DataFrame, strategy_filter: str
+) -> pd.DataFrame:
+    if df.empty or strategy_filter == ALL_STRATEGIES_FILTER:
+        return df.copy()
+    df = _normalize_realized_strategy_columns(df)
+    if strategy_filter == MISSING_STRATEGY_FILTER:
+        return df[df["Strategy_Id"] == ""].copy()
+    return df[df["Strategy_Id"] == str(strategy_filter)].copy()
+
+
+def _strategy_filter_label(
+    strategy_filter: str, labels: dict[str, str] | None = None
+) -> str:
+    if labels and strategy_filter in labels:
+        return labels[strategy_filter]
+    if strategy_filter == ALL_STRATEGIES_FILTER:
+        return "All strategies"
+    if strategy_filter == MISSING_STRATEGY_FILTER:
+        return MISSING_STRATEGY_LABEL
+    return str(strategy_filter)
+
+
+def _numeric_realized_trades(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df.copy()
+    df = df.copy()
+    for column in ("PnL_Perc", "PnL_Value", "Sell_Position_Value"):
+        df[column] = pd.to_numeric(df.get(column, 0.0), errors="coerce").fillna(0.0)
+    return df
+
+
+def _weighted_realized_pnl_perc(df: pd.DataFrame) -> float:
+    if df.empty:
+        return 0.0
+    df = _numeric_realized_trades(df)
+    denominator = df["Sell_Position_Value"].sum()
+    if denominator == 0:
+        return 0.0
+    return float((df["PnL_Perc"] * df["Sell_Position_Value"]).sum() / denominator)
+
+
+def _realized_period_summary(df: pd.DataFrame) -> dict:
+    if df.empty:
+        return {"PnL_Perc": 0.0, "PnL_Value": 0.0, "Positions": 0}
+    df = _numeric_realized_trades(df)
+    return {
+        "PnL_Perc": _weighted_realized_pnl_perc(df),
+        "PnL_Value": float(df["PnL_Value"].sum()),
+        "Positions": int(len(df)),
+    }
+
+
+def _get_realized_trades_for_period(year: str, month: str) -> pd.DataFrame:
+    trades = database.get_orders_by_side_year_month("SELL", str(year), str(month))
+    return _normalize_realized_strategy_columns(trades)
+
+
+def _get_realized_trades_for_year(
+    year: str, strategy_filter: str = ALL_STRATEGIES_FILTER
+) -> pd.DataFrame:
+    trades = _get_realized_trades_for_period(str(year), "13")
+    return _filter_realized_trades_by_strategy(trades, strategy_filter)
+
+
+def calculate_monthly_realized_returns(
+    years: list[str], strategy_filter: str = ALL_STRATEGIES_FILTER
+) -> pd.DataFrame:
+    records = []
+
+    for year in years:
+        trades = _get_realized_trades_for_year(str(year), strategy_filter)
+        if not trades.empty and "Sell_Date" in trades.columns:
+            trades = trades.copy()
+            trades["Sell_Date"] = pd.to_datetime(trades["Sell_Date"], errors="coerce")
+            trades = trades.dropna(subset=["Sell_Date"])
+
+        for month in MONTHLY_RETURNS_MONTHS:
+            month_number = month["Month_Number"]
+            month_trades = pd.DataFrame()
+            if not trades.empty and "Sell_Date" in trades.columns:
+                month_trades = trades[trades["Sell_Date"].dt.month == month_number]
+            summary = _realized_period_summary(month_trades)
+            records.append(
+                {
+                    "Year": str(year),
+                    "Month": month["Month"],
+                    "Month_Number": month_number,
+                    "Period": month["Month"],
+                    "Period_Order": month_number,
+                    "Strategy": _strategy_filter_label(strategy_filter),
+                    **summary,
+                }
+            )
+
+        annual_summary = _realized_period_summary(trades)
+        records.append(
+            {
+                "Year": str(year),
+                "Month": "Total",
+                "Month_Number": 13,
+                "Period": "Total",
+                "Period_Order": 13,
+                "Strategy": _strategy_filter_label(strategy_filter),
+                **annual_summary,
+            }
+        )
+
+    df = pd.DataFrame(records)
+    if df.empty:
+        return df
+    df["Return_Label"] = df.apply(
+        lambda row: f'{float(row["PnL_Perc"]):+.2f}%'
+        if int(row["Positions"]) > 0
+        else "",
+        axis=1,
+    )
+    df["PnL_Value_Label"] = df["PnL_Value"].apply(
+        lambda value: f"{float(value):.{num_decimals}f}"
+    )
+    return df
+
+
+def render_realized_monthly_returns(
+    years: list[str],
+    strategy_filter: str = ALL_STRATEGIES_FILTER,
+    strategy_labels: dict[str, str] | None = None,
+):
+    if not years:
+        return
+
+    monthly_returns = calculate_monthly_realized_returns(years, strategy_filter)
+    monthly_returns["Strategy"] = _strategy_filter_label(strategy_filter, strategy_labels)
+    traded_months = monthly_returns[
+        (monthly_returns["Month_Number"] <= 12) & (monthly_returns["Positions"] > 0)
+    ]
+    if monthly_returns.empty or traded_months.empty:
+        return
+
+    max_abs_return = max(float(traded_months["PnL_Perc"].abs().max()), 1.0)
+
+    st.header("Monthly Realized Returns")
+    st.caption(
+        "Weighted realized PnL% by sell position value. Empty cells mean no closed trades."
+    )
+
+    heatmap = (
+        alt.Chart(monthly_returns)
+        .mark_rect(stroke="white", strokeWidth=1)
+        .encode(
+            x=alt.X(
+                "Period:N",
+                sort=list(calendar.month_abbr[1:]) + ["Total"],
+                title=None,
+                axis=alt.Axis(labelAngle=0),
+            ),
+            y=alt.Y("Year:N", sort="-x", title=None),
+            color=alt.condition(
+                "datum.Positions == 0",
+                alt.value("#F1F3F5"),
+                alt.Color(
+                    "PnL_Perc:Q",
+                    title="Weighted PnL%",
+                    scale=alt.Scale(
+                        domain=[-max_abs_return, 0, max_abs_return],
+                        range=["#D95F5F", "#F7F3C4", "#4F9D69"],
+                    ),
+                ),
+            ),
+            tooltip=[
+                alt.Tooltip("Year:N"),
+                alt.Tooltip("Period:N", title="Month"),
+                alt.Tooltip("Strategy:N"),
+                alt.Tooltip("PnL_Perc:Q", title="Weighted PnL%", format="+.2f"),
+                alt.Tooltip(
+                    "PnL_Value:Q",
+                    title=f"PnL {trade_against}",
+                    format=f".{num_decimals}f",
+                ),
+                alt.Tooltip("Positions:Q", title="Trades", format=",d"),
+            ],
+        )
+        .properties(height=max(140, 34 * len(years)))
+    )
+
+    labels = (
+        alt.Chart(monthly_returns)
+        .mark_text(fontSize=12)
+        .encode(
+            x=alt.X("Period:N", sort=list(calendar.month_abbr[1:]) + ["Total"]),
+            y=alt.Y("Year:N", sort="-x"),
+            text="Return_Label:N",
+            color=alt.condition(
+                "abs(datum.PnL_Perc) > 0.65 * "
+                + str(max_abs_return)
+                + " && datum.Positions > 0",
+                alt.value("white"),
+                alt.value("#1F2933"),
+            ),
+        )
+    )
+
+    st.altair_chart((heatmap + labels).interactive(), use_container_width=True)
+
+    with st.expander("Monthly Returns Distribution"):
+        st.caption(
+            "This is complementary to the heatmap: it shows how monthly outcomes are distributed, without their calendar order."
+        )
+        distribution = traded_months.copy()
+        distribution["Result"] = distribution["PnL_Perc"].apply(
+            lambda value: "Positive" if float(value) >= 0 else "Negative"
+        )
+        mean_return = float(distribution["PnL_Perc"].mean())
+        median_return = float(distribution["PnL_Perc"].median())
+
+        bars = (
+            alt.Chart(distribution)
+            .mark_bar()
+            .encode(
+                x=alt.X(
+                    "PnL_Perc:Q",
+                    bin=alt.Bin(maxbins=16),
+                    title="Weighted monthly PnL%",
+                ),
+                y=alt.Y("count():Q", title="Months"),
+                color=alt.Color(
+                    "Result:N",
+                    scale=alt.Scale(
+                        domain=["Negative", "Positive"],
+                        range=["#D95F5F", "#4F9D69"],
+                    ),
+                    legend=None,
+                ),
+                tooltip=[
+                    alt.Tooltip("count():Q", title="Months"),
+                    alt.Tooltip("PnL_Perc:Q", title="Weighted PnL%", format="+.2f"),
+                ],
+            )
+            .properties(height=240)
+        )
+        mean_rule = (
+            alt.Chart(pd.DataFrame({"value": [mean_return], "Metric": ["Mean"]}))
+            .mark_rule(color="#C62828", strokeDash=[6, 4], size=2)
+            .encode(
+                x="value:Q",
+                tooltip=["Metric:N", alt.Tooltip("value:Q", format="+.2f")],
+            )
+        )
+        median_rule = (
+            alt.Chart(pd.DataFrame({"value": [median_return], "Metric": ["Median"]}))
+            .mark_rule(color="#F59E0B", strokeDash=[2, 4], size=2)
+            .encode(
+                x="value:Q",
+                tooltip=["Metric:N", alt.Tooltip("value:Q", format="+.2f")],
+            )
+        )
+        st.altair_chart(bars + mean_rule + median_rule, use_container_width=True)
+
+
+def realized_detail_column_config():
+    return {
+        "Id": None,
+        "Strategy_Id": None,
+        "Strategy_Name": None,
+        "Strategy_Params_JSON": None,
+        "PnL_Perc": st.column_config.NumberColumn(format="%.2f"),
+        "PnL_Value": st.column_config.NumberColumn(format=f"%.{num_decimals}f"),
+        "Strategy": st.column_config.TextColumn("Strategy", width="medium"),
+        "Exit_Reason": st.column_config.TextColumn(width="large"),
+        "Stop_Details": st.column_config.JsonColumn(
+            "Stop_Details",
+            width="large",
+            help="Structured stop metadata saved at trade exit.",
+        ),
+    }
+
+
+def render_realized_kpis(kpis: dict):
+    st.header("Realized PnL Overview")
+    cols = st.columns(6)
+    cols[0].metric("Realized PnL", f"{kpis['pnl_value']:.{num_decimals}f}")
+    cols[1].metric("Weighted PnL%", f"{kpis['pnl_perc']:.2f}%")
+    cols[2].metric("Win Rate", f"{kpis['win_rate']:.2f}%")
+    cols[3].metric("Closed Trades", f"{kpis['positions']}")
+    cols[4].metric("Best Strategy", kpis["best_strategy"])
+    cols[5].metric("Worst Strategy", kpis["worst_strategy"])
+
+
+def _format_realized_summary_numbers(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    df = df.copy()
+    if "PnL_Perc" in df.columns:
+        df["PnL_Perc"] = df["PnL_Perc"].apply(lambda x: "{:.2f}".format(float(x)))
+    if "PnL_Value" in df.columns:
+        df["PnL_Value"] = df["PnL_Value"].apply(
+            lambda x: f"{{:.{num_decimals}f}}".format(float(x))
+        )
+    return df
+
+
+def _build_realized_bot_summary(trades: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for bot in REALIZED_PNL_BOTS:
+        summary = _realized_period_summary(
+            trades[trades["Bot"] == bot] if not trades.empty else pd.DataFrame()
+        )
+        rows.append({"Bot": bot, **summary})
+
+    total_summary = _realized_period_summary(trades)
+    rows.append({"Bot": "TOTAL", **total_summary})
+    return pd.DataFrame(rows)
+
+
+def _build_realized_strategy_summary(trades: pd.DataFrame) -> pd.DataFrame:
+    if trades.empty:
+        return pd.DataFrame(
+            columns=[
+                "Strategy",
+                "PnL_Perc",
+                "PnL_Value",
+                "Positions",
+                "Win_Rate",
+                "Best_Trade",
+                "Worst_Trade",
+                "Avg_Trade",
+            ]
+        )
+
+    trades = _numeric_realized_trades(_normalize_realized_strategy_columns(trades))
+    rows = []
+    for strategy, df_strategy in trades.groupby("Strategy", sort=True):
+        summary = _realized_period_summary(df_strategy)
+        pnl_values = pd.to_numeric(df_strategy["PnL_Value"], errors="coerce").fillna(0.0)
+        pnl_perc = pd.to_numeric(df_strategy["PnL_Perc"], errors="coerce").fillna(0.0)
+        positions = int(summary["Positions"])
+        win_rate = float((pnl_values > 0).sum() / positions * 100) if positions else 0.0
+        rows.append(
+            {
+                "Strategy": strategy,
+                **summary,
+                "Win_Rate": win_rate,
+                "Best_Trade": float(pnl_perc.max()) if positions else 0.0,
+                "Worst_Trade": float(pnl_perc.min()) if positions else 0.0,
+                "Avg_Trade": float(pnl_perc.mean()) if positions else 0.0,
+            }
+        )
+
+    return pd.DataFrame(rows).sort_values(
+        ["PnL_Value", "PnL_Perc"], ascending=[False, False], kind="stable"
+    )
+
+
+def _build_realized_strategy_timeframe_matrix(trades: pd.DataFrame) -> pd.DataFrame:
+    if trades.empty:
+        return pd.DataFrame(columns=["Strategy", *REALIZED_PNL_BOTS, "TOTAL"])
+
+    trades = _normalize_realized_strategy_columns(trades)
+    rows = []
+    for strategy, df_strategy in trades.groupby("Strategy", sort=True):
+        row = {"Strategy": strategy}
+        for bot in REALIZED_PNL_BOTS:
+            df_bot = df_strategy[df_strategy["Bot"] == bot]
+            row[bot] = None if df_bot.empty else _weighted_realized_pnl_perc(df_bot)
+        row["TOTAL"] = _weighted_realized_pnl_perc(df_strategy)
+        rows.append(row)
+
+    return pd.DataFrame(rows).sort_values("TOTAL", ascending=False, kind="stable")
+
+
+def _build_realized_exit_reason_summary(trades: pd.DataFrame) -> pd.DataFrame:
+    if trades.empty:
+        return pd.DataFrame(
+            columns=["Exit_Type", "Exit_Reason", "PnL_Perc", "PnL_Value", "Positions"]
+        )
+
+    trades = trades.copy()
+    if "Stop_Type" in trades.columns:
+        trades["Exit_Type"] = (
+            trades["Stop_Type"].fillna("").astype(str).str.strip().replace("", "unknown")
+        )
+    else:
+        trades["Exit_Type"] = "unknown"
+    if "Exit_Reason" in trades.columns:
+        trades["Exit_Reason"] = (
+            trades["Exit_Reason"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .replace("", "No reason")
+        )
+    else:
+        trades["Exit_Reason"] = "No reason"
+    rows = []
+    for (exit_type, exit_reason), df_exit in trades.groupby(
+        ["Exit_Type", "Exit_Reason"], sort=True
+    ):
+        rows.append(
+            {
+                "Exit_Type": exit_type,
+                "Exit_Reason": exit_reason,
+                **_realized_period_summary(df_exit),
+            }
+        )
+
+    return pd.DataFrame(rows).sort_values(
+        ["PnL_Value", "Positions"], ascending=[False, False], kind="stable"
+    )
+
+
+def _build_live_vs_backtest_summary(trades: pd.DataFrame) -> pd.DataFrame:
+    columns = [
+        "Strategy",
+        "Bot",
+        "Symbol",
+        "Live_PnL_Perc",
+        "Live_PnL_Value",
+        "Live_Trades",
+        "Live_Win_Rate",
+        "Backtest_Return_Perc",
+        "Backtest_Win_Rate_Perc",
+        "Backtest_Trades",
+        "Quality_Grade",
+        "Quality_Score",
+        "Trading_Approved",
+    ]
+    if trades.empty:
+        return pd.DataFrame(columns=columns)
+
+    trades = _numeric_realized_trades(_normalize_realized_strategy_columns(trades))
+    rows = []
+    for (strategy_id, strategy, bot, symbol), df_group in trades.groupby(
+        ["Strategy_Id", "Strategy", "Bot", "Symbol"], sort=True
+    ):
+        summary = _realized_period_summary(df_group)
+        pnl_values = pd.to_numeric(df_group["PnL_Value"], errors="coerce").fillna(0.0)
+        positions = int(summary["Positions"])
+        rows.append(
+            {
+                "Strategy_Id": strategy_id,
+                "Strategy": strategy,
+                "Bot": bot,
+                "Symbol": symbol,
+                "Live_PnL_Perc": float(summary["PnL_Perc"]),
+                "Live_PnL_Value": float(summary["PnL_Value"]),
+                "Live_Trades": positions,
+                "Live_Win_Rate": float((pnl_values > 0).sum() / positions * 100)
+                if positions
+                else 0.0,
+            }
+        )
+    live = pd.DataFrame(rows)
+    if live.empty:
+        return pd.DataFrame(columns=columns)
+
+    try:
+        backtests = database.get_all_backtesting_results()
+    except Exception:
+        backtests = pd.DataFrame()
+    if backtests.empty:
+        live["Backtest_Return_Perc"] = None
+        live["Backtest_Win_Rate_Perc"] = None
+        live["Backtest_Trades"] = None
+        live["Quality_Grade"] = ""
+        live["Quality_Score"] = None
+        live["Trading_Approved"] = None
+        return live[columns]
+
+    backtest_columns = [
+        "Strategy_Id",
+        "Symbol",
+        "Time_Frame",
+        "Return_Perc",
+        "Win_Rate_Perc",
+        "Trades",
+        "Quality_Grade",
+        "Quality_Score",
+        "Trading_Approved",
+    ]
+    existing_columns = [column for column in backtest_columns if column in backtests.columns]
+    backtests = backtests[existing_columns].copy()
+    backtests = backtests.rename(
+        columns={
+            "Time_Frame": "Bot",
+            "Return_Perc": "Backtest_Return_Perc",
+            "Win_Rate_Perc": "Backtest_Win_Rate_Perc",
+            "Trades": "Backtest_Trades",
+        }
+    )
+    merged = live.merge(
+        backtests,
+        how="left",
+        on=["Strategy_Id", "Bot", "Symbol"],
+    )
+    merged = merged.sort_values(
+        ["Live_PnL_Value", "Live_PnL_Perc"], ascending=[False, False], kind="stable"
+    )
+    return merged[columns]
+
+
+def _build_realized_kpis(trades: pd.DataFrame, strategy_summary: pd.DataFrame) -> dict:
+    summary = _realized_period_summary(trades)
+    if trades.empty:
+        win_rate = 0.0
+    else:
+        pnl_values = pd.to_numeric(trades["PnL_Value"], errors="coerce").fillna(0.0)
+        win_rate = float((pnl_values > 0).sum() / len(trades) * 100)
+
+    best_strategy = "NA"
+    worst_strategy = "NA"
+    if not strategy_summary.empty:
+        sorted_summary = strategy_summary.sort_values(
+            ["PnL_Value", "PnL_Perc"], ascending=[False, False], kind="stable"
+        )
+        best_strategy = str(sorted_summary.iloc[0]["Strategy"])
+        worst_strategy = str(sorted_summary.iloc[-1]["Strategy"])
+
+    return {
+        "pnl_value": float(summary["PnL_Value"]),
+        "pnl_perc": float(summary["PnL_Perc"]),
+        "win_rate": win_rate,
+        "positions": int(summary["Positions"]),
+        "best_strategy": best_strategy,
+        "worst_strategy": worst_strategy,
+    }
+
+
+def _format_realized_detail(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df.copy()
+    df = _normalize_realized_strategy_columns(df)
+
+    def _fmt8(value) -> str:
+        try:
+            if pd.isna(value):
+                return ""
+            val = float(value)
+            return f"{val:.8f}"
+        except (TypeError, ValueError):
+            return ""
+
+    def _fmt_compact(value) -> str:
+        raw = _fmt8(value)
+        if raw == "":
+            return ""
+        return raw.rstrip("0").rstrip(".")
+
+    def _parse_atr_params(raw_params: str):
+        if not raw_params:
+            return None
+        try:
+            return json.loads(raw_params)
+        except Exception:
+            return None
+
+    def _build_stop_details(row: pd.Series):
+        stop_type = str(row.get("Stop_Type", "") or "").strip().lower()
+        trigger = row.get("Stop_Trigger_Price", None)
+        trail = row.get("Trail_Stop_ATR_At_Exit", None)
+        high = row.get("Highest_Price_Since_Entry_At_Exit", None)
+        atr_params = str(row.get("Atr_Params_At_Exit", "") or "").strip()
+        atr = _parse_atr_params(atr_params)
+        details = {"type": stop_type} if stop_type else {}
+
+        if stop_type == "atr_trailing":
+            details["trigger_price"] = _fmt_compact(trigger)
+            details["trail_stop_at_exit"] = _fmt_compact(trail)
+            details["high_since_entry"] = _fmt_compact(high)
+            if atr:
+                details["atr"] = atr
+            elif atr_params:
+                details["atr_raw"] = atr_params
+            return details
+
+        if stop_type == "hard_sl":
+            details["trigger_price"] = _fmt_compact(trigger)
+            if atr:
+                details["atr"] = atr
+            elif atr_params:
+                details["atr_raw"] = atr_params
+            return details
+
+        if stop_type == "tp":
+            details["label"] = "Take Profit"
+            return details
+
+        if stop_type == "forced_sale":
+            details["label"] = "Forced Sale"
+            return details
+
+        if stop_type == "strategy":
+            details["label"] = "Strategy Exit"
+            return details
+
+        if stop_type:
+            return details
+        return None
+
+    for column in ("Buy_Price", "Sell_Price", "Sell_Position_Value", "Buy_Position_Value"):
+        if column in df.columns:
+            df[column] = df[column].apply(lambda x: f"{float(x):.8f}")
+    if "PnL_Perc" in df.columns:
+        df["PnL_Perc"] = df["PnL_Perc"].apply(lambda x: "{:.2f}".format(float(x)))
+    if "PnL_Value" in df.columns:
+        df["PnL_Value"] = df["PnL_Value"].apply(
+            lambda x: f"{{:.{num_decimals}f}}".format(float(x))
+        )
+
+    if "Stop_Type" in df.columns:
+        df["Stop_Details"] = df.apply(_build_stop_details, axis=1)
+    else:
+        df["Stop_Details"] = None
+
+    preferred_columns = [
+        "Id",
+        "Bot",
+        "Symbol",
+        "Strategy",
+        "PnL_Perc",
+        "PnL_Value",
+        "Buy_Date",
+        "Buy_Price",
+        "Buy_Qty",
+        "Buy_Position_Value",
+        "Sell_Date",
+        "Sell_Price",
+        "Sell_Qty",
+        "Sell_Position_Value",
+        "Exit_Reason",
+        "Stop_Details",
+        "Strategy_Id",
+        "Strategy_Name",
+        "Strategy_Params_JSON",
+    ]
+    ordered_columns = [column for column in preferred_columns if column in df.columns]
+    ordered_columns += [column for column in df.columns if column not in ordered_columns]
+    df = df[ordered_columns]
+
+    drop_cols = [
+        "Stop_Type",
+        "Stop_Trigger_Price",
+        "Trail_Stop_ATR_At_Exit",
+        "Highest_Price_Since_Entry_At_Exit",
+        "Atr_Params_At_Exit",
+    ]
+    existing_drop_cols = [c for c in drop_cols if c in df.columns]
+    if existing_drop_cols:
+        df = df.drop(columns=existing_drop_cols)
+    return df
+
+
+def calculate_realized_pnl(
+    year: str, month: str, strategy_filter: str = ALL_STRATEGIES_FILTER
+):
     """
     Aggregates realized PnL by bot (1d, 4h, 1h) and TOTAL.
     Uses WEIGHTED PnL% per bot and TOTAL:
@@ -1261,224 +2108,37 @@ def calculate_realized_pnl(year: str, month: str):
         year:  'YYYY' or None (if None, returns empty totals)
         month: '01'..'12' or '13' for 'all months of the given year'
 
-    Returns:
-        results_df: summary table with weighted PnL% per bot and TOTAL
-        df_1d, df_4h, df_1h: detailed DataFrames for each bot
+        strategy_filter: selected strategy id, all-strategy sentinel, or missing sentinel
     """
+    trades = _get_realized_trades_for_period(str(year), str(month))
+    trades = _filter_realized_trades_by_strategy(trades, strategy_filter)
 
-    # Load SELL-side order details per bot (includes Sell_Position_Value)
-    df_1d = database.get_orders_by_bot_side_year_month(
-        bot="1d", side="SELL", year=year, month=str(month)
+    result_closed_positions = _format_realized_summary_numbers(
+        _build_realized_bot_summary(trades)
     )
-    df_4h = database.get_orders_by_bot_side_year_month(
-        bot="4h", side="SELL", year=year, month=str(month)
+    strategy_summary = _build_realized_strategy_summary(trades)
+    strategy_timeframe_matrix = _build_realized_strategy_timeframe_matrix(trades)
+    exit_reason_summary = _build_realized_exit_reason_summary(trades)
+    live_vs_backtest = _build_live_vs_backtest_summary(trades)
+    kpis = _build_realized_kpis(trades, strategy_summary)
+
+    trades_all = _format_realized_detail(trades)
+    trades_month_1d = _format_realized_detail(trades[trades["Bot"] == "1d"])
+    trades_month_4h = _format_realized_detail(trades[trades["Bot"] == "4h"])
+    trades_month_1h = _format_realized_detail(trades[trades["Bot"] == "1h"])
+
+    return (
+        result_closed_positions,
+        trades_month_1d,
+        trades_month_4h,
+        trades_month_1h,
+        trades_all,
+        strategy_summary,
+        strategy_timeframe_matrix,
+        exit_reason_summary,
+        live_vs_backtest,
+        kpis,
     )
-    df_1h = database.get_orders_by_bot_side_year_month(
-        bot="1h", side="SELL", year=year, month=str(month)
-    )
-
-    # Prepare a helper to compute weighted PnL% for a given dataframe
-    def _weighted_pnl_perc(df: pd.DataFrame) -> float:
-        if df.empty:
-            return 0.0
-        # Ensure numeric types for weighting (avoid any stray strings from previous formatting)
-        df_num = df.copy()
-        df_num["Sell_Position_Value"] = pd.to_numeric(
-            df_num.get("Sell_Position_Value", 0.0), errors="coerce"
-        ).fillna(0.0)
-        df_num["PnL_Perc"] = pd.to_numeric(
-            df_num.get("PnL_Perc", 0.0), errors="coerce"
-        ).fillna(0.0)
-        denom = df_num["Sell_Position_Value"].sum()
-        if denom == 0:
-            return 0.0
-        return float((df_num["PnL_Perc"] * df_num["Sell_Position_Value"]).sum() / denom)
-
-    # Build results per bot with WEIGHTED PnL%
-    results_df = pd.DataFrame()
-    for label, df_bot in [("1d", df_1d), ("4h", df_4h), ("1h", df_1h)]:
-        if df_bot.empty:
-            bot_weighted = 0.0
-            pnl_value_sum = 0.0
-            trades = 0
-        else:
-            bot_weighted = _weighted_pnl_perc(df_bot)
-            pnl_value_sum = float(
-                pd.to_numeric(df_bot["PnL_Value"], errors="coerce").fillna(0.0).sum()
-            )
-            trades = len(df_bot)
-
-        results_df = pd.concat(
-            [
-                results_df,
-                pd.DataFrame(
-                    {
-                        "Bot": [label],
-                        "PnL_Perc": [
-                            bot_weighted
-                        ],  # Weighted PnL% by Sell_Position_Value
-                        "PnL_Value": [pnl_value_sum],  # Sum of realized PnL value
-                        "Positions": [trades],  # Number of SELL trades in period
-                    }
-                ),
-            ],
-            ignore_index=True,
-        )
-
-    # TOTAL row: WEIGHTED across ALL bots (weights = Sell_Position_Value)
-    all_frames = [df for df in (df_1d, df_4h, df_1h) if not df.empty]
-    df_all = pd.concat(all_frames, ignore_index=True) if all_frames else pd.DataFrame()
-    if df_all.empty:
-        weighted_total = 0.0
-        sum_pnl_value_total = 0.0
-        trades_total = 0
-    else:
-        weighted_total = _weighted_pnl_perc(df_all)
-        sum_pnl_value_total = float(
-            pd.to_numeric(df_all["PnL_Value"], errors="coerce").fillna(0.0).sum()
-        )
-        trades_total = len(df_all)
-
-    # Append TOTAL row
-    results_df.loc[len(results_df)] = [
-        "TOTAL",
-        weighted_total,
-        sum_pnl_value_total,
-        trades_total,
-    ]
-
-    # ---------- Display formatting ----------
-    # Format summary numbers for display (keep numeric precision in detail tables below)
-    results_df["PnL_Perc"] = results_df["PnL_Perc"].apply(
-        lambda x: "{:.2f}".format(float(x))
-    )
-    results_df["PnL_Value"] = results_df["PnL_Value"].apply(
-        lambda x: f"{{:.{num_decimals}f}}".format(float(x))
-    )
-
-    # Detail tables: keep high precision where relevant (8 decimals)
-    def _fmt_detail(df: pd.DataFrame) -> pd.DataFrame:
-        if df.empty:
-            return df
-        df = df.copy()
-
-        def _fmt8(value) -> str:
-            try:
-                if pd.isna(value):
-                    return ""
-                val = float(value)
-                return f"{val:.8f}"
-            except (TypeError, ValueError):
-                return ""
-
-        def _fmt_compact(value) -> str:
-            raw = _fmt8(value)
-            if raw == "":
-                return ""
-            # Keep precision while reducing visual noise.
-            return raw.rstrip("0").rstrip(".")
-
-        def _parse_atr_params(raw_params: str):
-            if not raw_params:
-                return None
-            try:
-                return json.loads(raw_params)
-            except Exception:
-                return None
-
-        def _build_stop_details(row: pd.Series):
-            stop_type = str(row.get("Stop_Type", "") or "").strip().lower()
-            trigger = row.get("Stop_Trigger_Price", None)
-            trail = row.get("Trail_Stop_ATR_At_Exit", None)
-            high = row.get("Highest_Price_Since_Entry_At_Exit", None)
-            atr_params = str(row.get("Atr_Params_At_Exit", "") or "").strip()
-            atr = _parse_atr_params(atr_params)
-            details = {"type": stop_type} if stop_type else {}
-
-            if stop_type == "atr_trailing":
-                details["trigger_price"] = _fmt_compact(trigger)
-                details["trail_stop_at_exit"] = _fmt_compact(trail)
-                details["high_since_entry"] = _fmt_compact(high)
-                if atr:
-                    details["atr"] = atr
-                elif atr_params:
-                    details["atr_raw"] = atr_params
-                return details
-
-            if stop_type == "hard_sl":
-                details["trigger_price"] = _fmt_compact(trigger)
-                if atr:
-                    details["atr"] = atr
-                elif atr_params:
-                    details["atr_raw"] = atr_params
-                return details
-
-            if stop_type == "tp":
-                details["label"] = "Take Profit"
-                return details
-
-            if stop_type == "forced_sale":
-                details["label"] = "Forced Sale"
-                return details
-
-            if stop_type == "strategy":
-                details["label"] = "Strategy Exit"
-                return details
-
-            if stop_type:
-                return details
-            return None
-
-        # Keep 8-decimal formatting for price/value columns (for readability in UI tables)
-        if "Buy_Price" in df.columns:
-            df["Buy_Price"] = df["Buy_Price"].apply(lambda x: f"{float(x):.8f}")
-        if "Sell_Price" in df.columns:
-            df["Sell_Price"] = df["Sell_Price"].apply(lambda x: f"{float(x):.8f}")
-        if "Sell_Position_Value" in df.columns:
-            df["Sell_Position_Value"] = df["Sell_Position_Value"].apply(
-                lambda x: f"{float(x):.8f}"
-            )
-        if "Buy_Position_Value" in df.columns:
-            df["Buy_Position_Value"] = df["Buy_Position_Value"].apply(
-                lambda x: f"{float(x):.8f}"
-            )
-        # Percent and value formatting
-        if "PnL_Perc" in df.columns:
-            df["PnL_Perc"] = df["PnL_Perc"].apply(lambda x: "{:.2f}".format(float(x)))
-        if "PnL_Value" in df.columns:
-            df["PnL_Value"] = df["PnL_Value"].apply(
-                lambda x: f"{{:.{num_decimals}f}}".format(float(x))
-            )
-
-        if "Stop_Type" in df.columns:
-            df["Stop_Details"] = df.apply(_build_stop_details, axis=1)
-        else:
-            df["Stop_Details"] = None
-
-        if "Exit_Reason" in df.columns and "Stop_Details" in df.columns:
-            cols = [c for c in df.columns if c != "Stop_Details"]
-            insert_at = cols.index("Exit_Reason") + 1
-            cols.insert(insert_at, "Stop_Details")
-            df = df[cols]
-
-        # Hide raw stop metadata columns; keep only aggregated Stop_Details in the grid.
-        drop_cols = [
-            "Stop_Type",
-            "Stop_Trigger_Price",
-            "Trail_Stop_ATR_At_Exit",
-            "Highest_Price_Since_Entry_At_Exit",
-            "Atr_Params_At_Exit",
-        ]
-        existing_drop_cols = [c for c in drop_cols if c in df.columns]
-        if existing_drop_cols:
-            df = df.drop(columns=existing_drop_cols)
-        return df
-
-    df_1d = _fmt_detail(df_1d)
-    df_4h = _fmt_detail(df_4h)
-    df_1h = _fmt_detail(df_1h)
-
-    return results_df, df_1d, df_4h, df_1h
 
 
 def calculate_unrealized_pnl():

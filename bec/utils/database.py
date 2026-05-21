@@ -562,6 +562,23 @@ def get_years_from_orders():
         return result
 
 
+sql_get_years_from_orders_by_side = """
+    SELECT DISTINCT(strftime('%Y', Date)) AS Year
+    FROM Orders
+    WHERE Side = ?
+    ORDER BY Year DESC;"""
+
+
+def get_years_from_orders_by_side(side: str):
+    connection = _get_conn()
+    with connection:
+        df = pd.read_sql(sql_get_years_from_orders_by_side, connection, params=(side,))
+        result = []
+        if not df.empty:
+            result = df.Year.tolist()
+        return result
+
+
 sql_get_months_from_orders_by_year = """
     SELECT DISTINCT(strftime('%m', Date)) AS Month 
     FROM Orders
@@ -583,6 +600,36 @@ def get_months_from_orders_by_year(year: str):
         df = pd.read_sql(sql_get_months_from_orders_by_year, connection, params=(year,))
         if not df.empty:
             # convert month from string to integer
+            df["Month"] = df["Month"].apply(lambda x: int(x))
+            result = df.Month.tolist()
+        return result
+
+
+sql_get_months_from_orders_by_year_side = """
+    SELECT DISTINCT(strftime('%m', Date)) AS Month
+    FROM Orders
+    WHERE
+        Side = ?
+        AND Date LIKE ?
+    ORDER BY Month DESC;"""
+
+
+def get_months_from_orders_by_year_side(year: str, side: str):
+    connection = _get_conn()
+
+    result = []
+
+    if year == None:
+        return result
+
+    year = year + "-%"
+    with connection:
+        df = pd.read_sql(
+            sql_get_months_from_orders_by_year_side,
+            connection,
+            params=(side, year),
+        )
+        if not df.empty:
             df["Month"] = df["Month"].apply(lambda x: int(x))
             result = df.Month.tolist()
         return result
@@ -878,6 +925,121 @@ def get_orders_by_bot_side_year_month(bot: str, side: str, year: str, month: str
         params=(bot, side, year_month),
     )
     return df
+
+
+sql_get_orders_by_side_year_month = """
+    SELECT
+        os.Id,
+        os.Bot,
+        os.Symbol,
+        os.PnL_Perc,
+        os.PnL_Value,
+        ob.Date as Buy_Date,
+        ob.Price as Buy_Price,
+        ob.Qty as Buy_Qty,
+        (ob.Qty * ob.Price) Buy_Position_Value,
+        os.Date as Sell_Date,
+        os.Price as Sell_Price,
+        os.Qty as Sell_Qty,
+        (os.Qty * os.Price) Sell_Position_Value,
+        os.Strategy_Id,
+        st.Name as Strategy_Name,
+        os.Strategy_Params_JSON,
+        os.Exit_Reason,
+        os.Stop_Type,
+        os.Stop_Trigger_Price,
+        os.Trail_Stop_ATR_At_Exit,
+        os.Highest_Price_Since_Entry_At_Exit,
+        os.Atr_Params_At_Exit
+    FROM Orders as os
+    LEFT JOIN Orders ob ON os.Buy_Order_Id = ob.Id
+    LEFT JOIN Strategies st ON st.Id = os.Strategy_Id
+    WHERE
+        os.Side = ?
+        AND os.Date LIKE ?
+    ORDER BY os.Date DESC;
+"""
+
+
+sql_get_orders_by_side = """
+    SELECT
+        os.Id,
+        os.Bot,
+        os.Symbol,
+        os.PnL_Perc,
+        os.PnL_Value,
+        ob.Date as Buy_Date,
+        ob.Price as Buy_Price,
+        ob.Qty as Buy_Qty,
+        (ob.Qty * ob.Price) Buy_Position_Value,
+        os.Date as Sell_Date,
+        os.Price as Sell_Price,
+        os.Qty as Sell_Qty,
+        (os.Qty * os.Price) Sell_Position_Value,
+        os.Strategy_Id,
+        st.Name as Strategy_Name,
+        os.Strategy_Params_JSON,
+        os.Exit_Reason,
+        os.Stop_Type,
+        os.Stop_Trigger_Price,
+        os.Trail_Stop_ATR_At_Exit,
+        os.Highest_Price_Since_Entry_At_Exit,
+        os.Atr_Params_At_Exit
+    FROM Orders as os
+    LEFT JOIN Orders ob ON os.Buy_Order_Id = ob.Id
+    LEFT JOIN Strategies st ON st.Id = os.Strategy_Id
+    WHERE
+        os.Side = ?
+    ORDER BY os.Date DESC;
+"""
+
+
+def get_orders_by_side_year_month(side: str, year: str, month: str):
+    connection = _get_conn()
+
+    month = month.zfill(2)
+
+    if year == "__all_time__":
+        return pd.read_sql(sql_get_orders_by_side, connection, params=(side,))
+
+    if year == None:
+        return pd.DataFrame(
+            columns=[
+                "Id",
+                "Bot",
+                "Symbol",
+                "PnL_Perc",
+                "PnL_Value",
+                "Buy_Date",
+                "Buy_Price",
+                "Buy_Qty",
+                "Buy_Position_Value",
+                "Sell_Date",
+                "Sell_Price",
+                "Sell_Qty",
+                "Sell_Position_Value",
+                "Strategy_Id",
+                "Strategy_Name",
+                "Strategy_Params_JSON",
+                "Exit_Reason",
+                "Stop_Type",
+                "Stop_Trigger_Price",
+                "Trail_Stop_ATR_At_Exit",
+                "Highest_Price_Since_Entry_At_Exit",
+                "Atr_Params_At_Exit",
+            ]
+        )
+
+    if month == "13":
+        year_month = str(year) + "-%"
+    else:
+        year_month = str(year) + "-" + str(month) + "-%"
+
+    return pd.read_sql(
+        sql_get_orders_by_side_year_month,
+        connection,
+        params=(side, year_month),
+    )
 
 
 sql_get_orders_by_side_date_range = """
