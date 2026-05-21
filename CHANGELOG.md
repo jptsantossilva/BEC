@@ -14,6 +14,7 @@ All notable changes to this project will be documented in this file.
 - Trading Auto-Switch - Added idempotent signal processing by strategy, BTC pair, signal direction, effective signal timeframe and candle id so weekly BTC strategies can be checked daily without repeating the same weekly conversion.
 - Trading Auto-Switch - Added `Auto_Switch_Signals` persistence and `1w` data loading support for declarative Bitcoin strategies with fixed weekly operands.
 - Strategy Builder - Added builtin Bitcoin strategy templates for `bullmarketsupportband` and `wema20` so production updates can seed them automatically.
+- Strategy Builder - Fixed saving drafts after metadata JSON was moved out of the editor advanced panel.
 - Market Phases - Removed the TradingView top performers file export and kept Telegram reports focused on the actual ranked top performers.
 
 ## [2026-05-20]

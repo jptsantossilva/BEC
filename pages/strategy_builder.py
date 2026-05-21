@@ -3337,7 +3337,7 @@ def render_editor(df: pd.DataFrame):
         if st.button("Save draft", icon=icons.ICON_SAVE, key=f"save_{selected_id}"):
             try:
                 definition = strategy_schema.validate_definition(edited_definition)
-                metadata = strategy_schema.parse_json_object(metadata_text, "Metadata_JSON")
+                metadata = strategy_schema.parse_json_object(row.get("Metadata_JSON"), "Metadata_JSON")
                 if str(row.get("Status", "draft")) == "approved":
                     new_id = database.create_strategy_draft_version(selected_id, definition, metadata=metadata)
                     st.session_state["strategy_builder_selected_id"] = new_id
