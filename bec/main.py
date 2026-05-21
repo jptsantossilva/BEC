@@ -103,9 +103,11 @@ def get_data(symbol, timeframe):
         pastdate = today - relativedelta(hours=4 * 200 * 8)
     elif timeframe == "1d":
         pastdate = today - relativedelta(days=200 * 8)
+    elif timeframe == "1w":
+        pastdate = today - relativedelta(weeks=200 * 8)
     else:
         raise ValueError(
-            f"Invalid timeframe '{timeframe}'. Expected one of: 15m, 1h, 4h, 1d."
+            f"Invalid timeframe '{timeframe}'. Expected one of: 15m, 1h, 4h, 1d, 1w."
         )
     
     start_ms = int(pastdate.timestamp() * 1000)

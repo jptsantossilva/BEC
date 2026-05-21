@@ -864,9 +864,9 @@ def settings():
 
         st.markdown("### Strategies")
         with st.container(border=False):
-            st.markdown("Main Strategy")
+            st.markdown("Main Strategies")
             st.caption(
-                "Primary strategy used by the trading timeframes (1d/4h/1h) for buy/sell decisions. "
+                "Primary strategies used by the trading timeframes (1d/4h/1h) for buy/sell decisions. "
                 "Also used in the daily refresh to apply approved backtesting results and update the symbols in Positions."
             )
 
@@ -924,19 +924,27 @@ def settings():
                 "Used by the Auto-switch logic to evaluate BTC market regime (bull/bear) on BTC/stablecoin. "
                 "It controls when the app switches trade exposure between stablecoin and BTC."
             )
-            if "btc_strategy" not in st.session_state:
-                st.session_state.btc_strategy = config.read_setting("btc_strategy")
-            st.selectbox(
-                "BTC Strategy",
-                list(dict_strategies_btc.keys()),
-                key="btc_strategy",
-                on_change=lambda: config.update_setting(
-                    "btc_strategy", st.session_state.btc_strategy
-                ),
-                format_func=format_func_strategies_btc,
-                label_visibility="collapsed",
-                width=400,
-            )
+            btc_strategy_options = list(dict_strategies_btc.keys())
+            if not btc_strategy_options:
+                st.warning("No approved Bitcoin Strategy is available.")
+            else:
+                saved_btc_strategy = str(config.read_setting("btc_strategy") or "")
+                if saved_btc_strategy not in btc_strategy_options:
+                    saved_btc_strategy = btc_strategy_options[0]
+                    config.update_setting("btc_strategy", saved_btc_strategy)
+                if st.session_state.get("btc_strategy") not in btc_strategy_options:
+                    st.session_state.btc_strategy = saved_btc_strategy
+                st.selectbox(
+                    "BTC Strategy",
+                    btc_strategy_options,
+                    key="btc_strategy",
+                    on_change=lambda: config.update_setting(
+                        "btc_strategy", st.session_state.btc_strategy
+                    ),
+                    format_func=format_func_strategies_btc,
+                    label_visibility="collapsed",
+                    width=400,
+                )
 
             with st.popover("Auto-switch (Advanced)"):
                 st.caption(
@@ -1734,8 +1742,58 @@ def format_func_strategies_main(option):
     return dict_strategies_main[option]
 
 
+def _format_strategy_quality_value(value):
+    numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    if pd.isna(numeric):
+        return "NA"
+    return f"{float(numeric):.1f}"
+
+
+def _build_btc_strategy_labels(strategy_names: dict, stablecoin: str) -> dict:
+    labels = {
+        str(strategy_id): f"{strategy_name} | Quality: NA | Grade: NA"
+        for strategy_id, strategy_name in strategy_names.items()
+    }
+    if not labels:
+        return labels
+
+    try:
+        results = database.get_all_backtesting_results()
+    except Exception:
+        return labels
+    if results.empty or "Strategy_Id" not in results.columns:
+        return labels
+
+    btc_symbol = f"BTC{str(stablecoin or 'USDC').strip().upper()}"
+    btc_results = results[
+        (results["Symbol"].astype(str).str.upper() == btc_symbol)
+        & (results["Strategy_Id"].astype(str).isin(labels.keys()))
+    ].copy()
+    if btc_results.empty:
+        return labels
+
+    btc_results["Quality_Score_Numeric"] = pd.to_numeric(
+        btc_results.get("Quality_Score"),
+        errors="coerce",
+    )
+    btc_results = btc_results.sort_values(
+        ["Strategy_Id", "Quality_Score_Numeric"],
+        ascending=[True, False],
+        na_position="last",
+    )
+    for _, row in btc_results.drop_duplicates("Strategy_Id", keep="first").iterrows():
+        strategy_id = str(row.get("Strategy_Id"))
+        grade = str(row.get("Quality_Grade") or "").strip().upper() or "NA"
+        labels[strategy_id] = (
+            f"{strategy_names[strategy_id]} | "
+            f"Quality: {_format_strategy_quality_value(row.get('Quality_Score'))} | "
+            f"Grade: {grade}"
+        )
+    return labels
+
+
 def format_func_strategies_btc(option):
-    return dict_strategies_btc[option]
+    return dict_strategies_btc_labels.get(option, dict_strategies_btc[option])
 
 
 def format_func_strategies(option):
@@ -1751,12 +1809,16 @@ def main():
     df_strategies_main = database.get_strategies_for_main()
     df_strategies_btc = database.get_strategies_for_btc()
     df_strategies = database.get_all_strategies()
-    global dict_strategies_main, dict_strategies_btc, dict_strategies
+    global dict_strategies_main, dict_strategies_btc, dict_strategies_btc_labels, dict_strategies
     # create a dictionary with code and name columns
     dict_strategies_main = dict(
         zip(df_strategies_main["Id"], df_strategies_main["Name"])
     )
     dict_strategies_btc = dict(zip(df_strategies_btc["Id"], df_strategies_btc["Name"]))
+    dict_strategies_btc_labels = _build_btc_strategy_labels(
+        dict_strategies_btc,
+        config.read_setting("trade_against_switch_stablecoin"),
+    )
     dict_strategies = dict(zip(df_strategies["Id"], df_strategies["Name"]))
 
     show_main_page()

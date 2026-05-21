@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-ALLOWED_TIMEFRAMES = {"15m", "1h", "4h", "1d"}
+ALLOWED_TIMEFRAMES = {"15m", "1h", "4h", "1d", "1w"}
 ALLOWED_PRICE_FIELDS = {"Open", "High", "Low", "Close", "Volume"}
 ALLOWED_ACTIONS = {"buy", "sell"}
 ALLOWED_ORDER_TYPES = {"market"}

@@ -2,6 +2,18 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-05-21]
+- Strategy Builder - My Strategies is now the default tab, editable strategies can be cloned directly, and strategy status values are color-coded in the grid.
+- Strategy Builder - Added user-editable availability flags for Main Strategies and Bitcoin Strategy, matching the built-in template usage flags.
+- Strategy Builder - Moved Definition_JSON and metadata details into collapsed advanced expanders, with a Definition_JSON download button.
+- Strategy Builder - Added `1w` timeframe support in strategy conditions, backtesting controls and declarative strategy validation.
+- Strategy Builder - Reduced built-in strategy optimization parameter grids to avoid excessive overfitting combinations and long backtest runtimes.
+- Trading Dashboard - Bitcoin Strategy labels now show latest BTC backtesting Quality and Grade when available, or `NA` when no result exists.
+- Backtesting Results - Added `1w` as an available timeframe option.
+- Trading Auto-Switch - Bitcoin auto-switch now evaluates approved Strategy Builder strategies instead of legacy hardcoded strategy branches.
+- Trading Auto-Switch - Added idempotent signal processing by strategy, BTC pair, signal direction, effective signal timeframe and candle id so weekly BTC strategies can be checked daily without repeating the same weekly conversion.
+- Trading Auto-Switch - Added `Auto_Switch_Signals` persistence and `1w` data loading support for declarative Bitcoin strategies with fixed weekly operands.
+
 ## [2026-05-20]
 - Backtesting - Improved reliability for migrated built-in and custom strategy backtests, including queued jobs, optimized runs and scheduled market-phase backtests.
 - Backtesting - Fixed declarative strategy result handling so reports, trades, strategy status and results grids remain aligned with the selected strategy.

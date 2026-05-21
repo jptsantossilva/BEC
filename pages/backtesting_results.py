@@ -1514,7 +1514,7 @@ with primary_filters:
         ),
     )
 
-    list_timeframe = ["1d", "4h", "1h", "15m"]
+    list_timeframe = ["1w", "1d", "4h", "1h", "15m"]
     restore_multiselect_filter(
         "bt_results_saved_timeframe",
         "_bt_results_timeframe",

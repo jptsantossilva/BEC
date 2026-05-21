@@ -6,6 +6,7 @@ import pandas as pd
 import bec.add_symbol as add_symbol
 import bec.exchanges.binance as binance
 import bec.main as main
+import bec.symbol_by_market_phase as market_phase
 import bec.signals.bb_width as bb_width
 import bec.utils.telegram as telegram
 from bec.strategy_builder.templates import get_builtin_template
@@ -34,6 +35,212 @@ def _settings(routine_mode="summary"):
         n_decimals=2,
         trade_against="USDC",
     )
+
+
+def _auto_switch_settings(trade_against="USDC", btc_strategy="wema20"):
+    return SimpleNamespace(
+        trade_against_switch=True,
+        trade_against_switch_stablecoin="USDC",
+        btc_strategy=btc_strategy,
+        trade_against=trade_against,
+    )
+
+
+def test_main_get_data_accepts_weekly_timeframe(monkeypatch):
+    calls = []
+
+    def fake_get_ohlcv(**kwargs):
+        calls.append(kwargs)
+        return _market_data(rows=3)
+
+    monkeypatch.setattr(main.binance, "get_ohlcv", fake_get_ohlcv)
+
+    df = main.get_data("BTCUSDC", "1w")
+
+    assert not df.empty
+    assert calls[0]["interval"] == "1w"
+
+
+def test_auto_switch_signal_timeframe_prefers_largest_fixed_timeframe(monkeypatch):
+    definition = {
+        "entry": {
+            "left": {"type": "price", "field": "Close", "timeframe": "1d"},
+            "right": {"type": "indicator", "name": "SMA", "timeframe": "1w"},
+        },
+        "exit": {},
+    }
+    monkeypatch.setattr(
+        market_phase.database,
+        "get_strategy_definition",
+        lambda strategy_id: definition,
+    )
+
+    assert market_phase._infer_btc_auto_switch_signal_timeframe("weekly", "1d") == "1w"
+
+
+def test_auto_switch_signal_timeframe_uses_base_for_current_operands(monkeypatch):
+    definition = {
+        "entry": {
+            "left": {"type": "price", "field": "Close", "timeframe": "current"},
+            "right": {"type": "indicator", "name": "SMA", "timeframe": "current"},
+        },
+        "exit": {},
+    }
+    monkeypatch.setattr(
+        market_phase.database,
+        "get_strategy_definition",
+        lambda strategy_id: definition,
+    )
+
+    assert market_phase._infer_btc_auto_switch_signal_timeframe("daily", "1d") == "1d"
+
+
+def test_auto_switch_buy_signal_records_then_skips_same_candle(monkeypatch):
+    order_calls = []
+    records = []
+    updates = []
+    processed = {"value": False}
+
+    monkeypatch.setattr(
+        market_phase.binance,
+        "get_close_df",
+        lambda *args, **kwargs: _market_data(rows=3),
+    )
+    monkeypatch.setattr(
+        market_phase,
+        "_infer_btc_auto_switch_signal_timeframe",
+        lambda strategy_id, base_timeframe="1d": "1w",
+    )
+    monkeypatch.setattr(
+        market_phase,
+        "_get_btc_auto_switch_candle_id",
+        lambda symbol, timeframe: "2026-05-18T00:00:00Z",
+    )
+    monkeypatch.setattr(
+        market_phase,
+        "_evaluate_btc_auto_switch_strategy",
+        lambda strategy_id, symbol, timeframe: (True, False),
+    )
+    monkeypatch.setattr(
+        market_phase.database,
+        "auto_switch_signal_processed",
+        lambda *args: processed["value"],
+    )
+    monkeypatch.setattr(
+        market_phase.database,
+        "record_auto_switch_signal",
+        lambda *args: records.append(args),
+    )
+    monkeypatch.setattr(
+        market_phase.database,
+        "get_positions_by_bot_position",
+        lambda bot, position: pd.DataFrame(),
+    )
+    monkeypatch.setattr(market_phase.database, "release_all_values", lambda: None)
+    monkeypatch.setattr(
+        market_phase.binance,
+        "create_buy_order",
+        lambda *args, **kwargs: order_calls.append(("buy", args, kwargs)),
+    )
+    monkeypatch.setattr(
+        market_phase.config,
+        "update_settings",
+        lambda payload: updates.append(payload),
+    )
+    monkeypatch.setattr(
+        market_phase.config,
+        "load_settings",
+        lambda refresh=False: _auto_switch_settings(trade_against="BTC"),
+    )
+    monkeypatch.setattr(
+        market_phase.telegram,
+        "send_telegram_message",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        market_phase.telegram,
+        "send_error_event",
+        lambda *args, **kwargs: None,
+    )
+
+    market_phase.trade_against_auto_switch(settings=_auto_switch_settings())
+    processed["value"] = True
+    market_phase.trade_against_auto_switch(settings=_auto_switch_settings())
+
+    assert len(order_calls) == 1
+    assert len(records) == 1
+    assert records[0] == (
+        "wema20",
+        "BTCUSDC",
+        "buy",
+        "1w",
+        "2026-05-18T00:00:00Z",
+    )
+    assert updates[:2] == [{"trade_against": "BTC"}, {"min_position_size": 0.0001}]
+
+
+def test_auto_switch_signal_persistence_keys_by_strategy_and_candle():
+    suffix = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
+    strategy_id = f"pytest_auto_switch_{suffix}"
+    other_strategy_id = f"{strategy_id}_other"
+    symbol = "BTCUSDC"
+    signal = "buy"
+    timeframe = "1w"
+    candle_id = "2026-05-18T00:00:00Z"
+    other_candle_id = "2026-05-25T00:00:00Z"
+
+    connection = market_phase.database._get_conn()
+    with connection:
+        connection.execute(market_phase.database.sql_create_auto_switch_signals_table)
+        connection.execute(
+            "DELETE FROM Auto_Switch_Signals WHERE strategy_id IN (?, ?)",
+            (strategy_id, other_strategy_id),
+        )
+
+    try:
+        assert not market_phase.database.auto_switch_signal_processed(
+            strategy_id,
+            symbol,
+            signal,
+            timeframe,
+            candle_id,
+        )
+
+        market_phase.database.record_auto_switch_signal(
+            strategy_id,
+            symbol,
+            signal,
+            timeframe,
+            candle_id,
+        )
+
+        assert market_phase.database.auto_switch_signal_processed(
+            strategy_id,
+            symbol,
+            signal,
+            timeframe,
+            candle_id,
+        )
+        assert not market_phase.database.auto_switch_signal_processed(
+            other_strategy_id,
+            symbol,
+            signal,
+            timeframe,
+            candle_id,
+        )
+        assert not market_phase.database.auto_switch_signal_processed(
+            strategy_id,
+            symbol,
+            signal,
+            timeframe,
+            other_candle_id,
+        )
+    finally:
+        with connection:
+            connection.execute(
+                "DELETE FROM Auto_Switch_Signals WHERE strategy_id IN (?, ?)",
+                (strategy_id, other_strategy_id),
+            )
 
 
 def test_trade_summary_replaces_condition_not_fulfilled_telegram_spam(monkeypatch):

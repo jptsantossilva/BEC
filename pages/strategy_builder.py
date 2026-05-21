@@ -27,7 +27,7 @@ configure_page()
 
 INDICATOR_OPTIONS = ["EMA", "SMA", "HMA", "RSI", "LINREG"]
 PRICE_FIELD_OPTIONS = ["Open", "High", "Low", "Close", "Volume"]
-TIMEFRAME_OPTIONS = ["current", "15m", "1h", "4h", "1d"]
+TIMEFRAME_OPTIONS = ["current", "15m", "1h", "4h", "1d", "1w"]
 PARAMETER_TYPES = ["int", "float", "bool"]
 PARAMETER_CONSTRAINT_OPERATOR_OPTIONS = [
     "less_than",
@@ -281,6 +281,18 @@ def _json_text(value) -> str:
 
 def _strategy_badge(row) -> str:
     return f"{row.get('Name', row.get('Id'))} ({row.get('Type', 'builtin')} / {row.get('Status', 'approved')})"
+
+
+def _style_strategy_status(value):
+    status = str(value or "").strip().lower()
+    colors = {
+        "draft": "#7c3aed",
+        "backtested": "#2563eb",
+        "approved": "#16a34a",
+        "archived": "#64748b",
+    }
+    color = colors.get(status, "#475569")
+    return f"color: {color};"
 
 
 def _block_index(block: dict, default: int = -1) -> int:
@@ -2734,8 +2746,8 @@ def _autosave_strategy_definition(strategy_id: str, definition: dict) -> str:
         status="draft",
         parent_strategy_id=str(row.get("Parent_Strategy_Id") or ""),
         version=int(row.get("Version", 1) or 1),
-        main_strategy=True,
-        btc_strategy=False,
+        main_strategy=bool(row.get("Main_Strategy", 1)),
+        btc_strategy=bool(row.get("BTC_Strategy", 0)),
         backtest_optimize=_definition_has_optimizable_parameters(definition),
     )
     st.toast("Condition auto-saved.")
@@ -3109,7 +3121,8 @@ def render_templates(df: pd.DataFrame):
     if st.button("Clone", icon=icons.ICON_COPY, key=f"clone_{selected_id}"):
         clone_strategy_dialog(selected_id)
 
-    st.code(_json_text(selected_row.get("Definition_JSON")), language="json")
+    with st.expander("Definition JSON", expanded=False):
+        st.code(_json_text(selected_row.get("Definition_JSON")), language="json")
 
 
 def render_import_export(df: pd.DataFrame):
@@ -3173,6 +3186,8 @@ def render_editor(df: pd.DataFrame):
         "Id",
         "Name",
         "Status",
+        "Main_Strategy",
+        "BTC_Strategy",
         "Version",
         "Parent_Strategy_Id",
         "Created_At",
@@ -3186,8 +3201,9 @@ def render_editor(df: pd.DataFrame):
             index=False,
         ).sum()
     )
+    styled_grid_df = grid_df.style.map(_style_strategy_status, subset=["Status"])
     dataframe_event = st.dataframe(
-        grid_df,
+        styled_grid_df,
         width="content",
         hide_index=True,
         key=f"strategy_custom_grid_{len(grid_df)}_{signature}",
@@ -3197,6 +3213,8 @@ def render_editor(df: pd.DataFrame):
             "Id": st.column_config.TextColumn("Id"),
             "Name": st.column_config.TextColumn("Strategy"),
             "Status": st.column_config.TextColumn("Status"),
+            "Main_Strategy": st.column_config.CheckboxColumn("Main"),
+            "BTC_Strategy": st.column_config.CheckboxColumn("BTC"),
             "Version": st.column_config.NumberColumn("Version", format="%d"),
             "Parent_Strategy_Id": st.column_config.TextColumn("Parent"),
             "Created_At": st.column_config.TextColumn("Created"),
@@ -3224,6 +3242,30 @@ def render_editor(df: pd.DataFrame):
     st.caption(f"Status: {row.get('Status')} | Version: {row.get('Version')} | Parent: {row.get('Parent_Strategy_Id') or '-'}")
 
     name = st.text_input("Name", value=str(row.get("Name") or selected_id), key=f"edit_name_{selected_id}")
+    usage = st.container(horizontal=True)
+    main_strategy_enabled = usage.checkbox(
+        "Available in Main Strategies",
+        value=bool(row.get("Main_Strategy", 1)),
+        key=f"edit_main_strategy_{selected_id}",
+    )
+    btc_strategy_enabled = usage.checkbox(
+        "Available in Bitcoin Strategy",
+        value=bool(row.get("BTC_Strategy", 0)),
+        key=f"edit_btc_strategy_{selected_id}",
+    )
+    if (
+        main_strategy_enabled != bool(row.get("Main_Strategy", 1))
+        or btc_strategy_enabled != bool(row.get("BTC_Strategy", 0))
+    ):
+        database.set_strategy_usage(
+            selected_id,
+            main_strategy=main_strategy_enabled,
+            btc_strategy=btc_strategy_enabled,
+        )
+        st.toast("Strategy availability updated.")
+        time.sleep(0.2)
+        st.rerun()
+
     try:
         current_definition = strategy_schema.validate_definition(row.get("Definition_JSON"))
     except Exception as exc:
@@ -3255,15 +3297,27 @@ def render_editor(df: pd.DataFrame):
     strategy_ready_for_execution = _strategy_has_entry_exit_conditions(edited_definition)
 
     with st.expander("Advanced JSON"):
-        st.markdown("Definition_JSON")
-        st.code(json.dumps(edited_definition, ensure_ascii=True, sort_keys=True, indent=2), language="json")
+        definition_json_text = json.dumps(edited_definition, ensure_ascii=True, sort_keys=True, indent=2)
+        json_header, json_download = st.columns([1, 0.18], vertical_alignment="center")
+        json_header.markdown("Definition_JSON")
+        json_download.download_button(
+            "Download",
+            data=definition_json_text,
+            file_name=f"{selected_id}-definition.json",
+            mime="application/json",
+            icon=icons.ICON_DOWNLOAD,
+            key=f"download_definition_json_{selected_id}",
+            use_container_width=True,
+        )
+        st.code(definition_json_text, language="json")
 
-    metadata_text = st.text_area(
-        "Metadata_JSON",
-        value=_json_text(row.get("Metadata_JSON")),
-        height=140,
-        key=f"edit_metadata_{selected_id}",
-    )
+    # with st.expander("Advanced metadata", expanded=False):
+    #     metadata_text = st.text_area(
+    #         "Metadata_JSON",
+    #         value=_json_text(row.get("Metadata_JSON")),
+    #         height=140,
+    #         key=f"edit_metadata_{selected_id}",
+    #     )
 
     actions = st.container(horizontal=True)
     with actions:
@@ -3284,8 +3338,8 @@ def render_editor(df: pd.DataFrame):
                         status="draft",
                         parent_strategy_id=str(row.get("Parent_Strategy_Id") or ""),
                         version=int(row.get("Version", 1) or 1),
-                        main_strategy=True,
-                        btc_strategy=False,
+                        main_strategy=main_strategy_enabled,
+                        btc_strategy=btc_strategy_enabled,
                         backtest_optimize=_definition_has_optimizable_parameters(definition),
                     )
                     st.toast("Draft saved.")
@@ -3313,7 +3367,12 @@ def render_editor(df: pd.DataFrame):
                 time.sleep(0.5)
                 st.rerun()
 
-        if st.button("Archive/Delete", icon=icons.ICON_DELETE, key=f"delete_{selected_id}"):
+        if st.button("Clone", icon=icons.ICON_COPY, key=f"clone_custom_{selected_id}"):
+            clone_strategy_dialog(selected_id)
+
+        has_strategy_history = database.strategy_has_history(selected_id)
+        archive_delete_label = "Archive" if has_strategy_history else "Delete draft"
+        if st.button(archive_delete_label, icon=icons.ICON_DELETE, key=f"delete_{selected_id}"):
             result = database.delete_custom_strategy(selected_id)
             st.success(f"Strategy {result}.")
             time.sleep(0.5)
@@ -3322,7 +3381,7 @@ def render_editor(df: pd.DataFrame):
     st.markdown("### Backtest")
     bt_controls = st.container(horizontal=True, vertical_alignment="bottom")
     symbol = bt_controls.text_input("Symbol", value="BTCUSDC", width=180, key=f"bt_symbol_{selected_id}")
-    timeframe = bt_controls.selectbox("Timeframe", ["15m", "1h", "4h", "1d"], index=3, width=120, key=f"bt_tf_{selected_id}")
+    timeframe = bt_controls.selectbox("Timeframe", ["15m", "1h", "4h", "1d", "1w"], index=3, width=120, key=f"bt_tf_{selected_id}")
     optimize_default = _definition_has_optimizable_parameters(edited_definition)
     optimize = bt_controls.checkbox(
         "Optimize",
@@ -3344,10 +3403,10 @@ st.markdown("## Strategy Builder")
 st.caption("Create, clone, import, export, backtest and approve no-code strategies. Imported strategies never execute code.")
 
 df_strategies = _load_strategies()
-templates_tab, editor_tab, package_tab = st.tabs(["Templates", "My Strategies", "Import / Export"])
-with templates_tab:
-    render_templates(df_strategies)
+editor_tab, templates_tab, package_tab = st.tabs(["My Strategies", "Templates", "Import / Export"])
 with editor_tab:
     render_editor(df_strategies)
+with templates_tab:
+    render_templates(df_strategies)
 with package_tab:
     render_import_export(df_strategies)

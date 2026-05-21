@@ -7,15 +7,14 @@ import timeit
 import pytz
 import importlib
 
-from backtesting.lib import crossover
-
 import bec.utils.config as config
 import bec.utils.database as database
 import bec.exchanges.binance as binance
 import bec.utils.telegram as telegram
 import bec.utils.telegram_reporting as telegram_reporting
 import bec.add_symbol as add_symbol
-from bec.my_backtesting import calc_backtesting, get_backtesting_results
+from bec.my_backtesting import calc_backtesting
+from bec.strategy_builder import engine as strategy_engine
 
 def get_blacklist(settings=None):
     """Return set of blacklisted symbols with trade-against suffix applied."""
@@ -192,49 +191,48 @@ def trade_against_auto_switch(settings=None, warning_stats=None):
         
 
         if df_btc.empty or len(df_btc) < 2:
-            return
+            return settings
 
         btc_strategy = settings.btc_strategy
+        signal_timeframe = _infer_btc_auto_switch_signal_timeframe(
+            btc_strategy,
+            btc_timeframe,
+        )
+        candle_id = _get_btc_auto_switch_candle_id(btc_pair, signal_timeframe)
+        if not candle_id:
+            warning_stats["warnings"] = int(warning_stats.get("warnings", 0)) + 1
+            telegram.send_error_event(
+                action="trade against switch signal candle",
+                symbol=btc_pair,
+                timeframe=signal_timeframe,
+                reason="Could not identify the closed signal candle.",
+                impact="Trade-against auto-switch was skipped to avoid repeated execution.",
+                next_step="Check Binance OHLCV availability for the selected Bitcoin Strategy timeframe.",
+                notify_main=False,
+            )
+            return settings
 
         # get buy and sell conditions
-        buy_condition = False
-        sell_condition = False
-        if btc_strategy in ['ema_cross']:
-
-            fast_ema, slow_ema = get_backtesting_results(strategy_id=btc_strategy, symbol=btc_pair, time_frame=btc_timeframe)
-            
-            # technical indicators
-            df_btc['FastEma'] = df_btc['Price'].ewm(span=fast_ema, adjust=False).mean()
-            df_btc['SlowEma'] = df_btc['Price'].ewm(span=slow_ema, adjust=False).mean()
-
-            buy_condition = crossover(df_btc.FastEma, df_btc.SlowEma)
-            sell_condition = crossover(df_btc.SlowEma, df_btc.FastEma)
-
-        elif btc_strategy in ["market_phases"]:
-
-            # technical indicators
-            df_btc['SMA50'] = df_btc['Price'].rolling(50).mean()
-            df_btc['SMA200'] = df_btc['Price'].rolling(200).mean()
-            
-            # last row
-            lastrow = df_btc.iloc[-1]
-            # second-to-last row 
-            second_to_last_row = df_btc.iloc[-2]
-            
-            accumulation_phase = (lastrow.Price > lastrow.SMA50) and (lastrow.Price > lastrow.SMA200) and (lastrow.SMA50 < lastrow.SMA200)
-            bullish_phase = (lastrow.Price > lastrow.SMA50) and (lastrow.Price > lastrow.SMA200) and (lastrow.SMA50 > lastrow.SMA200)
-
-            accumulation_phase_previous = (second_to_last_row.Price > second_to_last_row.SMA50) and (second_to_last_row.Price > second_to_last_row.SMA200) and (second_to_last_row.SMA50 < second_to_last_row.SMA200)
-            bullish_phase_previous = (second_to_last_row.Price > second_to_last_row.SMA50) and (second_to_last_row.Price > second_to_last_row.SMA200) and (second_to_last_row.SMA50 > second_to_last_row.SMA200)
-        
-            buy_condition_curr = accumulation_phase or bullish_phase    
-            buy_condition_previous = accumulation_phase_previous or bullish_phase_previous 
-            
-            buy_condition = buy_condition_curr and not buy_condition_previous
-            sell_condition = buy_condition_previous and not buy_condition_curr
+        buy_condition, sell_condition = _evaluate_btc_auto_switch_strategy(
+            btc_strategy,
+            btc_pair,
+            btc_timeframe,
+        )
 
         # convert USDT/USDC to BTC
         if settings.trade_against in ["USDC", "USDT"] and buy_condition:
+            if database.auto_switch_signal_processed(
+                btc_strategy,
+                btc_pair,
+                "buy",
+                signal_timeframe,
+                candle_id,
+            ):
+                print(
+                    "Auto-switch buy signal already processed: "
+                    f"{btc_strategy} {btc_pair} {signal_timeframe} {candle_id}"
+                )
+                return settings
             
             msg = telegram_reporting.format_trade_against_switch_event(
                 direction=f"{settings.trade_against} -> BTC",
@@ -273,10 +271,30 @@ def trade_against_auto_switch(settings=None, warning_stats=None):
             config.update_settings({"trade_against": "BTC"})
             min_position_size = 0.0001
             config.update_settings({"min_position_size": min_position_size})
+            database.record_auto_switch_signal(
+                btc_strategy,
+                btc_pair,
+                "buy",
+                signal_timeframe,
+                candle_id,
+            )
             settings = config.load_settings(refresh=True)
 
         # convert BTC to USDT/USDC
         elif settings.trade_against == "BTC" and sell_condition:
+            if database.auto_switch_signal_processed(
+                btc_strategy,
+                btc_pair,
+                "sell",
+                signal_timeframe,
+                candle_id,
+            ):
+                print(
+                    "Auto-switch sell signal already processed: "
+                    f"{btc_strategy} {btc_pair} {signal_timeframe} {candle_id}"
+                )
+                return settings
+
             msg = telegram_reporting.format_trade_against_switch_event(
                 direction=f"BTC -> {settings.trade_against_switch_stablecoin}",
                 reason=f"{btc_pair} left the bullish/accumulation regime.",
@@ -314,9 +332,114 @@ def trade_against_auto_switch(settings=None, warning_stats=None):
             config.update_settings({"trade_against": settings.trade_against_switch_stablecoin})
             min_position_size = 20
             config.update_settings({"min_position_size": min_position_size})
+            database.record_auto_switch_signal(
+                btc_strategy,
+                btc_pair,
+                "sell",
+                signal_timeframe,
+                candle_id,
+            )
             settings = config.load_settings(refresh=True)
 
     return settings
+
+
+def _infer_btc_auto_switch_signal_timeframe(strategy_id: str, base_timeframe: str = "1d") -> str:
+    """Return the candle timeframe used to deduplicate BTC auto-switch signals."""
+    try:
+        definition = database.get_strategy_definition(strategy_id)
+    except Exception as exc:
+        print(f"Could not load BTC strategy definition for {strategy_id}: {exc}")
+        return base_timeframe
+
+    fixed_timeframes = [
+        timeframe
+        for timeframe in strategy_engine.ast_timeframes(definition)
+        if timeframe != "current" and timeframe in strategy_engine.TIMEFRAME_MINUTES
+    ]
+    if not fixed_timeframes:
+        return base_timeframe
+
+    return max(
+        fixed_timeframes,
+        key=lambda timeframe: strategy_engine.TIMEFRAME_MINUTES[timeframe],
+    )
+
+
+def _get_btc_auto_switch_candle_id(symbol: str, timeframe: str) -> str:
+    """Return the latest closed candle identifier for a BTC auto-switch signal."""
+    df = binance.get_close_df(
+        symbol=symbol,
+        interval=timeframe,
+        include_symbol=True,
+        price_col="Price",
+    )
+    if df.empty:
+        return ""
+
+    candle_index = df.index[-1]
+    try:
+        timestamp = pd.to_datetime(candle_index)
+        if getattr(timestamp, "tzinfo", None) is None:
+            timestamp = timestamp.tz_localize("UTC")
+        else:
+            timestamp = timestamp.tz_convert("UTC")
+        return timestamp.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    except Exception:
+        return str(candle_index)
+
+
+def _evaluate_btc_auto_switch_strategy(strategy_id: str, symbol: str, timeframe: str):
+    """Evaluate declarative BTC strategy transitions for auto-switch decisions."""
+    import bec.main as live_main
+
+    df = live_main.get_data(symbol=symbol, timeframe=timeframe)
+    if df.empty or len(df) < 2:
+        return False, False
+
+    strategy_context = live_main.get_strategy_runtime_context(
+        strategy_id,
+        symbol,
+        timeframe,
+    )
+    parameters = strategy_context["parameters"]
+    lastrow = df.iloc[-1]
+    previous_df = df.iloc[:-1].copy()
+    previous_lastrow = previous_df.iloc[-1]
+
+    buy_current = live_main.get_strategy_buy_condition(
+        strategy_id,
+        symbol,
+        timeframe,
+        df,
+        lastrow,
+        parameters=parameters,
+    )[0]
+    buy_previous = live_main.get_strategy_buy_condition(
+        strategy_id,
+        symbol,
+        timeframe,
+        previous_df,
+        previous_lastrow,
+        parameters=parameters,
+    )[0]
+    sell_current = live_main.get_strategy_sell_condition(
+        strategy_id,
+        symbol,
+        timeframe,
+        df,
+        lastrow,
+        parameters=parameters,
+    )
+    sell_previous = live_main.get_strategy_sell_condition(
+        strategy_id,
+        symbol,
+        timeframe,
+        previous_df,
+        previous_lastrow,
+        parameters=parameters,
+    )
+    return bool(buy_current and not buy_previous), bool(sell_current and not sell_previous)
 
 def main(timeframe):
     """Run market phase scan, reporting, and updates."""
@@ -336,11 +459,17 @@ def main(timeframe):
     # create daily balance snapshot
     binance.create_balance_snapshot(telegram_prefix="", notify=False)
 
-    # run backtesting for all available BTC Strategies 
+    # Run backtesting only for the selected BTC strategy when auto-switch is enabled.
     stablecoin = settings.trade_against_switch_stablecoin
     btc_pair = f"BTC{stablecoin}"
     df_strategies_btc = database.get_strategies_for_btc()
-    for index, row in df_strategies_btc.iterrows():    
+    if settings.trade_against_switch:
+        df_strategies_btc = df_strategies_btc[
+            df_strategies_btc["Id"].astype(str) == str(settings.btc_strategy)
+        ]
+    else:
+        df_strategies_btc = df_strategies_btc.iloc[0:0]
+    for index, row in df_strategies_btc.iterrows():
         # Dynamically import the entire strategies module
         strategy_module = importlib.import_module("bec.my_backtesting")
         # Dynamically get the strategy class

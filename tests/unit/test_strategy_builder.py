@@ -23,6 +23,50 @@ def test_builtin_templates_validate():
     for strategy_id in ["ema_cross", "ema_cross_with_market_phases", "market_phases", "hma_rsi_linreg"]:
         definition = get_builtin_template(strategy_id)
         assert schema.validate_definition(definition)["engine"] == "bec_strategy_ast_v2"
+        assert "1w" in definition["constraints"]["allowed_timeframes"]
+
+
+def test_ast_v2_accepts_weekly_timeframe():
+    definition = _ast_definition(
+        [_comparison(_price("Close", "1w"), "above", _indicator("SMA", {"period": 3}, timeframe="1w"))]
+    )
+
+    validated = schema.validate_definition(definition)
+
+    assert validated["entry"]["conditions"][0]["left"]["timeframe"] == "1w"
+
+
+def test_builtin_optimization_ranges_are_capped():
+    expected_counts = {
+        "ema_cross": 145,
+        "ema_cross_with_market_phases": 145,
+        "market_phases": 0,
+        "hma_rsi_linreg": 145,
+    }
+
+    for strategy_id, expected_count in expected_counts.items():
+        definition = get_builtin_template(strategy_id)
+        count, _ = my_backtesting.count_declarative_optimization_combinations(definition)
+
+        assert count == expected_count
+
+    ema_params = get_builtin_template("ema_cross")["parameters"]
+    assert ema_params["ema_fast"] == {
+        "type": "int",
+        "default": 10,
+        "min": 10,
+        "max": 101,
+        "step": 10,
+        "optimizable": True,
+    }
+    assert ema_params["ema_slow"] == {
+        "type": "int",
+        "default": 20,
+        "min": 10,
+        "max": 201,
+        "step": 10,
+        "optimizable": True,
+    }
 
 
 def test_empty_strategy_template_validates_and_does_not_signal():
@@ -349,6 +393,36 @@ def test_draft_custom_strategy_is_hidden_from_live_main_strategies():
         live_ids = set(database.get_strategies_for_main()["Id"].astype(str))
 
         assert strategy_id not in live_ids
+    finally:
+        with sqlite3.connect("data.db") as conn:
+            conn.execute("DELETE FROM Strategies WHERE Id = ?", (strategy_id,))
+            conn.commit()
+
+
+def test_custom_strategy_usage_controls_live_strategy_lists():
+    strategy_id = _strategy_id()
+    try:
+        database.upsert_custom_strategy(
+            strategy_id=strategy_id,
+            name="BTC Eligible Strategy",
+            definition=get_builtin_template("market_phases"),
+            status="draft",
+            main_strategy=True,
+            btc_strategy=True,
+        )
+
+        assert strategy_id not in set(database.get_strategies_for_main()["Id"].astype(str))
+        assert strategy_id not in set(database.get_strategies_for_btc()["Id"].astype(str))
+
+        database.approve_strategy_for_live(strategy_id)
+
+        assert strategy_id in set(database.get_strategies_for_main()["Id"].astype(str))
+        assert strategy_id in set(database.get_strategies_for_btc()["Id"].astype(str))
+
+        database.set_strategy_usage(strategy_id, main_strategy=False, btc_strategy=False)
+
+        assert strategy_id not in set(database.get_strategies_for_main()["Id"].astype(str))
+        assert strategy_id not in set(database.get_strategies_for_btc()["Id"].astype(str))
     finally:
         with sqlite3.connect("data.db") as conn:
             conn.execute("DELETE FROM Strategies WHERE Id = ?", (strategy_id,))

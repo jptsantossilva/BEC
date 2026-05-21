@@ -19,7 +19,7 @@ def _constraints():
         "side": "long",
         "order_type": "market",
         "allowed_actions": ["buy", "sell"],
-        "allowed_timeframes": ["15m", "1h", "4h", "1d"],
+        "allowed_timeframes": ["15m", "1h", "4h", "1d", "1w"],
     }
 
 
@@ -102,8 +102,8 @@ BUILTIN_TEMPLATES = {
         "EMA Cross",
         "Buy when the fast EMA crosses above the slow EMA. Sell on the reverse cross.",
         {
-            "ema_fast": {"type": "int", "default": 20, "min": 2, "max": 100, "step": 1, "optimizable": True},
-            "ema_slow": {"type": "int", "default": 40, "min": 10, "max": 200, "step": 1, "optimizable": True},
+            "ema_fast": {"type": "int", "default": 10, "min": 10, "max": 101, "step": 10, "optimizable": True},
+            "ema_slow": {"type": "int", "default": 20, "min": 10, "max": 201, "step": 10, "optimizable": True},
         },
         [_rule(_indicator("EMA", {"period": 20}, period_param="ema_fast"), "crosses_above", _indicator("EMA", {"period": 40}, period_param="ema_slow"))],
         [_rule(_indicator("EMA", {"period": 20}, period_param="ema_fast"), "crosses_below", _indicator("EMA", {"period": 40}, period_param="ema_slow"))],
@@ -115,8 +115,8 @@ BUILTIN_TEMPLATES = {
         "EMA Cross with Market Phases",
         "Buy on EMA cross only when price is above SMA50 and SMA200. Sell on reverse EMA cross.",
         {
-            "ema_fast": {"type": "int", "default": 20, "min": 2, "max": 100, "step": 1, "optimizable": True},
-            "ema_slow": {"type": "int", "default": 40, "min": 10, "max": 200, "step": 1, "optimizable": True},
+            "ema_fast": {"type": "int", "default": 10, "min": 10, "max": 101, "step": 10, "optimizable": True},
+            "ema_slow": {"type": "int", "default": 20, "min": 10, "max": 201, "step": 10, "optimizable": True},
             "sma_fast": {"type": "int", "default": 50, "min": 10, "max": 100, "step": 1, "optimizable": False},
             "sma_slow": {"type": "int", "default": 200, "min": 100, "max": 300, "step": 1, "optimizable": False},
         },
@@ -150,8 +150,8 @@ BUILTIN_TEMPLATES = {
         "HMA RSI LINREG",
         "Buy on HMA cross with RSI confirmation and linear-regression trend filter. Sell on reverse HMA cross.",
         {
-            "hma_fast": {"type": "int", "default": 16, "min": 2, "max": 100, "step": 1, "optimizable": True},
-            "hma_slow": {"type": "int", "default": 65, "min": 10, "max": 200, "step": 1, "optimizable": True},
+            "hma_fast": {"type": "int", "default": 20, "min": 10, "max": 101, "step": 10, "optimizable": True},
+            "hma_slow": {"type": "int", "default": 70, "min": 10, "max": 201, "step": 10, "optimizable": True},
             "rsi_period": {"type": "int", "default": 14, "min": 5, "max": 50, "step": 1, "optimizable": False},
             "rsi_min": {"type": "float", "default": 52.0, "min": 1.0, "max": 99.0, "step": 0.5, "optimizable": False},
             "linreg_period": {"type": "int", "default": 50, "min": 10, "max": 200, "step": 1, "optimizable": False},

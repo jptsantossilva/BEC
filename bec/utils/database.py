@@ -1852,7 +1852,15 @@ def get_strategies_for_main():
     return pd.read_sql(sql_get_strategies_for_main, connection)
 
 
-sql_get_strategies_for_btc = "SELECT * FROM Strategies where BTC_Strategy = 1;"
+sql_get_strategies_for_btc = """
+SELECT *
+FROM Strategies
+WHERE BTC_Strategy = 1
+  AND (
+    COALESCE(Type, 'builtin') = 'builtin'
+    OR COALESCE(Status, 'draft') = 'approved'
+  );
+"""
 
 
 def get_strategies_for_btc():
@@ -2192,6 +2200,24 @@ def approve_strategy_for_live(strategy_id: str):
         )
 
 
+def set_strategy_usage(strategy_id: str, *, main_strategy: bool, btc_strategy: bool):
+    connection = _get_conn()
+    with connection:
+        connection.execute(
+            """
+            UPDATE Strategies
+            SET Main_Strategy = ?, BTC_Strategy = ?, Updated_At = ?
+            WHERE Id = ? AND Type = 'custom'
+            """,
+            (
+                1 if main_strategy else 0,
+                1 if btc_strategy else 0,
+                _utc_now_str(),
+                str(strategy_id),
+            ),
+        )
+
+
 def mark_strategy_backtested(strategy_id: str):
     connection = _get_conn()
     with connection:
@@ -2215,19 +2241,24 @@ def archive_strategy(strategy_id: str):
         )
 
 
+def strategy_has_history(strategy_id: str) -> bool:
+    connection = _get_conn()
+    row = connection.execute(
+        """
+        SELECT 1
+        WHERE EXISTS (SELECT 1 FROM Positions WHERE Strategy_Id = ?)
+           OR EXISTS (SELECT 1 FROM Orders WHERE Strategy_Id = ?)
+           OR EXISTS (SELECT 1 FROM Backtesting_Results WHERE Strategy_Id = ?)
+        """,
+        (strategy_id, strategy_id, strategy_id),
+    ).fetchone()
+    return row is not None
+
+
 def delete_custom_strategy(strategy_id: str):
     connection = _get_conn()
     with connection:
-        has_history = connection.execute(
-            """
-            SELECT 1
-            WHERE EXISTS (SELECT 1 FROM Positions WHERE Strategy_Id = ?)
-               OR EXISTS (SELECT 1 FROM Orders WHERE Strategy_Id = ?)
-               OR EXISTS (SELECT 1 FROM Backtesting_Results WHERE Strategy_Id = ?)
-            """,
-            (strategy_id, strategy_id, strategy_id),
-        ).fetchone()
-        if has_history:
+        if strategy_has_history(strategy_id):
             archive_strategy(strategy_id)
             return "archived"
         connection.execute(
@@ -2300,8 +2331,8 @@ def create_strategy_draft_version(
         status="draft",
         parent_strategy_id=str(row.get("Parent_Strategy_Id") or strategy_id),
         version=next_version,
-        main_strategy=True,
-        btc_strategy=False,
+        main_strategy=bool(row.get("Main_Strategy", 1)),
+        btc_strategy=bool(row.get("BTC_Strategy", 0)),
         backtest_optimize=False,
     )
     return new_id
@@ -3666,6 +3697,87 @@ sql_create_monte_carlo_results_table = """
     );
 """
 
+sql_create_auto_switch_signals_table = """
+    CREATE TABLE IF NOT EXISTS Auto_Switch_Signals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        strategy_id TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        signal TEXT NOT NULL,
+        signal_timeframe TEXT NOT NULL,
+        candle_id TEXT NOT NULL,
+        processed_at TEXT NOT NULL,
+        CONSTRAINT auto_switch_signal_unique UNIQUE (
+            strategy_id,
+            symbol,
+            signal,
+            signal_timeframe,
+            candle_id
+        )
+    );
+"""
+
+
+def auto_switch_signal_processed(
+    strategy_id: str,
+    symbol: str,
+    signal: str,
+    signal_timeframe: str,
+    candle_id: str,
+) -> bool:
+    connection = _get_conn()
+    row = connection.execute(
+        """
+        SELECT 1
+        FROM Auto_Switch_Signals
+        WHERE strategy_id = ?
+          AND symbol = ?
+          AND signal = ?
+          AND signal_timeframe = ?
+          AND candle_id = ?
+        LIMIT 1
+        """,
+        (
+            str(strategy_id),
+            str(symbol),
+            str(signal),
+            str(signal_timeframe),
+            str(candle_id),
+        ),
+    ).fetchone()
+    return row is not None
+
+
+def record_auto_switch_signal(
+    strategy_id: str,
+    symbol: str,
+    signal: str,
+    signal_timeframe: str,
+    candle_id: str,
+) -> None:
+    connection = _get_conn()
+    with connection:
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO Auto_Switch_Signals (
+                strategy_id,
+                symbol,
+                signal,
+                signal_timeframe,
+                candle_id,
+                processed_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(strategy_id),
+                str(symbol),
+                str(signal),
+                str(signal_timeframe),
+                str(candle_id),
+                _utc_now_str(),
+            ),
+        )
+
 DEFAULT_JOB_SCHEDULES = [
     (
         "main_1h",
@@ -3883,6 +3995,7 @@ def create_tables():
         )
         connection.execute(sql_create_monte_carlo_jobs_table)
         connection.execute(sql_create_monte_carlo_results_table)
+        connection.execute(sql_create_auto_switch_signals_table)
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_monte_carlo_jobs_status_created ON Monte_Carlo_Jobs(status, created_at)"
         )
@@ -3894,6 +4007,9 @@ def create_tables():
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_monte_carlo_results_target ON Monte_Carlo_Results(Strategy_Id, Symbol, Time_Frame, Method)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_auto_switch_signals_target ON Auto_Switch_Signals(strategy_id, symbol, signal_timeframe, candle_id)"
         )
 
         # --------

@@ -23,7 +23,7 @@ Convert the user's natural-language request into BEC's Definition_JSON v2 AST fo
 Rules:
 - Only create long-only spot strategies.
 - Never include an instrument/symbol. The user chooses the symbol in backtesting/live settings.
-- Use only these timeframes on price and indicator operands: current, 15m, 1h, 4h, 1d.
+- Use only these timeframes on price and indicator operands: current, 15m, 1h, 4h, 1d, 1w.
 - Use timeframe "current" when a rule should run on the selected backtest/live timeframe.
 - Use only Market Order actions.
 - Use only Buy for entry and Sell for exit.
@@ -90,7 +90,7 @@ _OFF_TOPIC_TERMS = {
     "weather", "rain", "football", "soccer", "geography", "write an email",
 }
 _STRATEGY_TERMS = {
-    "15m", "1h", "4h", "1d", "above", "atr", "bb", "below", "bollinger", "buy",
+    "15m", "1h", "4h", "1d", "1w", "above", "atr", "bb", "below", "bollinger", "buy",
     "comprar", "condition", "conditions", "cria estrategia", "criar estrategia",
     "cross", "crosses", "crosses above", "crosses below", "cruza", "dema", "ema",
     "entrada", "entry", "exit", "filtro", "filtros", "hma", "indicador",
@@ -190,7 +190,7 @@ def _builder_context(current_definition=None, chat_history=None):
                 "side": "long",
                 "order_type": "market",
                 "allowed_actions": ["buy", "sell"],
-                "allowed_timeframes": ["15m", "1h", "4h", "1d"],
+                "allowed_timeframes": ["15m", "1h", "4h", "1d", "1w"],
             },
             "operand_types": {
                 "indicator": {"type": "indicator", "name": "EMA", "timeframe": "4h", "source": {"type": "price", "field": "Close"}, "params": {"period": 50}, "output": "value"},

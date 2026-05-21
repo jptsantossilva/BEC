@@ -4334,7 +4334,7 @@ def calc_backtesting(symbol, time_frame, strategy, optimize):
 def main():
     parser = argparse.ArgumentParser(description="Run one BEC backtest.")
     parser.add_argument("--symbol", required=True)
-    parser.add_argument("--timeframe", required=True, choices=["1d", "4h", "1h", "15m"])
+    parser.add_argument("--timeframe", required=True, choices=["1w", "1d", "4h", "1h", "15m"])
     parser.add_argument("--strategy", required=True)
     parser.add_argument("--optimize", action="store_true")
     args = parser.parse_args()
