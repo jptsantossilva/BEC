@@ -47,9 +47,7 @@ BEC uses the latest daily price, 50-day simple moving average, and 200-day simpl
 | Distribution | `Price < DSMA50`, `Price < DSMA200`, `DSMA50 > DSMA200` |
 | Bearish | `Price < DSMA50`, `Price < DSMA200`, `DSMA50 < DSMA200` |
 
-Only `accumulation` and `bullish` symbols become top performer candidates for trading. The final ranking favors symbols trading furthest above their 200-day moving average.
-
-The job also creates a `Top_performers_<quote>.txt` file that can be imported into TradingView.
+Only `accumulation` and `bullish` symbols become top performer candidates for trading. The final ranking favors symbols trading furthest above their 200-day moving average, and the Telegram report summarizes the selected top performers.
 
 ## Trading > Balances
 

@@ -10,6 +10,8 @@ BUILTIN_TEMPLATE_IDS = {
     "ema_cross_with_market_phases",
     "market_phases",
     "hma_rsi_linreg",
+    "bullmarketsupportband",
+    "wema20",
 }
 
 
@@ -164,6 +166,44 @@ BUILTIN_TEMPLATES = {
         [_rule(_indicator("HMA", {"period": 16}, period_param="hma_fast"), "crosses_below", _indicator("HMA", {"period": 65}, period_param="hma_slow"))],
         parameter_constraints=[
             {"left": "hma_fast", "operator": "less_than", "right": "hma_slow"},
+        ],
+    ),
+    "bullmarketsupportband": _definition(
+        "BullMarketSupportBand",
+        "Buy when weekly EMA21 crosses above weekly SMA20. Sell on the reverse cross.",
+        {},
+        [
+            _rule(
+                _indicator("EMA", {"period": 21}, timeframe="1w"),
+                "crosses_above",
+                _indicator("SMA", {"period": 20}, timeframe="1w"),
+            ),
+        ],
+        [
+            _rule(
+                _indicator("EMA", {"period": 21}, timeframe="1w"),
+                "crosses_below",
+                _indicator("SMA", {"period": 20}, timeframe="1w"),
+            ),
+        ],
+    ),
+    "wema20": _definition(
+        "WEMA20",
+        "Buy when weekly close is above EMA20. Sell when weekly close is below EMA20.",
+        {},
+        [
+            _rule(
+                _price("Close", timeframe="1w"),
+                "greater_than",
+                _indicator("EMA", {"period": 20}, timeframe="1w"),
+            ),
+        ],
+        [
+            _rule(
+                _price("Close", timeframe="1w"),
+                "less_than",
+                _indicator("EMA", {"period": 20}, timeframe="1w"),
+            ),
         ],
     ),
 }

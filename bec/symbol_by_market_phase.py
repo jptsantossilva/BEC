@@ -306,7 +306,7 @@ def trade_against_auto_switch(settings=None, warning_stats=None):
                 ],
             )
             msg = telegram.telegram_prefix_signals_sl + msg
-            telegram.send_telegram_message(telegram.telegram_token_signals, telegram.EMOJI_ENTER_TRADE, msg)
+            telegram.send_telegram_message(telegram.telegram_token_signals, telegram.EMOJI_EXIT_TRADE, msg)
 
             # sell all positions to BTC
             for tf in sell_timeframes:
@@ -550,14 +550,6 @@ def main(timeframe):
     print(f"Top {str(settings.trade_top_performance)} performance symbols:")
     print(df_top_print.to_string(index=True))
 
-    # Create file to import to TradingView with the list of top performers and symbols in position
-    df_tv_list = database.get_distinct_symbol_by_market_phase_and_positions()
-    df_top = df_tv_list
-    df_tv_list['symbol'] = "BINANCE:" + df_tv_list['symbol']
-    # Write DataFrame to CSV file
-    filename = "Top_performers_" + trade_against + ".txt"
-    df_tv_list.to_csv(filename, header=False, index=False)
-
     if not df_top.empty:
         # Remove symbols from positions table that are not top performers in accumulation or bullish phase
         database.delete_positions_not_top_rank()
@@ -595,12 +587,10 @@ def main(timeframe):
         df_top=df_top,
         backtesting_stats=backtesting_stats,
         warnings=int(warning_stats.get("warnings", 0)),
-        tradingview_attached=True,
     )
     msg = telegram.telegram_prefix_market_phases_sl + report
     print(msg)
     telegram.send_telegram_message(telegram.telegram_token_main, "", msg)
-    telegram.send_telegram_file(telegram.telegram_token_main, filename)
 
 if __name__ == "__main__":
     time_frame, trade_against_value = read_arguments()

@@ -279,6 +279,16 @@ def _json_text(value) -> str:
         return str(value or "{}")
 
 
+def _definition_description(value) -> str:
+    try:
+        parsed = strategy_schema.parse_json_object(value, "Definition_JSON")
+    except Exception:
+        return ""
+    if not isinstance(parsed, dict):
+        return ""
+    return str(parsed.get("description", "") or "").strip()
+
+
 def _strategy_badge(row) -> str:
     return f"{row.get('Name', row.get('Id'))} ({row.get('Type', 'builtin')} / {row.get('Status', 'approved')})"
 
@@ -3118,6 +3128,9 @@ def render_templates(df: pd.DataFrame):
     selected_row = builtins.iloc[valid_selected_rows[0]]
     selected_id = str(selected_row["Id"])
     st.markdown(f"### {selected_row.get('Name') or selected_id}")
+    description = _definition_description(selected_row.get("Definition_JSON"))
+    if description:
+        st.caption(description)
     if st.button("Clone", icon=icons.ICON_COPY, key=f"clone_{selected_id}"):
         clone_strategy_dialog(selected_id)
 

@@ -35,6 +35,46 @@ def test_builtin_strategy_template_seed_updates_existing_builtin_rows(tmp_path):
             database._thread_local.conn = original_conn
 
 
+def test_builtin_strategy_seed_creates_weekly_btc_strategies(tmp_path):
+    original_conn = getattr(database._thread_local, "conn", None)
+    test_conn = sqlite3.connect(tmp_path / "data.db", check_same_thread=False)
+    test_conn.execute(database.sql_create_strategies_table)
+    for statement in database.sql_strategies_add_default_strategies.split(";"):
+        if statement.strip():
+            test_conn.execute(statement)
+    test_conn.commit()
+
+    database._thread_local.conn = test_conn
+    try:
+        database.seed_builtin_strategy_templates(test_conn)
+        rows = test_conn.execute(
+            """
+            SELECT Id, Type, Status, Backtest_Optimize, Main_Strategy, BTC_Strategy, Definition_JSON
+            FROM Strategies
+            WHERE Id IN ('bullmarketsupportband', 'wema20')
+            ORDER BY Id
+            """
+        ).fetchall()
+
+        assert [row[0] for row in rows] == ["bullmarketsupportband", "wema20"]
+        for row in rows:
+            assert row[1] == "builtin"
+            assert row[2] == "approved"
+            assert row[3] == 0
+            assert row[4] == 0
+            assert row[5] == 1
+            assert '"timeframe":"1w"' in row[6]
+    finally:
+        test_conn.close()
+        if original_conn is None:
+            try:
+                delattr(database._thread_local, "conn")
+            except AttributeError:
+                pass
+        else:
+            database._thread_local.conn = original_conn
+
+
 def test_builtin_position_snapshot_migration_preserves_executed_take_profits(tmp_path):
     original_conn = getattr(database._thread_local, "conn", None)
     test_conn = sqlite3.connect(tmp_path / "data.db", check_same_thread=False)

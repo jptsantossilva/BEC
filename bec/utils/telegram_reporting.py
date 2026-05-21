@@ -182,7 +182,6 @@ def format_market_phase_report(
     df_top: pd.DataFrame,
     backtesting_stats: dict | None = None,
     warnings: int = 0,
-    tradingview_attached: bool = False,
 ) -> str:
     backtesting_stats = backtesting_stats or {}
     phases = (
@@ -235,9 +234,6 @@ def format_market_phase_report(
             phase = str(row.get("Market_Phase", "") or "unknown")
             strength = _fmt_signed(row.get("Perc_Above_DSMA200", 0.0), 2, "%")
             lines.append(f"{index}. {symbol} | {phase} | {strength} vs DSMA200")
-
-    if tradingview_attached:
-        lines.extend(["", "TradingView list attached."])
 
     return "\n".join(lines)
 

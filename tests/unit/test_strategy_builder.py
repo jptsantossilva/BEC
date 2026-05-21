@@ -20,7 +20,14 @@ def _strategy_id(prefix="test_strategy"):
 
 
 def test_builtin_templates_validate():
-    for strategy_id in ["ema_cross", "ema_cross_with_market_phases", "market_phases", "hma_rsi_linreg"]:
+    for strategy_id in [
+        "ema_cross",
+        "ema_cross_with_market_phases",
+        "market_phases",
+        "hma_rsi_linreg",
+        "bullmarketsupportband",
+        "wema20",
+    ]:
         definition = get_builtin_template(strategy_id)
         assert schema.validate_definition(definition)["engine"] == "bec_strategy_ast_v2"
         assert "1w" in definition["constraints"]["allowed_timeframes"]
@@ -42,6 +49,8 @@ def test_builtin_optimization_ranges_are_capped():
         "ema_cross_with_market_phases": 145,
         "market_phases": 0,
         "hma_rsi_linreg": 145,
+        "bullmarketsupportband": 0,
+        "wema20": 0,
     }
 
     for strategy_id, expected_count in expected_counts.items():
@@ -763,6 +772,13 @@ def test_definition_has_optimizable_parameters():
     assert not strategy_builder._definition_has_optimizable_parameters(
         {"parameters": {"ema_fast": {"type": "int", "default": 20, "optimizable": False}}}
     )
+
+
+def test_definition_description_reads_definition_json():
+    definition = get_builtin_template("wema20")
+
+    assert strategy_builder._definition_description(json.dumps(definition)) == definition["description"]
+    assert strategy_builder._definition_description("{broken") == ""
 
 
 def test_strategy_execution_requires_entry_and_exit_conditions():

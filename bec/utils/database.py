@@ -1826,6 +1826,8 @@ INSERT OR IGNORE INTO Strategies (Id, Name) VALUES ('ema_cross_with_market_phase
 INSERT OR IGNORE INTO Strategies (Id, Name, BTC_Strategy) VALUES ('ema_cross', 'EMA Cross', 1);
 INSERT OR IGNORE INTO Strategies (Id, Name, Backtest_Optimize, BTC_Strategy) VALUES ('market_phases', 'Market Phases', 0, 1);
 INSERT OR IGNORE INTO Strategies (Id, Name, Backtest_Optimize, BTC_Strategy) VALUES ('hma_rsi_linreg', 'HMA RSI LINREG', 1, 1);
+INSERT OR IGNORE INTO Strategies (Id, Name, Backtest_Optimize, Main_Strategy, BTC_Strategy) VALUES ('bullmarketsupportband', 'BullMarketSupportBand', 0, 0, 1);
+INSERT OR IGNORE INTO Strategies (Id, Name, Backtest_Optimize, Main_Strategy, BTC_Strategy) VALUES ('wema20', 'WEMA20', 0, 0, 1);
 """
 
 sql_get_all_strategies = "SELECT * FROM Strategies;"

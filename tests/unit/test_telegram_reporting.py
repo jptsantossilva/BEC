@@ -179,6 +179,68 @@ def test_auto_switch_buy_signal_records_then_skips_same_candle(monkeypatch):
     assert updates[:2] == [{"trade_against": "BTC"}, {"min_position_size": 0.0001}]
 
 
+def test_auto_switch_sell_signal_uses_exit_alert(monkeypatch):
+    order_calls = []
+    records = []
+    sent = []
+
+    monkeypatch.setattr(
+        market_phase.binance,
+        "get_close_df",
+        lambda *args, **kwargs: _market_data(rows=3),
+    )
+    monkeypatch.setattr(
+        market_phase,
+        "_infer_btc_auto_switch_signal_timeframe",
+        lambda strategy_id, base_timeframe="1d": "1d",
+    )
+    monkeypatch.setattr(
+        market_phase,
+        "_get_btc_auto_switch_candle_id",
+        lambda symbol, timeframe: "2026-05-20T00:00:00Z",
+    )
+    monkeypatch.setattr(
+        market_phase,
+        "_evaluate_btc_auto_switch_strategy",
+        lambda strategy_id, symbol, timeframe: (False, True),
+    )
+    monkeypatch.setattr(market_phase.database, "auto_switch_signal_processed", lambda *args: False)
+    monkeypatch.setattr(market_phase.database, "record_auto_switch_signal", lambda *args: records.append(args))
+    monkeypatch.setattr(
+        market_phase.database,
+        "get_positions_by_bot_position",
+        lambda bot, position: pd.DataFrame(),
+    )
+    monkeypatch.setattr(market_phase.database, "release_all_values", lambda: None)
+    monkeypatch.setattr(
+        market_phase.binance,
+        "create_sell_order",
+        lambda *args, **kwargs: order_calls.append(("sell", args, kwargs)),
+    )
+    monkeypatch.setattr(market_phase.config, "update_settings", lambda payload: None)
+    monkeypatch.setattr(
+        market_phase.config,
+        "load_settings",
+        lambda refresh=False: _auto_switch_settings(trade_against="USDC"),
+    )
+    monkeypatch.setattr(market_phase.telegram, "EMOJI_ENTER_TRADE", "ENTER")
+    monkeypatch.setattr(market_phase.telegram, "EMOJI_EXIT_TRADE", "EXIT")
+    monkeypatch.setattr(market_phase.telegram, "send_telegram_message", lambda *args, **kwargs: sent.append(args))
+    monkeypatch.setattr(market_phase.telegram, "send_error_event", lambda *args, **kwargs: None)
+
+    market_phase.trade_against_auto_switch(settings=_auto_switch_settings(trade_against="BTC"))
+
+    assert sent[0][1] == "EXIT"
+    assert len(order_calls) == 1
+    assert records[0] == (
+        "wema20",
+        "BTCUSDC",
+        "sell",
+        "1d",
+        "2026-05-20T00:00:00Z",
+    )
+
+
 def test_auto_switch_signal_persistence_keys_by_strategy_and_candle():
     suffix = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
     strategy_id = f"pytest_auto_switch_{suffix}"
@@ -721,7 +783,6 @@ def test_market_phase_report_is_compact_and_limits_top_performers():
             "rejected_candidates": 13,
         },
         warnings=2,
-        tradingview_attached=True,
     )
 
     assert "MKT Report" in msg
@@ -733,7 +794,7 @@ def test_market_phase_report_is_compact_and_limits_top_performers():
     assert "Rejected: 13" in msg
     assert "5. S5USDC" in msg
     assert "S6USDC" not in msg
-    assert "TradingView list attached." in msg
+    assert "TradingView list attached." not in msg
 
 
 def test_trade_against_switch_event_is_actionable():
