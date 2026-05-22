@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 - Backtesting - Manual and queued backtests now write candidate-refresh checkpoint metadata.
 - Backtesting - Failed candidate backtests no longer mark stale results as fresh.
 - Trading - New entries now require saved strategy parameters and an approved backtest.
+- Trading Dashboard - Realized PnL now includes a rolling period grid for `24h`, `7d`, `14d`, `30d`, `90d`, `6m`, and `1y` weighted PnL%.
 - Trading Auto-Switch - BTC strategy backtest now reuses the candidate refresh cache.
 
 ## [2026-05-21]

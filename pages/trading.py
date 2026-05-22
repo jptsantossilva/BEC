@@ -3,7 +3,7 @@ import time
 import os
 import calendar
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import streamlit as st
 from millify import millify
@@ -58,6 +58,15 @@ MISSING_STRATEGY_LABEL = "(Missing strategy)"
 MONTHLY_RETURNS_MONTHS = [
     {"Month_Number": month, "Month": calendar.month_abbr[month]}
     for month in range(1, 13)
+]
+REALIZED_PNL_ROLLING_PERIODS = [
+    ("24h", timedelta(hours=24)),
+    ("7d", timedelta(days=7)),
+    ("14d", timedelta(days=14)),
+    ("30d", timedelta(days=30)),
+    ("90d", timedelta(days=90)),
+    ("6m", pd.DateOffset(months=6)),
+    ("1y", pd.DateOffset(years=1)),
 ]
 
 # for testing purposes
@@ -163,6 +172,7 @@ def realized_pnl():
         # print(result_closed_positions)
 
         render_realized_kpis(kpis)
+        render_realized_rolling_periods(strategy_filter, strategy_labels)
 
         st.header("Realized PnL - Total")
         result_closed_positions = result_closed_positions.style.map(
@@ -1510,6 +1520,38 @@ def _get_realized_trades_for_year(
     return _filter_realized_trades_by_strategy(trades, strategy_filter)
 
 
+def calculate_realized_rolling_periods(
+    strategy_filter: str = ALL_STRATEGIES_FILTER,
+) -> pd.DataFrame:
+    trades = _get_realized_trades_for_period(ALL_TIME_FILTER, "13")
+    trades = _filter_realized_trades_by_strategy(trades, strategy_filter)
+    if trades.empty or "Sell_Date" not in trades.columns:
+        return pd.DataFrame(
+            columns=["Period", "PnL_Perc", "PnL_Value", "Positions"]
+        )
+
+    trades = _numeric_realized_trades(trades)
+    trades["Sell_Date"] = pd.to_datetime(trades["Sell_Date"], errors="coerce")
+    trades = trades.dropna(subset=["Sell_Date"])
+    if trades.empty:
+        return pd.DataFrame(
+            columns=["Period", "PnL_Perc", "PnL_Value", "Positions"]
+        )
+
+    now = pd.Timestamp(datetime.now())
+    records = []
+    for label, offset in REALIZED_PNL_ROLLING_PERIODS:
+        start_date = now - offset
+        period_trades = trades[trades["Sell_Date"] >= start_date]
+        records.append(
+            {
+                "Period": label,
+                **_realized_period_summary(period_trades),
+            }
+        )
+    return pd.DataFrame(records)
+
+
 def calculate_monthly_realized_returns(
     years: list[str], strategy_filter: str = ALL_STRATEGIES_FILTER
 ) -> pd.DataFrame:
@@ -1702,6 +1744,135 @@ def render_realized_monthly_returns(
             )
         )
         st.altair_chart(bars + mean_rule + median_rule, use_container_width=True)
+
+
+def render_realized_rolling_periods(
+    strategy_filter: str = ALL_STRATEGIES_FILTER,
+    strategy_labels: dict[str, str] | None = None,
+):
+    rolling_periods = calculate_realized_rolling_periods(strategy_filter)
+    if rolling_periods.empty:
+        return
+
+    st.subheader("Realized PnL by Period")
+    st.caption(
+        "Rolling weighted realized PnL% by sell position value."
+        f" Strategy: {_strategy_filter_label(strategy_filter, strategy_labels)}."
+    )
+
+    header_cells = []
+    value_cells = []
+    for row in rolling_periods.to_dict("records"):
+        period = str(row["Period"])
+        positions = int(row.get("Positions", 0) or 0)
+        pnl_perc = float(row.get("PnL_Perc", 0.0) or 0.0)
+        header_cells.append(f"<th>{period}</th>")
+        if positions == 0:
+            value_cells.append('<td><span class="period-empty">No trades</span></td>')
+            continue
+
+        direction_class = "positive" if pnl_perc >= 0 else "negative"
+        value_cells.append(
+            "<td>"
+            f'<span class="period-value {direction_class}">'
+            f'<span class="period-arrow"></span>{pnl_perc:+.2f}%'
+            "</span>"
+            f'<span class="period-trades">{positions} trades</span>'
+            "</td>"
+        )
+
+    st.markdown(
+        f"""
+        <style>
+            .realized-period-table {{
+                width: 100%;
+                border-collapse: separate;
+                border-spacing: 0;
+                border: 1px solid rgba(49, 51, 63, 0.2);
+                border-radius: 0.5rem;
+                overflow: visible;
+                margin: 0.25rem 0 1.5rem;
+                table-layout: fixed;
+            }}
+            .realized-period-table th {{
+                background: #F9FAFB;
+                color: rgba(49, 51, 63, 0.75);
+                font-size: 0.875rem;
+                font-weight: 400;
+                padding: 0.45rem 0.5rem;
+                text-align: center;
+                border-right: 1px solid rgba(49, 51, 63, 0.12);
+                border-bottom: 1px solid rgba(49, 51, 63, 0.12);
+            }}
+            .realized-period-table th:first-child {{
+                border-top-left-radius: 0.5rem;
+            }}
+            .realized-period-table th:last-child {{
+                border-top-right-radius: 0.5rem;
+            }}
+            .realized-period-table th:last-child,
+            .realized-period-table td:last-child {{
+                border-right: 0;
+            }}
+            .realized-period-table td {{
+                background: #FFFFFF;
+                padding: 0.85rem 0.5rem;
+                text-align: center;
+                border-right: 1px solid rgba(49, 51, 63, 0.12);
+                vertical-align: middle;
+            }}
+            .realized-period-table tbody tr:last-child td:first-child {{
+                border-bottom-left-radius: 0.5rem;
+            }}
+            .realized-period-table tbody tr:last-child td:last-child {{
+                border-bottom-right-radius: 0.5rem;
+            }}
+            .period-value {{
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                gap: 0.25rem;
+                font-weight: 500;
+                line-height: 1.2;
+                white-space: nowrap;
+            }}
+            .period-value.positive {{
+                color: #00A65A;
+            }}
+            .period-value.negative {{
+                color: #EF4444;
+            }}
+            .period-arrow {{
+                width: 0;
+                height: 0;
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+            }}
+            .period-value.positive .period-arrow {{
+                border-bottom: 6px solid #00A65A;
+            }}
+            .period-value.negative .period-arrow {{
+                border-top: 6px solid #EF4444;
+            }}
+            .period-trades {{
+                display: block;
+                color: #6B7280;
+                font-size: 0.72rem;
+                margin-top: 0.15rem;
+            }}
+            .period-empty {{
+                color: #9CA3AF;
+                font-size: 0.8rem;
+                white-space: nowrap;
+            }}
+        </style>
+        <table class="realized-period-table">
+            <thead><tr>{''.join(header_cells)}</tr></thead>
+            <tbody><tr>{''.join(value_cells)}</tr></tbody>
+        </table>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def realized_detail_column_config():
