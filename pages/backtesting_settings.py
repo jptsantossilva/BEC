@@ -251,6 +251,19 @@ def render_backtest_settings():
             width=350
         )
 
+        candidate_backtest_refresh_days = st.number_input(
+            "Candidate backtest refresh interval (days)",
+            min_value=0,
+            step=1,
+            value=int(settings.get("Candidate_Backtest_Refresh_Days", 7)),
+            help=(
+                "Controls how long market-phase candidate backtests can be reused "
+                "when the strategy definition and backtesting settings have not changed. "
+                "Use 0 to force recalculation every run."
+            ),
+            width=350,
+        )
+
         st.subheader("Buy & Hold Benchmark")
         st.caption("Choose where the Buy & Hold comparison starts.")
 
@@ -445,6 +458,7 @@ def render_backtest_settings():
             maximize=maximize,
             buy_hold_start_mode=buy_hold_start_mode,
             optimization_max_combinations=optimization_max_combinations,
+            candidate_backtest_refresh_days=candidate_backtest_refresh_days,
             use_intraday_current_timeframe_market_phase_filter=use_intraday_current_timeframe_market_phase_filter,
             market_phase_1h_sma_fast=market_phase_1h_sma_fast,
             market_phase_1h_sma_slow=market_phase_1h_sma_slow,

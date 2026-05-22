@@ -328,6 +328,24 @@ def _backtesting_parameter_overrides(strategy_id: str, symbol: str, timeframe: s
     return {}, 0, 0
 
 
+def _position_has_strategy_params_snapshot(pos_row) -> bool:
+    snapshot = database.parse_strategy_params(pos_row.get("Strategy_Params_JSON", ""))
+    parameters = snapshot.get("parameters") if isinstance(snapshot, dict) else None
+    return isinstance(parameters, dict) and bool(parameters)
+
+
+def _has_approved_backtest(strategy_id: str, symbol: str, timeframe: str) -> bool:
+    df = database.get_backtesting_results_by_symbol_timeframe_strategy(
+        symbol=symbol,
+        time_frame=timeframe,
+        strategy_id=strategy_id,
+    )
+    if df.empty:
+        return False
+    approved, _ = database.is_backtest_approved(timeframe, df.iloc[0])
+    return bool(approved)
+
+
 def get_strategy_parameter_overrides(strategy_id: str, first_value=0, second_value=0, pos_row=None) -> dict:
     try:
         definition = database.get_strategy_definition(strategy_id)
@@ -746,6 +764,27 @@ def trade(timeframe, run_mode, settings=None, send_summary=True):
         position_id = int(pos_row["Id"])
         strategy_id = str(pos_row.get("Strategy_Id") or get_default_main_strategy_id(settings))
         strategy_name = str(pos_row.get("Strategy_Name") or get_strategy_display_name(strategy_id))
+
+        if not _position_has_strategy_params_snapshot(pos_row):
+            msg = f"{symbol} - {strategy_name} - Buy skipped: missing strategy parameters snapshot"
+            msg = telegram_prefix_sl + msg
+            print(msg)
+            cycle_summary["buy_no_action"] += 1
+            _track_trade_cycle_example(cycle_summary, msg)
+            if send_detailed_routine_logs:
+                telegram.send_telegram_message(telegram_token, "", msg)
+            continue
+
+        if not _has_approved_backtest(strategy_id, symbol, timeframe):
+            msg = f"{symbol} - {strategy_name} - Buy skipped: missing approved backtest"
+            msg = telegram_prefix_sl + msg
+            print(msg)
+            cycle_summary["buy_no_action"] += 1
+            _track_trade_cycle_example(cycle_summary, msg)
+            if send_detailed_routine_logs:
+                telegram.send_telegram_message(telegram_token, "", msg)
+            continue
+
         strategy_context = get_strategy_runtime_context(
             strategy_id,
             symbol,

@@ -38,6 +38,10 @@ def _settings(routine_mode="summary"):
     )
 
 
+def _strategy_params():
+    return json.dumps({"parameters": {"fast": 20, "slow": 60}})
+
+
 def _auto_switch_settings(trade_against="USDC", btc_strategy="wema20"):
     return SimpleNamespace(
         trade_against_switch=True,
@@ -436,7 +440,7 @@ def test_trade_cycle_survives_declarative_hma_routine_logs(monkeypatch):
 
 def test_trade_calls_exchange_adapter_even_in_test_mode(monkeypatch):
     sell_rows = pd.DataFrame([{"Id": 1, "Symbol": "AAAUSDC", "Strategy_Id": "market_phases", "Strategy_Name": "Market Phases", "Buy_Price": 90.0}])
-    buy_rows = pd.DataFrame([{"Id": 2, "Symbol": "BBBUSDC", "Strategy_Id": "market_phases", "Strategy_Name": "Market Phases"}])
+    buy_rows = pd.DataFrame([{"Id": 2, "Symbol": "BBBUSDC", "Strategy_Id": "market_phases", "Strategy_Name": "Market Phases", "Strategy_Params_JSON": _strategy_params()}])
     order_calls = []
 
     monkeypatch.setattr(main.database, "delete_positions_not_top_rank", lambda: None)
@@ -445,6 +449,12 @@ def test_trade_calls_exchange_adapter_even_in_test_mode(monkeypatch):
     monkeypatch.setattr(main.database, "update_position_risk", lambda **kwargs: None)
     monkeypatch.setattr(main.database, "update_position_pnl", lambda **kwargs: None)
     monkeypatch.setattr(main.database, "get_position_executed_take_profit_levels", lambda position_id: [])
+    monkeypatch.setattr(
+        main.database,
+        "get_backtesting_results_by_symbol_timeframe_strategy",
+        lambda **kwargs: pd.DataFrame([{"Backtest_Config_JSON": "{}"}]),
+    )
+    monkeypatch.setattr(main.database, "is_backtest_approved", lambda timeframe, row: (True, []))
     monkeypatch.setattr(main, "get_current_pnl", lambda *args, **kwargs: 0.0)
     monkeypatch.setattr(main, "get_runtime_risk_settings", lambda *args, **kwargs: {"atr_trailing_enabled": False, "atr_period": 14, "atr_multiplier": 1.8, "atr_activation_pnl": 2.0, "stop_loss": 0.0, "take_profit_enabled": False, "take_profits": []})
     monkeypatch.setattr(main, "get_data", lambda symbol, timeframe: _market_data())
@@ -463,7 +473,7 @@ def test_trade_calls_exchange_adapter_even_in_test_mode(monkeypatch):
 
 def test_trade_prod_mode_calls_exchange_orders(monkeypatch):
     sell_rows = pd.DataFrame([{"Id": 1, "Symbol": "AAAUSDC", "Strategy_Id": "market_phases", "Strategy_Name": "Market Phases", "Buy_Price": 90.0}])
-    buy_rows = pd.DataFrame([{"Id": 2, "Symbol": "BBBUSDC", "Strategy_Id": "market_phases", "Strategy_Name": "Market Phases"}])
+    buy_rows = pd.DataFrame([{"Id": 2, "Symbol": "BBBUSDC", "Strategy_Id": "market_phases", "Strategy_Name": "Market Phases", "Strategy_Params_JSON": _strategy_params()}])
     order_calls = []
 
     monkeypatch.setattr(main.database, "delete_positions_not_top_rank", lambda: None)
@@ -472,6 +482,12 @@ def test_trade_prod_mode_calls_exchange_orders(monkeypatch):
     monkeypatch.setattr(main.database, "update_position_risk", lambda **kwargs: None)
     monkeypatch.setattr(main.database, "update_position_pnl", lambda **kwargs: None)
     monkeypatch.setattr(main.database, "get_position_executed_take_profit_levels", lambda position_id: [])
+    monkeypatch.setattr(
+        main.database,
+        "get_backtesting_results_by_symbol_timeframe_strategy",
+        lambda **kwargs: pd.DataFrame([{"Backtest_Config_JSON": "{}"}]),
+    )
+    monkeypatch.setattr(main.database, "is_backtest_approved", lambda timeframe, row: (True, []))
     monkeypatch.setattr(main, "get_current_pnl", lambda *args, **kwargs: 0.0)
     monkeypatch.setattr(main, "get_runtime_risk_settings", lambda *args, **kwargs: {"atr_trailing_enabled": False, "atr_period": 14, "atr_multiplier": 1.8, "atr_activation_pnl": 2.0, "stop_loss": 0.0, "take_profit_enabled": False, "take_profits": []})
     monkeypatch.setattr(main, "get_data", lambda symbol, timeframe: _market_data())
@@ -486,6 +502,68 @@ def test_trade_prod_mode_calls_exchange_orders(monkeypatch):
     assert summary["sell_actions"] == 1
     assert summary["buy_actions"] == 1
     assert [call[0] for call in order_calls] == ["sell", "buy"]
+
+
+def test_trade_skips_buy_without_strategy_params_snapshot(monkeypatch):
+    buy_rows = pd.DataFrame(
+        [{"Id": 2, "Symbol": "BBBUSDC", "Strategy_Id": "market_phases", "Strategy_Name": "Market Phases"}]
+    )
+    order_calls = []
+
+    monkeypatch.setattr(main.database, "delete_positions_not_top_rank", lambda: None)
+    monkeypatch.setattr(
+        main.database,
+        "get_positions_by_bot_position",
+        lambda bot, position: pd.DataFrame() if position == 1 else buy_rows,
+    )
+    monkeypatch.setattr(main.database, "is_trade_main_timeframe_enabled", lambda timeframe: True)
+    monkeypatch.setattr(main.binance, "create_buy_order", lambda *args, **kwargs: order_calls.append(("buy", args, kwargs)))
+    monkeypatch.setattr(main.telegram, "send_telegram_message", lambda *args, **kwargs: None)
+
+    summary = main.trade("1h", "prod", settings=_settings(), send_summary=False)
+
+    assert summary["buy_evaluated"] == 1
+    assert summary["buy_actions"] == 0
+    assert summary["buy_no_action"] == 1
+    assert order_calls == []
+
+
+def test_trade_skips_buy_without_approved_backtest(monkeypatch):
+    buy_rows = pd.DataFrame(
+        [
+            {
+                "Id": 2,
+                "Symbol": "BBBUSDC",
+                "Strategy_Id": "market_phases",
+                "Strategy_Name": "Market Phases",
+                "Strategy_Params_JSON": _strategy_params(),
+            }
+        ]
+    )
+    order_calls = []
+
+    monkeypatch.setattr(main.database, "delete_positions_not_top_rank", lambda: None)
+    monkeypatch.setattr(
+        main.database,
+        "get_positions_by_bot_position",
+        lambda bot, position: pd.DataFrame() if position == 1 else buy_rows,
+    )
+    monkeypatch.setattr(main.database, "is_trade_main_timeframe_enabled", lambda timeframe: True)
+    monkeypatch.setattr(
+        main.database,
+        "get_backtesting_results_by_symbol_timeframe_strategy",
+        lambda **kwargs: pd.DataFrame([{"Backtest_Config_JSON": "{}"}]),
+    )
+    monkeypatch.setattr(main.database, "is_backtest_approved", lambda timeframe, row: (False, ["Quality_Grade_Min"]))
+    monkeypatch.setattr(main.binance, "create_buy_order", lambda *args, **kwargs: order_calls.append(("buy", args, kwargs)))
+    monkeypatch.setattr(main.telegram, "send_telegram_message", lambda *args, **kwargs: None)
+
+    summary = main.trade("1h", "prod", settings=_settings(), send_summary=False)
+
+    assert summary["buy_evaluated"] == 1
+    assert summary["buy_actions"] == 0
+    assert summary["buy_no_action"] == 1
+    assert order_calls == []
 
 
 def test_binance_order_functions_abort_in_test_mode(monkeypatch):
@@ -844,6 +922,111 @@ def test_trade_against_switch_event_is_actionable():
     assert "- Convert available USDC balance to BTC." in msg
 
 
+def test_btc_auto_switch_backtest_uses_refresh_cache(monkeypatch):
+    settings = _auto_switch_settings(btc_strategy="btc_strategy")
+    strategies = pd.DataFrame(
+        [{"Id": "btc_strategy", "Name": "BTC Strategy", "Backtest_Optimize": False}]
+    )
+    existing_result = pd.DataFrame(
+        [
+            {
+                "Backtest_Work_Fingerprint": "btc-fingerprint",
+                "Backtest_Work_Executed_At": "2026-05-22T00:00:00Z",
+            }
+        ]
+    )
+    calc_calls = []
+
+    monkeypatch.setattr(market_phase.database, "get_strategies_for_btc", lambda: strategies)
+    monkeypatch.setattr(
+        market_phase.database,
+        "get_backtesting_settings",
+        lambda: {"Candidate_Backtest_Refresh_Days": 7},
+    )
+    monkeypatch.setattr(
+        market_phase.database,
+        "build_backtesting_work_fingerprint",
+        lambda *args, **kwargs: "btc-fingerprint",
+    )
+    monkeypatch.setattr(
+        market_phase.database,
+        "get_backtesting_results_by_symbol_timeframe_strategy",
+        lambda **kwargs: existing_result,
+    )
+    monkeypatch.setattr(
+        market_phase.add_symbol,
+        "_backtest_result_current",
+        lambda *args, **kwargs: True,
+    )
+    monkeypatch.setattr(
+        market_phase.importlib,
+        "import_module",
+        lambda name: SimpleNamespace(btc_strategy=object()),
+    )
+    monkeypatch.setattr(
+        market_phase,
+        "calc_backtesting",
+        lambda *args, **kwargs: calc_calls.append((args, kwargs)) or True,
+    )
+
+    stats = market_phase._run_btc_auto_switch_backtest_if_needed(settings, "1d")
+
+    assert calc_calls == []
+    assert stats == {"evaluated": 1, "runs": 0, "skipped": 1, "failed": 0}
+
+
+def test_btc_auto_switch_backtest_runs_when_cache_is_stale(monkeypatch):
+    settings = _auto_switch_settings(btc_strategy="btc_strategy")
+    strategy_impl = object()
+    strategies = pd.DataFrame(
+        [{"Id": "btc_strategy", "Name": "BTC Strategy", "Backtest_Optimize": True}]
+    )
+    calc_calls = []
+
+    monkeypatch.setattr(market_phase.database, "get_strategies_for_btc", lambda: strategies)
+    monkeypatch.setattr(
+        market_phase.database,
+        "get_backtesting_settings",
+        lambda: {"Candidate_Backtest_Refresh_Days": 7},
+    )
+    monkeypatch.setattr(
+        market_phase.database,
+        "build_backtesting_work_fingerprint",
+        lambda *args, **kwargs: "btc-fingerprint",
+    )
+    monkeypatch.setattr(
+        market_phase.database,
+        "get_backtesting_results_by_symbol_timeframe_strategy",
+        lambda **kwargs: pd.DataFrame(),
+    )
+    monkeypatch.setattr(
+        market_phase.add_symbol,
+        "_backtest_result_current",
+        lambda *args, **kwargs: False,
+    )
+    monkeypatch.setattr(
+        market_phase.importlib,
+        "import_module",
+        lambda name: SimpleNamespace(btc_strategy=strategy_impl),
+    )
+    monkeypatch.setattr(
+        market_phase,
+        "calc_backtesting",
+        lambda *args, **kwargs: calc_calls.append((args, kwargs)) or True,
+    )
+
+    stats = market_phase._run_btc_auto_switch_backtest_if_needed(settings, "4h")
+
+    assert len(calc_calls) == 1
+    assert calc_calls[0][1] == {
+        "symbol": "BTCUSDC",
+        "time_frame": "4h",
+        "strategy": strategy_impl,
+        "optimize": True,
+    }
+    assert stats == {"evaluated": 1, "runs": 1, "skipped": 0, "failed": 0}
+
+
 def test_add_symbol_returns_stats_without_telegram_progress(monkeypatch):
     settings = SimpleNamespace(main_strategies=["fake_strategy"])
     pending = pd.DataFrame([{"Symbol": "AAAUSDC"}])
@@ -856,12 +1039,15 @@ def test_add_symbol_returns_stats_without_telegram_progress(monkeypatch):
     monkeypatch.setattr(add_symbol.config, "load_settings", lambda refresh=True: settings)
     monkeypatch.setattr(add_symbol.database, "get_symbols_to_calc_by_calc_completed", lambda completed: pending)
     monkeypatch.setattr(add_symbol.database, "get_strategies_for_main", lambda: strategies)
+    monkeypatch.setattr(add_symbol.database, "is_trade_main_timeframe_enabled", lambda tf: True)
+    monkeypatch.setattr(add_symbol.database, "get_num_open_positions_by_bot", lambda tf: 0)
     monkeypatch.setattr(
         add_symbol.importlib,
         "import_module",
         lambda name: SimpleNamespace(fake_strategy=object()),
     )
-    monkeypatch.setattr(add_symbol, "calc_backtesting", lambda *args, **kwargs: calc_calls.append((args, kwargs)))
+    monkeypatch.setattr(add_symbol, "calc_backtesting", lambda *args, **kwargs: calc_calls.append((args, kwargs)) or True)
+    monkeypatch.setattr(add_symbol.database, "set_backtesting_work_metadata", lambda **kwargs: None)
     monkeypatch.setattr(
         add_symbol.database,
         "get_backtesting_results_by_symbol_timeframe_strategy",
@@ -891,6 +1077,333 @@ def test_add_symbol_returns_stats_without_telegram_progress(monkeypatch):
         "approved_candidates": 2,
         "rejected_candidates": 1,
     }
+
+
+def test_add_symbol_backtests_only_selected_main_strategies(monkeypatch):
+    settings = SimpleNamespace(main_strategies=["selected_strategy"])
+    pending = pd.DataFrame([{"Symbol": "AAAUSDC"}])
+    strategies = pd.DataFrame(
+        [
+            {"Id": "selected_strategy", "Name": "Selected Strategy", "Backtest_Optimize": False},
+            {"Id": "unselected_strategy", "Name": "Unselected Strategy", "Backtest_Optimize": True},
+        ]
+    )
+    result_row = pd.DataFrame([{"Backtest_Config_JSON": "{}"}])
+    calc_calls = []
+    selected_strategy = object()
+    unselected_strategy = object()
+
+    monkeypatch.setattr(add_symbol.database, "get_symbols_to_calc_by_calc_completed", lambda completed: pending)
+    monkeypatch.setattr(add_symbol.database, "get_strategies_for_main", lambda: strategies)
+    monkeypatch.setattr(add_symbol.database, "is_trade_main_timeframe_enabled", lambda tf: True)
+    monkeypatch.setattr(add_symbol.database, "get_num_open_positions_by_bot", lambda tf: 0)
+    monkeypatch.setattr(
+        add_symbol.importlib,
+        "import_module",
+        lambda name: SimpleNamespace(
+            selected_strategy=selected_strategy,
+            unselected_strategy=unselected_strategy,
+        ),
+    )
+    monkeypatch.setattr(add_symbol, "calc_backtesting", lambda *args, **kwargs: calc_calls.append((args, kwargs)) or True)
+    monkeypatch.setattr(add_symbol.database, "set_backtesting_work_metadata", lambda **kwargs: None)
+    monkeypatch.setattr(
+        add_symbol.database,
+        "get_backtesting_results_by_symbol_timeframe_strategy",
+        lambda symbol, time_frame, strategy_id: result_row,
+    )
+    monkeypatch.setattr(add_symbol.database, "is_backtest_approved", lambda tf, row: (True, []))
+    monkeypatch.setattr(add_symbol.database, "set_backtesting_approval", lambda **kwargs: None)
+    monkeypatch.setattr(add_symbol.database, "build_strategy_params_json_from_backtest_result", lambda *args, **kwargs: "{}")
+    monkeypatch.setattr(add_symbol.database, "get_all_positions_by_bot_symbol_strategy", lambda **kwargs: False)
+    monkeypatch.setattr(add_symbol.database, "insert_position", lambda **kwargs: None)
+    monkeypatch.setattr(add_symbol.database, "set_symbols_to_calc_completed", lambda symbol: None)
+
+    stats = add_symbol.run(settings=settings)
+
+    assert len(calc_calls) == 3
+    assert {kwargs["strategy"] for _args, kwargs in calc_calls} == {selected_strategy}
+    assert all(call[0][0] == "AAAUSDC" for call in calc_calls)
+    assert stats["strategies_tested"] == 1
+    assert stats["backtest_runs"] == 3
+    assert stats["approved_candidates"] == 3
+
+
+def test_add_symbol_keeps_disabled_timeframes_with_open_positions(monkeypatch):
+    settings = SimpleNamespace(main_strategies=["selected_strategy"])
+    pending = pd.DataFrame([{"Symbol": "AAAUSDC"}])
+    strategies = pd.DataFrame(
+        [{"Id": "selected_strategy", "Name": "Selected Strategy", "Backtest_Optimize": False}]
+    )
+    result_row = pd.DataFrame([{"Backtest_Config_JSON": "{}"}])
+    calc_calls = []
+    selected_strategy = object()
+
+    monkeypatch.setattr(add_symbol.database, "get_symbols_to_calc_by_calc_completed", lambda completed: pending)
+    monkeypatch.setattr(add_symbol.database, "get_strategies_for_main", lambda: strategies)
+    monkeypatch.setattr(
+        add_symbol.database,
+        "is_trade_main_timeframe_enabled",
+        lambda tf: tf in {"4h", "1h"},
+    )
+    monkeypatch.setattr(
+        add_symbol.database,
+        "get_num_open_positions_by_bot",
+        lambda tf: 1 if tf == "1d" else 0,
+    )
+    monkeypatch.setattr(
+        add_symbol.importlib,
+        "import_module",
+        lambda name: SimpleNamespace(selected_strategy=selected_strategy),
+    )
+    monkeypatch.setattr(add_symbol, "calc_backtesting", lambda *args, **kwargs: calc_calls.append((args, kwargs)) or True)
+    monkeypatch.setattr(add_symbol.database, "set_backtesting_work_metadata", lambda **kwargs: None)
+    monkeypatch.setattr(
+        add_symbol.database,
+        "get_backtesting_results_by_symbol_timeframe_strategy",
+        lambda symbol, time_frame, strategy_id: result_row,
+    )
+    monkeypatch.setattr(add_symbol.database, "is_backtest_approved", lambda tf, row: (True, []))
+    monkeypatch.setattr(add_symbol.database, "set_backtesting_approval", lambda **kwargs: None)
+    monkeypatch.setattr(add_symbol.database, "build_strategy_params_json_from_backtest_result", lambda *args, **kwargs: "{}")
+    monkeypatch.setattr(add_symbol.database, "get_all_positions_by_bot_symbol_strategy", lambda **kwargs: False)
+    monkeypatch.setattr(add_symbol.database, "insert_position", lambda **kwargs: None)
+    monkeypatch.setattr(add_symbol.database, "set_symbols_to_calc_completed", lambda symbol: None)
+
+    stats = add_symbol.run(settings=settings)
+
+    assert [args[1] for args, _kwargs in calc_calls] == ["1d", "4h", "1h"]
+    assert stats["backtest_runs"] == 3
+
+
+def test_add_symbol_skips_disabled_timeframes_with_no_open_positions(monkeypatch):
+    settings = SimpleNamespace(main_strategies=["selected_strategy"])
+    pending = pd.DataFrame([{"Symbol": "AAAUSDC"}])
+    strategies = pd.DataFrame(
+        [{"Id": "selected_strategy", "Name": "Selected Strategy", "Backtest_Optimize": False}]
+    )
+    result_row = pd.DataFrame([{"Backtest_Config_JSON": "{}"}])
+    calc_calls = []
+    selected_strategy = object()
+
+    monkeypatch.setattr(add_symbol.database, "get_symbols_to_calc_by_calc_completed", lambda completed: pending)
+    monkeypatch.setattr(add_symbol.database, "get_strategies_for_main", lambda: strategies)
+    monkeypatch.setattr(
+        add_symbol.database,
+        "is_trade_main_timeframe_enabled",
+        lambda tf: tf in {"4h", "1h"},
+    )
+    monkeypatch.setattr(add_symbol.database, "get_num_open_positions_by_bot", lambda tf: 0)
+    monkeypatch.setattr(
+        add_symbol.importlib,
+        "import_module",
+        lambda name: SimpleNamespace(selected_strategy=selected_strategy),
+    )
+    monkeypatch.setattr(add_symbol, "calc_backtesting", lambda *args, **kwargs: calc_calls.append((args, kwargs)) or True)
+    monkeypatch.setattr(add_symbol.database, "set_backtesting_work_metadata", lambda **kwargs: None)
+    monkeypatch.setattr(
+        add_symbol.database,
+        "get_backtesting_results_by_symbol_timeframe_strategy",
+        lambda symbol, time_frame, strategy_id: result_row,
+    )
+    monkeypatch.setattr(add_symbol.database, "is_backtest_approved", lambda tf, row: (True, []))
+    monkeypatch.setattr(add_symbol.database, "set_backtesting_approval", lambda **kwargs: None)
+    monkeypatch.setattr(add_symbol.database, "build_strategy_params_json_from_backtest_result", lambda *args, **kwargs: "{}")
+    monkeypatch.setattr(add_symbol.database, "get_all_positions_by_bot_symbol_strategy", lambda **kwargs: False)
+    monkeypatch.setattr(add_symbol.database, "insert_position", lambda **kwargs: None)
+    monkeypatch.setattr(add_symbol.database, "set_symbols_to_calc_completed", lambda symbol: None)
+
+    stats = add_symbol.run(settings=settings)
+
+    assert [args[1] for args, _kwargs in calc_calls] == ["4h", "1h"]
+    assert stats["backtest_runs"] == 2
+
+
+def test_add_symbol_skips_current_backtesting_result(monkeypatch):
+    settings = SimpleNamespace(main_strategies=["selected_strategy"])
+    pending = pd.DataFrame([{"Symbol": "AAAUSDC"}])
+    strategies = pd.DataFrame(
+        [{"Id": "selected_strategy", "Name": "Selected Strategy", "Backtest_Optimize": False}]
+    )
+    result_row = pd.DataFrame(
+        [
+            {
+                "Backtest_Config_JSON": "{}",
+                "Backtest_Work_Fingerprint": "fingerprint",
+                "Backtest_Work_Candle": "candle",
+                "Backtest_Work_Executed_At": "2026-05-22T00:00:00Z",
+            }
+        ]
+    )
+    calc_calls = []
+    metadata_calls = []
+    insert_calls = []
+    selected_strategy = object()
+
+    monkeypatch.setattr(add_symbol.database, "get_symbols_to_calc_by_calc_completed", lambda completed: pending)
+    monkeypatch.setattr(add_symbol.database, "get_strategies_for_main", lambda: strategies)
+    monkeypatch.setattr(add_symbol.database, "is_trade_main_timeframe_enabled", lambda tf: tf == "1d")
+    monkeypatch.setattr(add_symbol.database, "get_num_open_positions_by_bot", lambda tf: 0)
+    monkeypatch.setattr(add_symbol.database, "get_backtesting_settings", lambda: {"Candidate_Backtest_Refresh_Days": 7})
+    monkeypatch.setattr(add_symbol.database, "build_backtesting_work_fingerprint", lambda *args, **kwargs: "fingerprint")
+    monkeypatch.setattr(add_symbol, "_latest_backtest_candle", lambda *args, **kwargs: "candle")
+    monkeypatch.setattr(
+        add_symbol,
+        "datetime",
+        SimpleNamespace(now=lambda timezone: pd.Timestamp("2026-05-23T00:00:00Z").to_pydatetime()),
+    )
+    monkeypatch.setattr(
+        add_symbol.importlib,
+        "import_module",
+        lambda name: SimpleNamespace(selected_strategy=selected_strategy),
+    )
+    monkeypatch.setattr(add_symbol, "calc_backtesting", lambda *args, **kwargs: calc_calls.append((args, kwargs)) or True)
+    monkeypatch.setattr(
+        add_symbol.database,
+        "set_backtesting_work_metadata",
+        lambda **kwargs: metadata_calls.append(kwargs),
+    )
+    monkeypatch.setattr(
+        add_symbol.database,
+        "get_backtesting_results_by_symbol_timeframe_strategy",
+        lambda symbol, time_frame, strategy_id: result_row,
+    )
+    monkeypatch.setattr(add_symbol.database, "is_backtest_approved", lambda tf, row: (True, []))
+    monkeypatch.setattr(add_symbol.database, "set_backtesting_approval", lambda **kwargs: None)
+    monkeypatch.setattr(add_symbol.database, "build_strategy_params_json_from_backtest_result", lambda *args, **kwargs: "{}")
+    monkeypatch.setattr(add_symbol.database, "get_all_positions_by_bot_symbol_strategy", lambda **kwargs: False)
+    monkeypatch.setattr(add_symbol.database, "insert_position", lambda **kwargs: insert_calls.append(kwargs))
+    monkeypatch.setattr(add_symbol.database, "set_symbols_to_calc_completed", lambda symbol: None)
+
+    stats = add_symbol.run(settings=settings)
+
+    assert calc_calls == []
+    assert metadata_calls == []
+    assert len(insert_calls) == 1
+    assert stats["backtest_runs"] == 0
+    assert stats["approved_candidates"] == 1
+
+
+def test_add_symbol_refreshes_expired_backtesting_result(monkeypatch):
+    settings = SimpleNamespace(main_strategies=["selected_strategy"])
+    pending = pd.DataFrame([{"Symbol": "AAAUSDC"}])
+    strategies = pd.DataFrame(
+        [{"Id": "selected_strategy", "Name": "Selected Strategy", "Backtest_Optimize": False}]
+    )
+    result_row = pd.DataFrame(
+        [
+            {
+                "Backtest_Config_JSON": "{}",
+                "Backtest_Work_Fingerprint": "fingerprint",
+                "Backtest_Work_Candle": "old-candle",
+                "Backtest_Work_Executed_At": "2026-05-01T00:00:00Z",
+            }
+        ]
+    )
+    calc_calls = []
+    metadata_calls = []
+    selected_strategy = object()
+
+    monkeypatch.setattr(add_symbol.database, "get_symbols_to_calc_by_calc_completed", lambda completed: pending)
+    monkeypatch.setattr(add_symbol.database, "get_strategies_for_main", lambda: strategies)
+    monkeypatch.setattr(add_symbol.database, "is_trade_main_timeframe_enabled", lambda tf: tf == "1d")
+    monkeypatch.setattr(add_symbol.database, "get_num_open_positions_by_bot", lambda tf: 0)
+    monkeypatch.setattr(add_symbol.database, "get_backtesting_settings", lambda: {"Candidate_Backtest_Refresh_Days": 7})
+    monkeypatch.setattr(add_symbol.database, "build_backtesting_work_fingerprint", lambda *args, **kwargs: "fingerprint")
+    monkeypatch.setattr(add_symbol, "_latest_backtest_candle", lambda *args, **kwargs: "new-candle")
+    monkeypatch.setattr(
+        add_symbol,
+        "datetime",
+        SimpleNamespace(now=lambda timezone: pd.Timestamp("2026-05-22T00:00:00Z").to_pydatetime()),
+    )
+    monkeypatch.setattr(
+        add_symbol.importlib,
+        "import_module",
+        lambda name: SimpleNamespace(selected_strategy=selected_strategy),
+    )
+    monkeypatch.setattr(add_symbol, "calc_backtesting", lambda *args, **kwargs: calc_calls.append((args, kwargs)) or True)
+    monkeypatch.setattr(
+        add_symbol.database,
+        "set_backtesting_work_metadata",
+        lambda **kwargs: metadata_calls.append(kwargs),
+    )
+    monkeypatch.setattr(
+        add_symbol.database,
+        "get_backtesting_results_by_symbol_timeframe_strategy",
+        lambda symbol, time_frame, strategy_id: result_row,
+    )
+    monkeypatch.setattr(add_symbol.database, "is_backtest_approved", lambda tf, row: (True, []))
+    monkeypatch.setattr(add_symbol.database, "set_backtesting_approval", lambda **kwargs: None)
+    monkeypatch.setattr(add_symbol.database, "build_strategy_params_json_from_backtest_result", lambda *args, **kwargs: "{}")
+    monkeypatch.setattr(add_symbol.database, "get_all_positions_by_bot_symbol_strategy", lambda **kwargs: False)
+    monkeypatch.setattr(add_symbol.database, "insert_position", lambda **kwargs: None)
+    monkeypatch.setattr(add_symbol.database, "set_symbols_to_calc_completed", lambda symbol: None)
+
+    stats = add_symbol.run(settings=settings)
+
+    assert len(calc_calls) == 1
+    assert metadata_calls[0]["work_candle"] == "new-candle"
+    assert stats["backtest_runs"] == 1
+
+
+def test_add_symbol_does_not_checkpoint_failed_backtest(monkeypatch):
+    settings = SimpleNamespace(main_strategies=["selected_strategy"])
+    pending = pd.DataFrame([{"Symbol": "AAAUSDC"}])
+    strategies = pd.DataFrame(
+        [{"Id": "selected_strategy", "Name": "Selected Strategy", "Backtest_Optimize": False}]
+    )
+    result_row = pd.DataFrame(
+        [
+            {
+                "Backtest_Config_JSON": "{}",
+                "Backtest_Work_Fingerprint": "old-fingerprint",
+                "Backtest_Work_Candle": "old-candle",
+                "Backtest_Work_Executed_At": "2026-05-01T00:00:00Z",
+            }
+        ]
+    )
+    calc_calls = []
+    metadata_calls = []
+    approval_calls = []
+    insert_calls = []
+    selected_strategy = object()
+
+    monkeypatch.setattr(add_symbol.database, "get_symbols_to_calc_by_calc_completed", lambda completed: pending)
+    monkeypatch.setattr(add_symbol.database, "get_strategies_for_main", lambda: strategies)
+    monkeypatch.setattr(add_symbol.database, "is_trade_main_timeframe_enabled", lambda tf: tf == "1d")
+    monkeypatch.setattr(add_symbol.database, "get_num_open_positions_by_bot", lambda tf: 0)
+    monkeypatch.setattr(add_symbol.database, "get_backtesting_settings", lambda: {"Candidate_Backtest_Refresh_Days": 7})
+    monkeypatch.setattr(add_symbol.database, "build_backtesting_work_fingerprint", lambda *args, **kwargs: "new-fingerprint")
+    monkeypatch.setattr(add_symbol, "_latest_backtest_candle", lambda *args, **kwargs: "new-candle")
+    monkeypatch.setattr(
+        add_symbol.importlib,
+        "import_module",
+        lambda name: SimpleNamespace(selected_strategy=selected_strategy),
+    )
+    monkeypatch.setattr(add_symbol, "calc_backtesting", lambda *args, **kwargs: calc_calls.append((args, kwargs)) and False)
+    monkeypatch.setattr(add_symbol.database, "set_backtesting_work_metadata", lambda **kwargs: metadata_calls.append(kwargs))
+    monkeypatch.setattr(
+        add_symbol.database,
+        "get_backtesting_results_by_symbol_timeframe_strategy",
+        lambda symbol, time_frame, strategy_id: result_row,
+    )
+    monkeypatch.setattr(add_symbol.database, "set_backtesting_approval", lambda **kwargs: approval_calls.append(kwargs))
+    monkeypatch.setattr(add_symbol.database, "is_backtest_approved", lambda tf, row: (True, []))
+    monkeypatch.setattr(add_symbol.database, "build_strategy_params_json_from_backtest_result", lambda *args, **kwargs: "{}")
+    monkeypatch.setattr(add_symbol.database, "get_all_positions_by_bot_symbol_strategy", lambda **kwargs: False)
+    monkeypatch.setattr(add_symbol.database, "insert_position", lambda **kwargs: insert_calls.append(kwargs))
+    monkeypatch.setattr(add_symbol.database, "set_symbols_to_calc_completed", lambda symbol: None)
+
+    stats = add_symbol.run(settings=settings)
+
+    assert len(calc_calls) == 1
+    assert metadata_calls == []
+    assert insert_calls == []
+    assert approval_calls[0]["trading_approved"] is False
+    assert approval_calls[0]["trading_rejection_reasons"] == "Backtest_Failed"
+    assert stats["backtest_runs"] == 1
+    assert stats["approved_candidates"] == 0
+    assert stats["rejected_candidates"] == 1
 
 
 def test_market_phase_empty_data_routes_to_errors_only(monkeypatch):

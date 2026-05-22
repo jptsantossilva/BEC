@@ -441,6 +441,77 @@ def _evaluate_btc_auto_switch_strategy(strategy_id: str, symbol: str, timeframe:
     )
     return bool(buy_current and not buy_previous), bool(sell_current and not sell_previous)
 
+
+def _run_btc_auto_switch_backtest_if_needed(settings, timeframe):
+    """Refresh the selected BTC strategy backtest only when its cached result is stale."""
+    stats = {"evaluated": 0, "runs": 0, "skipped": 0, "failed": 0}
+    if not settings.trade_against_switch:
+        return stats
+
+    stablecoin = settings.trade_against_switch_stablecoin
+    btc_pair = f"BTC{stablecoin}"
+    df_strategies_btc = database.get_strategies_for_btc()
+    df_strategies_btc = df_strategies_btc[
+        df_strategies_btc["Id"].astype(str) == str(settings.btc_strategy)
+    ]
+    if df_strategies_btc.empty:
+        print(f"Skipping BTC auto-switch backtest: strategy {settings.btc_strategy} not found")
+        return stats
+
+    strategy_module = importlib.import_module("bec.my_backtesting")
+    backtesting_settings = database.get_backtesting_settings()
+    refresh_days = int(backtesting_settings.get("Candidate_Backtest_Refresh_Days", 7))
+
+    for _, row in df_strategies_btc.iterrows():
+        stats["evaluated"] += 1
+        btc_strategy = row["Id"]
+        optimize = bool(row["Backtest_Optimize"])
+        work_fingerprint = database.build_backtesting_work_fingerprint(
+            btc_strategy,
+            optimize,
+            backtesting_settings,
+            strategy_row=row,
+        )
+        df_strategy_results = database.get_backtesting_results_by_symbol_timeframe_strategy(
+            symbol=btc_pair,
+            time_frame=timeframe,
+            strategy_id=btc_strategy,
+        )
+        if add_symbol._backtest_result_current(
+            df_strategy_results,
+            work_fingerprint,
+            refresh_days,
+        ):
+            stats["skipped"] += 1
+            print(
+                "Skipping BTC auto-switch backtest cache hit: "
+                f"{btc_strategy} - {btc_pair} - {timeframe}"
+            )
+            continue
+
+        btc_strategy_impl = (
+            strategy_module.resolve_strategy(btc_strategy)
+            if hasattr(strategy_module, "resolve_strategy")
+            else getattr(strategy_module, btc_strategy)
+        )
+        if btc_strategy_impl is None:
+            print(f"Skipping unavailable BTC strategy: {btc_strategy}")
+            continue
+
+        stats["runs"] += 1
+        backtest_ok = calc_backtesting(
+            symbol=btc_pair,
+            time_frame=timeframe,
+            strategy=btc_strategy_impl,
+            optimize=optimize,
+        )
+        if not backtest_ok:
+            stats["failed"] += 1
+            print(f"BTC auto-switch backtest failed: {btc_strategy} - {btc_pair} - {timeframe}")
+
+    return stats
+
+
 def main(timeframe):
     """Run market phase scan, reporting, and updates."""
     settings = config.load_settings(refresh=True)
@@ -459,37 +530,7 @@ def main(timeframe):
     # create daily balance snapshot
     binance.create_balance_snapshot(telegram_prefix="", notify=False)
 
-    # Run backtesting only for the selected BTC strategy when auto-switch is enabled.
-    stablecoin = settings.trade_against_switch_stablecoin
-    btc_pair = f"BTC{stablecoin}"
-    df_strategies_btc = database.get_strategies_for_btc()
-    if settings.trade_against_switch:
-        df_strategies_btc = df_strategies_btc[
-            df_strategies_btc["Id"].astype(str) == str(settings.btc_strategy)
-        ]
-    else:
-        df_strategies_btc = df_strategies_btc.iloc[0:0]
-    for index, row in df_strategies_btc.iterrows():
-        # Dynamically import the entire strategies module
-        strategy_module = importlib.import_module("bec.my_backtesting")
-        # Dynamically get the strategy class
-        btc_strategy = row['Id']
-        btc_strategy_impl = (
-            strategy_module.resolve_strategy(btc_strategy)
-            if hasattr(strategy_module, "resolve_strategy")
-            else getattr(strategy_module, btc_strategy)
-        )
-        if btc_strategy_impl is None:
-            print(f"Skipping unavailable BTC strategy: {btc_strategy}")
-            continue
-
-        # run backtesting
-        calc_backtesting(
-            symbol=btc_pair, 
-            time_frame=timeframe,
-            strategy=btc_strategy_impl,
-            optimize=bool(row['Backtest_Optimize'])
-        )
+    _run_btc_auto_switch_backtest_if_needed(settings, timeframe)
     
     # Automatically switch trade against
     settings = trade_against_auto_switch(settings=settings, warning_stats=warning_stats)
@@ -554,10 +595,6 @@ def main(timeframe):
         # Remove symbols from positions table that are not top performers in accumulation or bullish phase
         database.delete_positions_not_top_rank()
 
-        # Add top rank symbols to positions files for every selected trading strategy.
-        for strategy_id in settings.main_strategies:
-            database.add_top_rank_to_positions(strategy_id=strategy_id)
-
         # Delete rows with calc completed and keep only symbols with calc not completed
         database.delete_symbols_to_calc_completed()
 
@@ -569,6 +606,10 @@ def main(timeframe):
 
         # Calc best ema for each symbol on 1d, 4h and 1h time frame and save on positions table
         backtesting_stats = add_symbol.run(settings=settings)
+
+        # Add any remaining top-rank candidates after backtesting refresh/cache validation.
+        for strategy_id in settings.main_strategies:
+            database.add_top_rank_to_positions(strategy_id=strategy_id)
 
     else:
         # if there are no symbols in accumulation or bullish phase remove all not open from positions

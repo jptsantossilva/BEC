@@ -1,6 +1,7 @@
 import math
 import os
 import json
+import hashlib
 import re
 import secrets
 import shutil
@@ -82,6 +83,61 @@ def _primary_parameter_pair_names(definition: dict) -> tuple[str, str]:
     if len(names) >= 2:
         return names[0], names[1]
     return "", ""
+
+
+def _json_fingerprint_default(value):
+    try:
+        if pd.isna(value):
+            return None
+    except TypeError:
+        pass
+    return str(value)
+
+
+def _row_value(row, key: str):
+    try:
+        value = row.get(key, "")
+    except AttributeError:
+        value = ""
+    return _json_fingerprint_default(value)
+
+
+def build_backtesting_work_fingerprint(
+    strategy_id: str,
+    optimize,
+    backtesting_settings: dict | None = None,
+    strategy_row=None,
+) -> str:
+    strategy_id = str(strategy_id or "").strip()
+    if backtesting_settings is None:
+        backtesting_settings = get_backtesting_settings()
+    try:
+        strategy_definition = get_strategy_definition(strategy_id)
+    except Exception:
+        strategy_definition = _row_value(strategy_row, "Definition_JSON")
+    try:
+        strategy_risk = get_strategy_risk(strategy_id)
+    except Exception:
+        strategy_risk = {}
+
+    fingerprint_settings = dict(backtesting_settings or {})
+    fingerprint_settings.pop("Candidate_Backtest_Refresh_Days", None)
+    payload = {
+        "strategy_id": strategy_id,
+        "optimize": bool(optimize),
+        "strategy_definition": strategy_definition,
+        "strategy_risk": strategy_risk,
+        "backtesting_settings": fingerprint_settings,
+        "strategy_version": _row_value(strategy_row, "Version"),
+        "strategy_updated_at": _row_value(strategy_row, "Updated_At"),
+    }
+    raw = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=_json_fingerprint_default,
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def build_strategy_params_json(strategy_id: str, fast_value=0, slow_value=0) -> str:
@@ -2529,6 +2585,9 @@ sql_create_backtesting_results_table = """
         Quality_Score REAL,
         Quality_Grade TEXT,
         Backtest_Config_JSON TEXT,
+        Backtest_Work_Fingerprint TEXT,
+        Backtest_Work_Candle TEXT,
+        Backtest_Work_Executed_At TEXT,
         Strategy_Id TEXT,
         CONSTRAINT symbol_time_frame_strategy_unique UNIQUE (Symbol, Time_Frame, Strategy_Id)
     );
@@ -2621,9 +2680,9 @@ sql_add_backtesting_results = """
     INSERT OR REPLACE INTO Backtesting_Results (
         Symbol, Time_Frame, Return_Perc, BuyHold_Return_Perc, Backtest_Start_Date, Backtest_End_Date,
         Max_Drawdown_Perc, Trades, Win_Rate_Perc, Best_Trade_Perc, Worst_Trade_Perc, Avg_Trade_Perc, Max_Trade_Duration, Avg_Trade_Duration,
-        Profit_Factor, Expectancy_Perc, SQN, Kelly_Criterion, Trading_Approved, Trading_Rejection_Reasons, Quality_Score, Quality_Grade, Backtest_Config_JSON, Strategy_Id
+        Profit_Factor, Expectancy_Perc, SQN, Kelly_Criterion, Trading_Approved, Trading_Rejection_Reasons, Quality_Score, Quality_Grade, Backtest_Config_JSON, Backtest_Work_Fingerprint, Backtest_Work_Candle, Backtest_Work_Executed_At, Strategy_Id
         ) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 """
 
 
@@ -2652,6 +2711,9 @@ def add_backtesting_results(
     quality_score: float = None,
     quality_grade: str = "",
     backtest_config_json: str = "",
+    backtest_work_fingerprint: str = "",
+    backtest_work_candle: str = "",
+    backtest_work_executed_at: str = "",
 ):
     connection = _get_conn()
     with connection:
@@ -2685,7 +2747,48 @@ def add_backtesting_results(
                 float(quality_score) if quality_score is not None else None,
                 str(quality_grade) if quality_grade is not None else "",
                 str(backtest_config_json) if backtest_config_json is not None else "",
+                str(backtest_work_fingerprint) if backtest_work_fingerprint is not None else "",
+                str(backtest_work_candle) if backtest_work_candle is not None else "",
+                str(backtest_work_executed_at) if backtest_work_executed_at is not None else "",
                 str(strategy_Id),
+            ),
+        )
+
+
+sql_update_backtesting_work_metadata = """
+    UPDATE Backtesting_Results
+    SET
+        Backtest_Work_Fingerprint = ?,
+        Backtest_Work_Candle = ?,
+        Backtest_Work_Executed_At = ?
+    WHERE
+        Symbol = ?
+        AND Time_Frame = ?
+        AND Strategy_Id = ?;
+"""
+
+
+def set_backtesting_work_metadata(
+    symbol: str,
+    time_frame: str,
+    strategy_id: str,
+    work_fingerprint: str,
+    work_candle: str,
+    work_executed_at: str = "",
+):
+    if not work_executed_at:
+        work_executed_at = _utc_now_str()
+    connection = _get_conn()
+    with connection:
+        connection.execute(
+            sql_update_backtesting_work_metadata,
+            (
+                str(work_fingerprint or ""),
+                str(work_candle or ""),
+                str(work_executed_at or ""),
+                str(symbol),
+                str(time_frame),
+                str(strategy_id),
             ),
         )
 
@@ -3616,6 +3719,7 @@ sql_create_backtesting_settings_table = """
         Market_Phase_1d_SMA_Slow INTEGER NOT NULL DEFAULT 200,
         Buy_Hold_Start_Mode TEXT NOT NULL DEFAULT 'indicator_warmup',
         Optimization_Max_Combinations INTEGER NOT NULL DEFAULT 1000,
+        Candidate_Backtest_Refresh_Days INTEGER NOT NULL DEFAULT 7,
         Strategy_Quality_Return_Weight REAL NOT NULL DEFAULT 20,
         Strategy_Quality_Risk_Weight REAL NOT NULL DEFAULT 25,
         Strategy_Quality_Risk_Adjusted_Weight REAL NOT NULL DEFAULT 20,
@@ -3775,6 +3879,7 @@ DEFAULT_BACKTESTING_SETTINGS = {
     "Market_Phase_1d_SMA_Slow": 200,
     "Buy_Hold_Start_Mode": "indicator_warmup",
     "Optimization_Max_Combinations": 1000,
+    "Candidate_Backtest_Refresh_Days": 7,
     "Strategy_Quality_Return_Weight": 20.0,
     "Strategy_Quality_Risk_Weight": 25.0,
     "Strategy_Quality_Risk_Adjusted_Weight": 20.0,
@@ -4215,6 +4320,9 @@ def _ensure_backtesting_results_columns(connection):
         "Quality_Score": "REAL",
         "Quality_Grade": "TEXT",
         "Backtest_Config_JSON": "TEXT",
+        "Backtest_Work_Fingerprint": "TEXT",
+        "Backtest_Work_Candle": "TEXT",
+        "Backtest_Work_Executed_At": "TEXT",
     }
 
     for column_name, column_type in required_columns.items():
@@ -4276,6 +4384,7 @@ def _ensure_backtesting_settings_columns(connection):
         "Market_Phase_1d_SMA_Slow": "INTEGER NOT NULL DEFAULT 200",
         "Buy_Hold_Start_Mode": "TEXT NOT NULL DEFAULT 'indicator_warmup'",
         "Optimization_Max_Combinations": "INTEGER NOT NULL DEFAULT 1000",
+        "Candidate_Backtest_Refresh_Days": "INTEGER NOT NULL DEFAULT 7",
         "Strategy_Quality_Return_Weight": "REAL NOT NULL DEFAULT 20",
         "Strategy_Quality_Risk_Weight": "REAL NOT NULL DEFAULT 25",
         "Strategy_Quality_Risk_Adjusted_Weight": "REAL NOT NULL DEFAULT 20",
@@ -5456,12 +5565,13 @@ def ensure_backtesting_settings():
                     Market_Phase_1d_SMA_Slow,
                     Buy_Hold_Start_Mode,
                     Optimization_Max_Combinations,
+                    Candidate_Backtest_Refresh_Days,
                     Strategy_Quality_Return_Weight,
                     Strategy_Quality_Risk_Weight,
                     Strategy_Quality_Risk_Adjusted_Weight,
                     Strategy_Quality_Trade_Quality_Weight,
                     Strategy_Quality_Robustness_Weight
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     float(DEFAULT_BACKTESTING_SETTINGS["Commission_Value"]),
@@ -5480,6 +5590,7 @@ def ensure_backtesting_settings():
                     int(DEFAULT_BACKTESTING_SETTINGS["Market_Phase_1d_SMA_Slow"]),
                     str(DEFAULT_BACKTESTING_SETTINGS["Buy_Hold_Start_Mode"]),
                     int(DEFAULT_BACKTESTING_SETTINGS["Optimization_Max_Combinations"]),
+                    int(DEFAULT_BACKTESTING_SETTINGS["Candidate_Backtest_Refresh_Days"]),
                     float(
                         DEFAULT_BACKTESTING_SETTINGS["Strategy_Quality_Return_Weight"]
                     ),
@@ -5521,6 +5632,7 @@ def get_backtesting_settings():
             Market_Phase_1d_SMA_Slow,
             Buy_Hold_Start_Mode,
             Optimization_Max_Combinations,
+            Candidate_Backtest_Refresh_Days,
             Strategy_Quality_Return_Weight,
             Strategy_Quality_Risk_Weight,
             Strategy_Quality_Risk_Adjusted_Weight,
@@ -5551,6 +5663,9 @@ def get_backtesting_settings():
         ),
         "Optimization_Max_Combinations": int(
             df.iloc[0]["Optimization_Max_Combinations"]
+        ),
+        "Candidate_Backtest_Refresh_Days": int(
+            df.iloc[0]["Candidate_Backtest_Refresh_Days"]
         ),
         "Strategy_Quality_Return_Weight": float(
             df.iloc[0]["Strategy_Quality_Return_Weight"]
@@ -5583,6 +5698,7 @@ def update_backtesting_settings(
     market_phase_1d_sma_slow: int = 200,
     buy_hold_start_mode: str = "indicator_warmup",
     optimization_max_combinations: int = 1000,
+    candidate_backtest_refresh_days: int = 7,
     strategy_quality_return_weight: float = 20.0,
     strategy_quality_risk_weight: float = 25.0,
     strategy_quality_risk_adjusted_weight: float = 20.0,
@@ -5607,6 +5723,7 @@ def update_backtesting_settings(
                 Market_Phase_1d_SMA_Slow = ?,
                 Buy_Hold_Start_Mode = ?,
                 Optimization_Max_Combinations = ?,
+                Candidate_Backtest_Refresh_Days = ?,
                 Strategy_Quality_Return_Weight = ?,
                 Strategy_Quality_Risk_Weight = ?,
                 Strategy_Quality_Risk_Adjusted_Weight = ?,
@@ -5627,6 +5744,7 @@ def update_backtesting_settings(
                 int(market_phase_1d_sma_slow),
                 str(buy_hold_start_mode),
                 int(optimization_max_combinations),
+                int(candidate_backtest_refresh_days),
                 float(strategy_quality_return_weight),
                 float(strategy_quality_risk_weight),
                 float(strategy_quality_risk_adjusted_weight),

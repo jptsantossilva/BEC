@@ -3867,6 +3867,14 @@ def run_backtest(symbol, timeframe, strategy, optimize):
             str(bt_settings["Maximize"]),
         )
         optimize = bool(optimize and optimizable_names)
+    strategy_row = df_strategy_meta.iloc[0] if not df_strategy_meta.empty else None
+    backtest_work_fingerprint = database.build_backtesting_work_fingerprint(
+        strategy_name,
+        optimize,
+        bt_settings,
+        strategy_row=strategy_row,
+    )
+    backtest_work_candle = str(df.index[-1])
     commission_value = float(bt_settings["Commission_Value"])
     cash_value = float(bt_settings["Cash_Value"])
 
@@ -4216,6 +4224,9 @@ def run_backtest(symbol, timeframe, strategy, optimize):
         quality_score=strategy_quality_score.get("score"),
         quality_grade=strategy_quality_score.get("grade"),
         backtest_config_json=backtest_config_json,
+        backtest_work_fingerprint=backtest_work_fingerprint,
+        backtest_work_candle=backtest_work_candle,
+        backtest_work_executed_at=database._utc_now_str(),
     )
     if is_custom_strategy:
         database.mark_strategy_backtested(strategy_name)

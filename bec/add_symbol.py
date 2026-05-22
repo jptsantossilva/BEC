@@ -1,5 +1,6 @@
 import pandas as pd
 import importlib
+from datetime import datetime, timezone
 
 import bec.utils.config as config
 import bec.utils.database as database
@@ -12,6 +13,65 @@ from bec.my_backtesting import calc_backtesting
 pd.set_option("display.precision", 8)
 
 timeframe = ["1d", "4h", "1h"]
+
+
+def _backtest_timeframes_for_trading():
+    return [
+        tf
+        for tf in timeframe
+        if database.is_trade_main_timeframe_enabled(tf)
+        or database.get_num_open_positions_by_bot(tf) > 0
+    ]
+
+
+def _latest_backtest_candle(strategy_module, candle_cache: dict, symbol: str, timeframe: str) -> str:
+    cache_key = (str(symbol), str(timeframe))
+    if cache_key in candle_cache:
+        return candle_cache[cache_key]
+    try:
+        df = strategy_module.get_data(symbol, timeframe)
+    except Exception:
+        df = pd.DataFrame()
+    if df.empty:
+        candle = ""
+    else:
+        candle = str(df.index[-1])
+    candle_cache[cache_key] = candle
+    return candle
+
+
+def _parse_utc_timestamp(value):
+    if value in (None, ""):
+        return None
+    try:
+        timestamp = pd.to_datetime(value, utc=True)
+    except Exception:
+        return None
+    if pd.isna(timestamp):
+        return None
+    return timestamp.to_pydatetime()
+
+
+def _backtest_result_current(
+    df_strategy_results,
+    work_fingerprint: str,
+    refresh_days: int,
+    *,
+    now_utc=None,
+) -> bool:
+    if df_strategy_results.empty or not work_fingerprint:
+        return False
+    if int(refresh_days or 0) <= 0:
+        return False
+    row = df_strategy_results.iloc[0]
+    if str(row.get("Backtest_Work_Fingerprint", "") or "") != str(work_fingerprint):
+        return False
+    executed_at = _parse_utc_timestamp(row.get("Backtest_Work_Executed_At", ""))
+    if executed_at is None:
+        return False
+    now_utc = now_utc or datetime.now(timezone.utc)
+    age_days = (now_utc - executed_at).total_seconds() / 86400
+    return age_days <= int(refresh_days)
 
 def run(settings=None):
     if settings is None:
@@ -38,18 +98,29 @@ def run(settings=None):
     # Dynamically import the entire strategies module
     strategy_module = importlib.import_module("bec.my_backtesting")
         
-    df_strategies = database.get_strategies_for_main()
     selected_strategy_ids = list(settings.main_strategies)
     selected_strategy_set = set(selected_strategy_ids)
     selected_order = {strategy_id: idx for idx, strategy_id in enumerate(selected_strategy_ids)}
+    df_strategies = database.get_strategies_for_main()
+    df_strategies = df_strategies[df_strategies["Id"].isin(selected_strategy_set)].copy()
     df_strategies["_Selected_Order"] = df_strategies["Id"].map(selected_order).fillna(9999)
     df_strategies = df_strategies.sort_values(["_Selected_Order", "Id"]).drop(columns=["_Selected_Order"])
+    backtest_timeframes = _backtest_timeframes_for_trading()
+    backtesting_settings = database.get_backtesting_settings()
+    refresh_days = int(backtesting_settings.get("Candidate_Backtest_Refresh_Days", 7))
+    candle_cache = {}
 
     for index, row in df_strategies.iterrows():    
         # Dynamically get the strategy class
         strategy_id = row["Id"]
         strategy_name = row["Name"]
         strategy_backtest_optimize = row["Backtest_Optimize"]
+        work_fingerprint = database.build_backtesting_work_fingerprint(
+            strategy_id,
+            strategy_backtest_optimize,
+            backtesting_settings,
+            strategy_row=row,
+        )
         strategy = (
             strategy_module.resolve_strategy(strategy_id)
             if hasattr(strategy_module, "resolve_strategy")
@@ -64,13 +135,44 @@ def run(settings=None):
     
         # calc BestEMA for each symbol and each time frame and save on positions table
         for symbol in list_not_completed.Symbol:
-            for tf in timeframe: 
-                # backtesting
-                stats["backtest_runs"] += 1
-                calc_backtesting(symbol, tf, strategy=strategy, optimize=strategy_backtest_optimize)
-                
-                # get strategy backtesting results
-                df_strategy_results = database.get_backtesting_results_by_symbol_timeframe_strategy( symbol=symbol, time_frame=tf, strategy_id=strategy_id)
+            for tf in backtest_timeframes: 
+                df_strategy_results = database.get_backtesting_results_by_symbol_timeframe_strategy(
+                    symbol=symbol,
+                    time_frame=tf,
+                    strategy_id=strategy_id,
+                )
+                if not _backtest_result_current(
+                    df_strategy_results,
+                    work_fingerprint,
+                    refresh_days,
+                ):
+                    # backtesting
+                    stats["backtest_runs"] += 1
+                    work_candle = _latest_backtest_candle(strategy_module, candle_cache, symbol, tf)
+                    backtest_ok = calc_backtesting(symbol, tf, strategy=strategy, optimize=strategy_backtest_optimize)
+                    if not backtest_ok:
+                        df_strategy_results = pd.DataFrame()
+                        reasons = ["Backtest_Failed"]
+                        database.set_backtesting_approval(
+                            symbol=symbol,
+                            time_frame=tf,
+                            strategy_id=strategy_id,
+                            trading_approved=False,
+                            trading_rejection_reasons=";".join(reasons),
+                        )
+                        stats["rejected_candidates"] += 1
+                        print(f"{symbol} {tf} rejected by approval rules: {reasons}")
+                        continue
+                    database.set_backtesting_work_metadata(
+                        symbol=symbol,
+                        time_frame=tf,
+                        strategy_id=strategy_id,
+                        work_fingerprint=work_fingerprint,
+                        work_candle=work_candle,
+                    )
+                    
+                    # get strategy backtesting results
+                    df_strategy_results = database.get_backtesting_results_by_symbol_timeframe_strategy( symbol=symbol, time_frame=tf, strategy_id=strategy_id)
 
                 # check backtest approval rules
                 approved = False

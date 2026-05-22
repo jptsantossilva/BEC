@@ -2,6 +2,17 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-05-22]
+- Telegram - Fixed closed-position messages to avoid duplicate timeframe and preserve strategy setup parameters.
+- Market Phases - Daily candidate backtesting now runs only selected Main Strategies and active/open-position timeframes.
+- Market Phases - Added candidate backtest cache using fingerprint and refresh interval.
+- Market Phases - Top-rank candidates are now inserted after backtesting refresh/cache validation.
+- Backtesting Settings - Added configurable `Candidate_Backtest_Refresh_Days`.
+- Backtesting - Manual and queued backtests now write candidate-refresh checkpoint metadata.
+- Backtesting - Failed candidate backtests no longer mark stale results as fresh.
+- Trading - New entries now require saved strategy parameters and an approved backtest.
+- Trading Auto-Switch - BTC strategy backtest now reuses the candidate refresh cache.
+
 ## [2026-05-21]
 - Strategy Builder - My Strategies is now the default tab, editable strategies can be cloned directly, and strategy status values are color-coded in the grid.
 - Strategy Builder - Added user-editable availability flags for Main Strategies and Bitcoin Strategy, matching the built-in template usage flags.
@@ -20,7 +31,6 @@ All notable changes to this project will be documented in this file.
 - Strategy Builder - Added builtin Bitcoin strategy templates for `bullmarketsupportband` and `wema20` so production updates can seed them automatically.
 - Strategy Builder - Fixed saving drafts after metadata JSON was moved out of the editor advanced panel.
 - Market Phases - Removed the TradingView top performers file export and kept Telegram reports focused on the actual ranked top performers.
-- Telegram - Fixed closed-position trade messages to show the timeframe only once and preserve saved strategy setup parameters such as `30/90 HMA RSI LINREG`.
 
 ## [2026-05-20]
 - Backtesting - Improved reliability for migrated built-in and custom strategy backtests, including queued jobs, optimized runs and scheduled market-phase backtests.
