@@ -766,10 +766,10 @@ def unrealized_pnl():
             "Signal_Setup": st.column_config.TextColumn("Signal Setup", width=None),
             "Take Profits": st.column_config.MultiselectColumn(
                 "Take Profits",
+                width=None,
                 options=tp_options,
                 color=[tp_colors_by_option[option] for option in tp_options],
                 format_func=_take_profit_format,
-                # width="large",
                 help="Take-profit levels that are pending or already triggered for this position.",
             ),
             "RPQ%": st.column_config.TextColumn(
