@@ -1894,8 +1894,30 @@ def delete_positions_not_top_rank():
         connection.execute(sql_delete_positions_not_top_rank)
 
 
-sql_delete_all_positions_not_open = "DELETE FROM Positions where Position = 0"
+def delete_inactive_position_candidates(active_strategy_ids):
+    strategy_ids = [
+        str(strategy_id).strip()
+        for strategy_id in active_strategy_ids
+        if str(strategy_id).strip()
+    ]
+    connection = _get_conn()
+    with connection:
+        if not strategy_ids:
+            connection.execute("DELETE FROM Positions WHERE Position = 0")
+            return
 
+        placeholders = ",".join("?" for _ in strategy_ids)
+        connection.execute(
+            f"""
+            DELETE FROM Positions
+            WHERE Position = 0
+              AND TRIM(COALESCE(Strategy_Id, '')) NOT IN ({placeholders})
+            """,
+            tuple(strategy_ids),
+        )
+
+
+sql_delete_all_positions_not_open = "DELETE FROM Positions where Position = 0"
 
 def delete_all_positions_not_open():
     connection = _get_conn()

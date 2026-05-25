@@ -566,6 +566,28 @@ def test_trade_skips_buy_without_approved_backtest(monkeypatch):
     assert order_calls == []
 
 
+def test_buy_candidates_are_limited_to_selected_main_strategies():
+    settings = _settings()
+    settings.main_strategies = ["hma_rsi_linreg_copy", "ema_cross_with_market_phases_copy"]
+    candidates = pd.DataFrame(
+        [
+            {"Id": 1, "Symbol": "AAAUSDC", "Strategy_Id": "hma_rsi_linreg", "Strategy_Name": "HMA RSI LINREG"},
+            {"Id": 2, "Symbol": "BBBUSDC", "Strategy_Id": "hma_rsi_linreg_copy", "Strategy_Name": "HMA RSI LINREG Copy"},
+            {"Id": 3, "Symbol": "CCCUSDC", "Strategy_Id": "", "Strategy_Name": ""},
+            {
+                "Id": 4,
+                "Symbol": "DDDUSDC",
+                "Strategy_Id": "ema_cross_with_market_phases_copy",
+                "Strategy_Name": "EMA Cross with Market Phases Copy",
+            },
+        ]
+    )
+
+    filtered = main._filter_buy_candidates_for_active_strategies(candidates, settings)
+
+    assert filtered["Symbol"].tolist() == ["BBBUSDC", "DDDUSDC"]
+
+
 def test_binance_order_functions_abort_in_test_mode(monkeypatch):
     get_client_calls = []
     settings = _settings()
@@ -1406,7 +1428,64 @@ def test_add_symbol_does_not_checkpoint_failed_backtest(monkeypatch):
     assert stats["rejected_candidates"] == 1
 
 
-def test_market_phase_empty_data_routes_to_errors_only(monkeypatch):
+def test_market_phase_removes_inactive_pending_position_strategies(monkeypatch):
+    settings = SimpleNamespace(
+        main_strategies=["hma_rsi_linreg_copy", "ema_cross_with_market_phases_copy"],
+        trade_against="USDC",
+        trade_top_performance=10,
+        trade_against_switch=False,
+    )
+    df_market = pd.DataFrame(
+        [
+            {
+                "Symbol": "AAAUSDC",
+                "Price": 1.0,
+                "DSMA50": 0.9,
+                "DSMA200": 0.8,
+                "Market_Phase": "bullish",
+                "Perc_Above_DSMA50": 10.0,
+                "Perc_Above_DSMA200": 20.0,
+            }
+        ]
+    )
+    cleanup_calls = []
+    added_strategies = []
+
+    monkeypatch.setattr(market_phase.config, "load_settings", lambda refresh=True: settings)
+    monkeypatch.setattr(market_phase.binance, "create_balance_snapshot", lambda **kwargs: None)
+    monkeypatch.setattr(market_phase, "_run_btc_auto_switch_backtest_if_needed", lambda *args, **kwargs: {})
+    monkeypatch.setattr(market_phase, "trade_against_auto_switch", lambda settings, warning_stats: settings)
+    monkeypatch.setattr(market_phase, "get_symbols", lambda trade_against, settings: ["AAAUSDC"])
+    monkeypatch.setattr(market_phase, "set_market_phases_to_symbols", lambda symbols, timeframe, warning_stats: df_market)
+    monkeypatch.setattr(market_phase.database, "delete_all_symbols_by_market_phase", lambda: None)
+    monkeypatch.setattr(market_phase.database, "insert_symbols_by_market_phase", lambda *args, **kwargs: None)
+    monkeypatch.setattr(market_phase.database, "insert_symbols_by_market_phase_historical", lambda *args, **kwargs: None)
+    monkeypatch.setattr(market_phase.database, "delete_positions_not_top_rank", lambda: None)
+    monkeypatch.setattr(
+        market_phase.database,
+        "delete_inactive_position_candidates",
+        lambda active_strategy_ids: cleanup_calls.append(list(active_strategy_ids)),
+    )
+    monkeypatch.setattr(market_phase.database, "delete_symbols_to_calc_completed", lambda: None)
+    monkeypatch.setattr(market_phase.database, "add_symbols_with_open_positions_to_calc", lambda: None)
+    monkeypatch.setattr(market_phase.database, "add_symbols_top_rank_to_calc", lambda: None)
+    monkeypatch.setattr(market_phase.add_symbol, "run", lambda settings: {})
+    monkeypatch.setattr(
+        market_phase.database,
+        "add_top_rank_to_positions",
+        lambda strategy_id: added_strategies.append(strategy_id),
+    )
+    monkeypatch.setattr(market_phase.database, "calc_duration", lambda seconds: "0s")
+    monkeypatch.setattr(market_phase.telegram_reporting, "format_market_phase_report", lambda **kwargs: "report")
+    monkeypatch.setattr(market_phase.telegram, "send_telegram_message", lambda *args, **kwargs: None)
+
+    market_phase.main("1d")
+
+    assert cleanup_calls == [["hma_rsi_linreg_copy", "ema_cross_with_market_phases_copy"]]
+    assert added_strategies == ["hma_rsi_linreg_copy", "ema_cross_with_market_phases_copy"]
+
+
+def test_market_phase_empty_data_is_skipped_without_error_notification(monkeypatch):
     import bec.symbol_by_market_phase as market_phase
 
     errors = []
@@ -1424,7 +1503,29 @@ def test_market_phase_empty_data_routes_to_errors_only(monkeypatch):
     result = market_phase.set_market_phases_to_symbols(["AAAUSDC"], "1d", warning_stats=warning_stats)
 
     assert result.empty
-    assert warning_stats["warnings"] == 1
-    assert errors[0]["action"] == "market phase OHLCV load"
-    assert errors[0]["notify_main"] is False
+    assert warning_stats["warnings"] == 0
+    assert errors == []
     assert main_messages == []
+
+
+def test_market_phase_skips_symbols_without_enough_closed_candles(monkeypatch):
+    import bec.symbol_by_market_phase as market_phase
+
+    short_history = pd.DataFrame(
+        {
+            "Symbol": ["NEWUSDC"] * 6,
+            "Price": [1.0, 1.1, 1.2, 1.3, 1.4, 1.5],
+        },
+        index=pd.date_range("2026-05-22", periods=6, freq="h"),
+    )
+    errors = []
+    warning_stats = {"warnings": 0}
+
+    monkeypatch.setattr(market_phase.binance, "get_close_df", lambda **kwargs: short_history)
+    monkeypatch.setattr(market_phase.telegram, "send_error_event", lambda **kwargs: errors.append(kwargs))
+
+    result = market_phase.set_market_phases_to_symbols(["NEWUSDC"], "1d", warning_stats=warning_stats)
+
+    assert result.empty
+    assert warning_stats["warnings"] == 0
+    assert errors == []

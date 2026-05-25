@@ -2,6 +2,10 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-05-25]
+- Trading - Live buy evaluation now ignores pending candidate positions whose `Strategy_Id` is not in `settings.main_strategies`.
+- Market Phases - Daily refresh now removes pending `Positions` candidates (`Position = 0`) for strategies that are no longer selected as Main Strategies, while preserving open positions.
+
 ## [2026-05-22]
 - Telegram - Fixed closed-position messages to avoid duplicate timeframe and preserve strategy setup parameters.
 - Market Phases - Daily candidate backtesting now runs only selected Main Strategies and active/open-position timeframes.

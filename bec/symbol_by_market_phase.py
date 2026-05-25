@@ -16,6 +16,9 @@ import bec.add_symbol as add_symbol
 from bec.my_backtesting import calc_backtesting
 from bec.strategy_builder import engine as strategy_engine
 
+MARKET_PHASE_MIN_CANDLES = 200
+
+
 def get_blacklist(settings=None):
     """Return set of blacklisted symbols with trade-against suffix applied."""
     if settings is None:
@@ -111,24 +114,33 @@ def set_market_phases_to_symbols(symbols, timeframe, warning_stats=None):
         )
 
         if df.empty:
-            warning_stats["warnings"] = int(warning_stats.get("warnings", 0)) + 1
-            msg = f"Failed after max tries to get historical data for {symbol} ({timeframe}). "
-            msg = msg + sys._getframe().f_code.co_name + " - " + symbol
-            print(msg)
-            telegram.send_error_event(
-                action="market phase OHLCV load",
-                symbol=symbol,
-                timeframe=timeframe,
-                reason="Historical dataframe is empty after retries.",
-                impact="Symbol skipped from market phase ranking.",
-                next_step="Check Binance data availability and local OHLCV cache.",
-                notify_main=False,
+            msg = (
+                f"Skipping {symbol} ({timeframe}): no closed historical candles available. "
+                "This is expected for newly listed symbols before the first candle closes."
             )
+            print(msg)
+            continue
+
+        if len(df) < MARKET_PHASE_MIN_CANDLES:
+            msg = (
+                f"Skipping {symbol} ({timeframe}): only {len(df)} closed candles available; "
+                f"{MARKET_PHASE_MIN_CANDLES} required for DSMA200."
+            )
+            print(msg)
             continue
         
         apply_technicals(df)
         # Last one is the one with 200DSMA value
         df = df.tail(1)
+
+        required_columns = ["Price", "DSMA50", "DSMA200", "Perc_Above_DSMA50", "Perc_Above_DSMA200"]
+        if df[required_columns].isna().any(axis=None):
+            msg = (
+                f"Skipping {symbol} ({timeframe}): market phase indicators are incomplete. "
+                f"{MARKET_PHASE_MIN_CANDLES} valid closed candles are required."
+            )
+            print(msg)
+            continue
 
         if df_result.empty:
             df_result = df
@@ -594,6 +606,7 @@ def main(timeframe):
     if not df_top.empty:
         # Remove symbols from positions table that are not top performers in accumulation or bullish phase
         database.delete_positions_not_top_rank()
+        database.delete_inactive_position_candidates(settings.main_strategies)
 
         # Delete rows with calc completed and keep only symbols with calc not completed
         database.delete_symbols_to_calc_completed()

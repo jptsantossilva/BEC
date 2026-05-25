@@ -194,3 +194,42 @@ def test_positions_migration_moves_legacy_take_profit_flags_to_json(tmp_path):
                 pass
         else:
             database._thread_local.conn = original_conn
+
+
+def test_delete_inactive_position_candidates_preserves_only_active_pending_rows(tmp_path):
+    original_conn = getattr(database._thread_local, "conn", None)
+    test_conn = sqlite3.connect(tmp_path / "data.db", check_same_thread=False)
+    test_conn.execute(database.sql_create_positions_table)
+    test_conn.executemany(
+        """
+        INSERT INTO Positions (Bot, Symbol, Position, Strategy_Id, Strategy_Name)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        [
+            ("1h", "ACTIVEUSDC", 0, "hma_rsi_linreg_copy", "HMA RSI LINREG Copy"),
+            ("1h", "OLDUSDC", 0, "hma_rsi_linreg", "HMA RSI LINREG"),
+            ("1h", "BLANKUSDC", 0, "", ""),
+            ("1h", "OPENUSDC", 1, "hma_rsi_linreg", "HMA RSI LINREG"),
+        ],
+    )
+    test_conn.commit()
+
+    database._thread_local.conn = test_conn
+    try:
+        database.delete_inactive_position_candidates(["hma_rsi_linreg_copy"])
+        rows = test_conn.execute(
+            "SELECT Symbol, Position, Strategy_Id FROM Positions ORDER BY Symbol"
+        ).fetchall()
+        assert rows == [
+            ("ACTIVEUSDC", 0, "hma_rsi_linreg_copy"),
+            ("OPENUSDC", 1, "hma_rsi_linreg"),
+        ]
+    finally:
+        test_conn.close()
+        if original_conn is None:
+            try:
+                delattr(database._thread_local, "conn")
+            except AttributeError:
+                pass
+        else:
+            database._thread_local.conn = original_conn

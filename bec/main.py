@@ -213,6 +213,31 @@ def get_default_main_strategy_id(settings) -> str:
     return settings.main_strategies[0] if settings.main_strategies else ""
 
 
+def _active_main_strategy_ids(settings) -> set[str]:
+    return {
+        str(strategy_id).strip()
+        for strategy_id in getattr(settings, "main_strategies", [])
+        if str(strategy_id).strip()
+    }
+
+
+def _filter_buy_candidates_for_active_strategies(df_buy: pd.DataFrame, settings) -> pd.DataFrame:
+    if df_buy.empty:
+        return df_buy
+
+    active_strategy_ids = _active_main_strategy_ids(settings)
+    if not active_strategy_ids:
+        return df_buy.iloc[0:0].copy()
+
+    strategy_ids = (
+        df_buy.get("Strategy_Id", pd.Series([""] * len(df_buy), index=df_buy.index))
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
+    return df_buy[strategy_ids.isin(active_strategy_ids)].copy()
+
+
 def strategy_uses_tuned_parameters(strategy_id: str) -> bool:
     try:
         definition = database.get_strategy_definition(strategy_id)
@@ -546,6 +571,8 @@ def trade(timeframe, run_mode, settings=None, send_summary=True):
     # Disabled: Will not buy new positions but will continue to attempt to sell existing positions based on sell strategy conditions.disabled => Will not buy new positions but will continue to attempt to sell existing positions based on sell strategy conditions.
     if not database.is_trade_main_timeframe_enabled(timeframe):
         df_buy = df_buy.iloc[0:0].copy()
+    else:
+        df_buy = _filter_buy_candidates_for_active_strategies(df_buy, settings)
 
     # check open positions and SELL if conditions are fulfilled
     for _, pos_row in df_sell.iterrows():
