@@ -12,6 +12,7 @@ export default {
       { text: "Overview", link: "/" },
       { text: "Getting Started", link: "/getting-started" },
       { text: "Dashboard", link: "/dashboard" },
+      { text: "Market Analysis", link: "/market-analysis" },
       { text: "Backtesting", link: "/backtesting" },
       { text: "Monte Carlo Analysis", link: "/monte-carlo" },
       { text: "Updates", link: "/updates" },

@@ -77,6 +77,12 @@ def rsi(values, period):
     return result.fillna(100).where(avg_loss != 0, 100)
 
 
+def roc(values, period):
+    period = max(int(period), 1)
+    close = pd.Series(values)
+    return (close / close.shift(period)) - 1
+
+
 def linreg(values, period):
     period = max(int(period), 1)
     x = np.arange(period, dtype=float)
@@ -189,7 +195,7 @@ def iter_ast_operands(definition: dict):
     def walk(value):
         if isinstance(value, dict):
             value_type = value.get("type")
-            if value_type in {"price", "indicator", "value", "parameter", "transform"}:
+            if value_type in {"price", "indicator", "value", "parameter", "entry_state", "transform"}:
                 yield value
             for child in value.values():
                 yield from walk(child)
@@ -200,6 +206,7 @@ def iter_ast_operands(definition: dict):
     yield from walk(definition.get("entry", {}))
     yield from walk(definition.get("exit", {}))
     yield from walk(definition.get("risk", {}))
+    yield from walk(definition.get("state", {}))
 
 
 def ast_timeframes(definition: dict) -> set[str]:
@@ -291,6 +298,8 @@ def _compute_indicator(df: pd.DataFrame, operand: dict, parameters: dict):
         return rma(values, params.get("period", 14))
     if name == "RSI":
         return rsi(values, params.get("period", 14))
+    if name == "ROC":
+        return roc(values, params.get("period", 60))
     if name == "LINREG":
         return linreg(values, params.get("period", 100))
     if name == "ATR":
@@ -377,7 +386,7 @@ def add_indicators(
     return result
 
 
-def _operand_value(df: pd.DataFrame, operand: dict, parameters: dict, idx: int):
+def _operand_value(df: pd.DataFrame, operand: dict, parameters: dict, idx: int, context: dict | None = None):
     operand_type = operand.get("type")
     if operand_type == "indicator":
         return df[f"SB_{_series_key(operand, parameters)}"].iloc[idx]
@@ -390,12 +399,17 @@ def _operand_value(df: pd.DataFrame, operand: dict, parameters: dict, idx: int):
         return operand.get("value")
     if operand_type == "parameter":
         return parameters.get(str(operand.get("name")))
+    if operand_type == "entry_state":
+        state = (context or {}).get("entry_state", {})
+        if isinstance(state, dict):
+            return state.get(str(operand.get("name")))
+        return np.nan
     if operand_type == "transform":
-        return _transform_value(df, operand, parameters, idx)
+        return _transform_value(df, operand, parameters, idx, context)
     return np.nan
 
 
-def _transform_value(df: pd.DataFrame, operand: dict, parameters: dict, idx: int):
+def _transform_value(df: pd.DataFrame, operand: dict, parameters: dict, idx: int, context: dict | None = None):
     operator = operand.get("operator")
     source = operand.get("source", {})
     bars = max(int(float(operand.get("bars", operand.get("period", 1)) or 1)), 1)
@@ -403,14 +417,19 @@ def _transform_value(df: pd.DataFrame, operand: dict, parameters: dict, idx: int
         target_idx = idx - bars
         if target_idx < 0:
             return np.nan
-        return _operand_value(df, source, parameters, target_idx)
-    series = [_operand_value(df, source, parameters, pos) for pos in range(max(0, idx - bars + 1), idx + 1)]
+        return _operand_value(df, source, parameters, target_idx, context)
+    series = [_operand_value(df, source, parameters, pos, context) for pos in range(max(0, idx - bars + 1), idx + 1)]
     if not series:
         return np.nan
     if operator == "highest_high":
         return np.nanmax(series)
     if operator == "lowest_low":
         return np.nanmin(series)
+    if operator == "rolling_mean":
+        ready_values = [float(value) for value in series if pd.notna(value)]
+        if not ready_values:
+            return np.nan
+        return float(np.mean(ready_values))
     return np.nan
 
 
@@ -424,14 +443,14 @@ def _is_ready(*values) -> bool:
     return True
 
 
-def evaluate_rule(df: pd.DataFrame, rule: dict, parameters: dict, idx: int = -1) -> bool:
+def evaluate_rule(df: pd.DataFrame, rule: dict, parameters: dict, idx: int = -1, context: dict | None = None) -> bool:
     if len(df) == 0:
         return False
     if idx < 0:
         idx = len(df) + idx
     if rule.get("type") == "window_condition":
-        return evaluate_window_condition(df, rule, parameters, idx)
-    left = _operand_value(df, rule["left"], parameters, idx)
+        return evaluate_window_condition(df, rule, parameters, idx, context)
+    left = _operand_value(df, rule["left"], parameters, idx, context)
     operator = rule.get("operator")
     if operator == "between":
         lower = rule.get("lower")
@@ -440,10 +459,10 @@ def evaluate_rule(df: pd.DataFrame, rule: dict, parameters: dict, idx: int = -1)
             right = rule.get("right", [])
             if isinstance(right, list) and len(right) == 2:
                 lower, upper = right
-        lower_value = _operand_value(df, lower, parameters, idx)
-        upper_value = _operand_value(df, upper, parameters, idx)
+        lower_value = _operand_value(df, lower, parameters, idx, context)
+        upper_value = _operand_value(df, upper, parameters, idx, context)
         return _is_ready(left, lower_value, upper_value) and float(lower_value) <= float(left) <= float(upper_value)
-    right = _operand_value(df, rule["right"], parameters, idx)
+    right = _operand_value(df, rule["right"], parameters, idx, context)
     if not _is_ready(left, right):
         return False
     if operator in {"greater_than", "above"}:
@@ -457,8 +476,8 @@ def evaluate_rule(df: pd.DataFrame, rule: dict, parameters: dict, idx: int = -1)
     if operator in {"crosses_above", "crosses_below"}:
         if idx <= 0:
             return False
-        left_prev = _operand_value(df, rule["left"], parameters, idx - 1)
-        right_prev = _operand_value(df, rule["right"], parameters, idx - 1)
+        left_prev = _operand_value(df, rule["left"], parameters, idx - 1, context)
+        right_prev = _operand_value(df, rule["right"], parameters, idx - 1, context)
         if not _is_ready(left_prev, right_prev):
             return False
         if operator == "crosses_above":
@@ -467,7 +486,7 @@ def evaluate_rule(df: pd.DataFrame, rule: dict, parameters: dict, idx: int = -1)
     return False
 
 
-def evaluate_window_condition(df: pd.DataFrame, rule: dict, parameters: dict, idx: int = -1) -> bool:
+def evaluate_window_condition(df: pd.DataFrame, rule: dict, parameters: dict, idx: int = -1, context: dict | None = None) -> bool:
     if len(df) == 0:
         return False
     if idx < 0:
@@ -478,7 +497,7 @@ def evaluate_window_condition(df: pd.DataFrame, rule: dict, parameters: dict, id
         return True
     start = max(0, idx - bars + 1)
     condition = rule.get("condition", {})
-    results = [evaluate_ast_condition(df, condition, parameters, pos) for pos in range(start, idx + 1)]
+    results = [evaluate_ast_condition(df, condition, parameters, pos, context) for pos in range(start, idx + 1)]
     if operator == "for_n_bars":
         return len(results) == bars and all(results)
     if operator == "within_n_bars":
@@ -486,34 +505,34 @@ def evaluate_window_condition(df: pd.DataFrame, rule: dict, parameters: dict, id
     return False
 
 
-def evaluate_group(df: pd.DataFrame, group: dict, parameters: dict, idx: int = -1) -> bool:
-    return evaluate_ast_group(df, group, parameters, idx)
+def evaluate_group(df: pd.DataFrame, group: dict, parameters: dict, idx: int = -1, context: dict | None = None) -> bool:
+    return evaluate_ast_group(df, group, parameters, idx, context)
 
 
-def evaluate_ast_condition(df: pd.DataFrame, condition: dict, parameters: dict, idx: int = -1) -> bool:
+def evaluate_ast_condition(df: pd.DataFrame, condition: dict, parameters: dict, idx: int = -1, context: dict | None = None) -> bool:
     condition_type = condition.get("type", "comparison")
     if condition_type == "group":
-        return evaluate_ast_group(df, condition, parameters, idx)
-    return evaluate_rule(df, condition, parameters, idx)
+        return evaluate_ast_group(df, condition, parameters, idx, context)
+    return evaluate_rule(df, condition, parameters, idx, context)
 
 
-def evaluate_ast_group(df: pd.DataFrame, group: dict, parameters: dict, idx: int = -1) -> bool:
+def evaluate_ast_group(df: pd.DataFrame, group: dict, parameters: dict, idx: int = -1, context: dict | None = None) -> bool:
     conditions = group.get("conditions", []) if isinstance(group, dict) else []
     if not conditions:
         return False
     operators = group.get("operators", []) if isinstance(group, dict) else []
     if isinstance(operators, list) and len(operators) == len(conditions) - 1:
-        result = evaluate_ast_condition(df, conditions[0], parameters, idx)
+        result = evaluate_ast_condition(df, conditions[0], parameters, idx, context)
         for operator, condition in zip(operators, conditions[1:]):
-            condition_result = evaluate_ast_condition(df, condition, parameters, idx)
+            condition_result = evaluate_ast_condition(df, condition, parameters, idx, context)
             if operator == "any":
                 result = result or condition_result
             else:
                 result = result and condition_result
         return bool(result)
     if group.get("logic") == "any":
-        return any(evaluate_ast_condition(df, condition, parameters, idx) for condition in conditions)
-    return all(evaluate_ast_condition(df, condition, parameters, idx) for condition in conditions)
+        return any(evaluate_ast_condition(df, condition, parameters, idx, context) for condition in conditions)
+    return all(evaluate_ast_condition(df, condition, parameters, idx, context) for condition in conditions)
 
 
 def evaluate_entry(
@@ -539,6 +558,48 @@ def evaluate_entry(
     return evaluate_ast_group(prepared, definition.get("entry", {}), parameters, idx)
 
 
+def capture_ast_entry_state(df: pd.DataFrame, definition: dict, parameters: dict, idx: int = -1) -> dict:
+    if len(df) == 0:
+        return {}
+    if idx < 0:
+        idx = len(df) + idx
+    state = definition.get("state", {}) if isinstance(definition, dict) else {}
+    entry_state = state.get("entry", {}) if isinstance(state, dict) else {}
+    if not isinstance(entry_state, dict):
+        return {}
+    result = {}
+    for name, operand in entry_state.items():
+        if not isinstance(operand, dict):
+            continue
+        value = _operand_value(df, operand, parameters, idx)
+        if _is_ready(value):
+            result[str(name)] = float(value)
+    return result
+
+
+def capture_entry_state(
+    df: pd.DataFrame,
+    definition: dict,
+    parameters: dict | None = None,
+    idx: int = -1,
+    *,
+    symbol: str = "",
+    base_timeframe: str = "current",
+    data_loader=None,
+) -> dict:
+    definition = schema.validate_definition(definition)
+    parameters = resolve_parameters(definition, parameters)
+    prepared = add_indicators(
+        df,
+        definition,
+        parameters,
+        symbol=symbol,
+        base_timeframe=base_timeframe,
+        data_loader=data_loader,
+    )
+    return capture_ast_entry_state(prepared, definition, parameters, idx)
+
+
 def evaluate_exit(
     df: pd.DataFrame,
     definition: dict,
@@ -548,6 +609,7 @@ def evaluate_exit(
     symbol: str = "",
     base_timeframe: str = "current",
     data_loader=None,
+    context: dict | None = None,
 ) -> bool:
     definition = schema.validate_definition(definition)
     parameters = resolve_parameters(definition, parameters)
@@ -559,4 +621,4 @@ def evaluate_exit(
         base_timeframe=base_timeframe,
         data_loader=data_loader,
     )
-    return evaluate_ast_group(prepared, definition.get("exit", {}), parameters, idx)
+    return evaluate_ast_group(prepared, definition.get("exit", {}), parameters, idx, context)

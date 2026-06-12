@@ -79,7 +79,8 @@ After login:
 1. Open **Trading > Dashboard** and confirm the app loads.
 2. Open **Trading > Scheduled Jobs** and check which jobs are enabled.
 3. Open **Backtesting > Backtest Settings** and review cash, commission, risk, and approval rules.
-4. Check container logs if data or jobs are not updating.
+4. Open **Market Analysis > Dashboard** if you want to review macro/on-chain market indicators.
+5. Check container logs if data or jobs are not updating.
 
 ```bash
 docker compose logs -f dashboard

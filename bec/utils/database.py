@@ -369,6 +369,14 @@ def get_setting(setting_name):
         "trade_against_switch_stablecoin": "USDC",
         "telegram_routine_trade_logs": "summary",
         "delisting_start_date": datetime.now().isoformat(),
+        "onchain_supply_profit_loss_source": "bitview",
+        "onchain_supply_profit_loss_backfill_days": 365,
+        "onchain_supply_profit_loss_update_days": 10,
+        "onchain_supply_profit_loss_top_threshold": 95.0,
+        "onchain_supply_profit_loss_extreme_top_threshold": 98.0,
+        "onchain_supply_profit_loss_bottom_threshold": 5.0,
+        "onchain_supply_profit_loss_cross_tolerance": 1.0,
+        "onchain_supply_profit_loss_send_telegram_alerts": True,
     }
 
     # Corresponding comments for each setting
@@ -393,6 +401,14 @@ def get_setting(setting_name):
         "trade_against_switch_stablecoin": "Choose the stablecoin for auto-switching.",
         "telegram_routine_trade_logs": "Controls routine trade-cycle Telegram logs ('summary' or 'detailed').",
         "delisting_start_date": "Defines the starting point for monitoring Binance delisting announcements.",
+        "onchain_supply_profit_loss_source": "On-chain source for BTC Supply in Profit/Loss.",
+        "onchain_supply_profit_loss_backfill_days": "Number of Bitview days to fetch during initial backfill.",
+        "onchain_supply_profit_loss_update_days": "Number of recent Bitview days to refresh in the daily job.",
+        "onchain_supply_profit_loss_top_threshold": "Supply in Profit percentage that triggers the top-zone alert.",
+        "onchain_supply_profit_loss_extreme_top_threshold": "Supply in Profit percentage that triggers the extreme-top alert.",
+        "onchain_supply_profit_loss_bottom_threshold": "Supply in Profit percentage that triggers the bottom-zone alert.",
+        "onchain_supply_profit_loss_cross_tolerance": "Tolerance in percentage points for the 50% supply profit/loss cross alert.",
+        "onchain_supply_profit_loss_send_telegram_alerts": "Enable Telegram alerts for BTC Supply in Profit/Loss events.",
     }
 
     try:
@@ -507,6 +523,10 @@ def remove_obsolete_settings():
     connection.execute(
         "DELETE FROM Settings WHERE name = ?",
         ("main_strategy",),
+    )
+    connection.execute(
+        "DELETE FROM Settings WHERE name = ?",
+        ("onchain_supply_profit_loss_csv_path",),
     )
     connection.commit()
 
@@ -2065,6 +2085,7 @@ sql_strategies_add_default_strategies = """
 INSERT OR IGNORE INTO Strategies (Id, Name) VALUES ('ema_cross_with_market_phases', 'EMA Cross with Market Phases');
 INSERT OR IGNORE INTO Strategies (Id, Name, BTC_Strategy) VALUES ('ema_cross', 'EMA Cross', 1);
 INSERT OR IGNORE INTO Strategies (Id, Name, Backtest_Optimize, BTC_Strategy) VALUES ('market_phases', 'Market Phases', 0, 1);
+INSERT OR IGNORE INTO Strategies (Id, Name, Backtest_Optimize, BTC_Strategy) VALUES ('dual_momentum_simple', 'Dual Momentum Simple', 1, 0);
 INSERT OR IGNORE INTO Strategies (Id, Name, Backtest_Optimize, BTC_Strategy) VALUES ('hma_rsi_linreg', 'HMA RSI LINREG', 1, 1);
 INSERT OR IGNORE INTO Strategies (Id, Name, Backtest_Optimize, Main_Strategy, BTC_Strategy) VALUES ('bullmarketsupportband', 'BullMarketSupportBand', 0, 0, 1);
 INSERT OR IGNORE INTO Strategies (Id, Name, Backtest_Optimize, Main_Strategy, BTC_Strategy) VALUES ('wema20', 'WEMA20', 0, 0, 1);
@@ -2246,14 +2267,33 @@ def seed_builtin_strategy_templates(connection=None):
         definition = get_builtin_template(strategy_id)
         if not definition:
             continue
+        existing = connection.execute(
+            "SELECT Metadata_JSON FROM Strategies WHERE Id = ?", (strategy_id,)
+        ).fetchone()
+        metadata = {}
+        if existing and existing[0]:
+            try:
+                metadata = strategy_schema.parse_json_object(
+                    existing[0], "Metadata_JSON"
+                )
+            except Exception:
+                metadata = {}
+        metadata.pop("readonly_template", None)
+        metadata.update(
+            {
+                "builder": "bec_strategy_builder",
+                "source": "bec_default_strategy",
+                "bec_default_strategy": True,
+            }
+        )
         connection.execute(
             """
             UPDATE Strategies
             SET
-                Type = 'builtin',
+                Type = 'custom',
                 Status = 'approved',
                 Definition_JSON = ?,
-                Metadata_JSON = COALESCE(NULLIF(Metadata_JSON, ''), ?),
+                Metadata_JSON = ?,
                 Version = COALESCE(NULLIF(Version, 0), 1),
                 Created_At = COALESCE(Created_At, ?),
                 Updated_At = COALESCE(Updated_At, ?)
@@ -2261,7 +2301,7 @@ def seed_builtin_strategy_templates(connection=None):
             """,
             (
                 dumps_strategy_json(definition),
-                dumps_strategy_json({"readonly_template": True}),
+                dumps_strategy_json(metadata),
                 now,
                 now,
                 strategy_id,
@@ -2549,7 +2589,7 @@ def import_strategy_package(package_json: str) -> str:
     return new_id
 
 
-def create_strategy_draft_version(
+def get_or_create_strategy_draft_version(
     strategy_id: str,
     definition: dict,
     risk: dict | None = None,
@@ -2561,23 +2601,79 @@ def create_strategy_draft_version(
     row = source.iloc[0]
     next_version = int(row.get("Version", 1) or 1) + 1
     connection = _get_conn()
-    new_id = _ensure_strategy_id_available(connection, f"{strategy_id}_v{next_version}")
+    parent_strategy_id = str(row.get("Parent_Strategy_Id") or strategy_id)
+    parent = get_strategy_by_id(parent_strategy_id)
+    base_name = (
+        str(parent.iloc[0].get("Name") or parent_strategy_id)
+        if not parent.empty
+        else str(row.get("Name") or parent_strategy_id)
+    )
+    draft_name = f"{base_name} v{next_version}"
+    existing = connection.execute(
+        """
+        SELECT Id
+        FROM Strategies
+        WHERE Type = 'custom'
+          AND Status = 'draft'
+          AND Parent_Strategy_Id = ?
+          AND Version = ?
+        ORDER BY Updated_At DESC, Created_At DESC, Id ASC
+        LIMIT 1
+        """,
+        (parent_strategy_id, next_version),
+    ).fetchone()
+    if existing:
+        draft_id = str(existing[0])
+        upsert_custom_strategy(
+            strategy_id=draft_id,
+            name=draft_name,
+            definition=definition,
+            metadata=metadata
+            or strategy_schema.parse_json_object(
+                row.get("Metadata_JSON", "{}"), "Metadata_JSON"
+            ),
+            status="draft",
+            parent_strategy_id=parent_strategy_id,
+            version=next_version,
+            main_strategy=bool(row.get("Main_Strategy", 1)),
+            btc_strategy=bool(row.get("BTC_Strategy", 0)),
+            backtest_optimize=bool(_optimizable_parameter_names(definition)),
+        )
+        return draft_id
+
+    new_id = _ensure_strategy_id_available(
+        connection, f"{parent_strategy_id}_v{next_version}"
+    )
     upsert_custom_strategy(
         strategy_id=new_id,
-        name=f"{row.get('Name') or strategy_id} v{next_version}",
+        name=draft_name,
         definition=definition,
         metadata=metadata
         or strategy_schema.parse_json_object(
             row.get("Metadata_JSON", "{}"), "Metadata_JSON"
         ),
         status="draft",
-        parent_strategy_id=str(row.get("Parent_Strategy_Id") or strategy_id),
+        parent_strategy_id=parent_strategy_id,
         version=next_version,
         main_strategy=bool(row.get("Main_Strategy", 1)),
         btc_strategy=bool(row.get("BTC_Strategy", 0)),
-        backtest_optimize=False,
+        backtest_optimize=bool(_optimizable_parameter_names(definition)),
     )
     return new_id
+
+
+def create_strategy_draft_version(
+    strategy_id: str,
+    definition: dict,
+    risk: dict | None = None,
+    metadata: dict | None = None,
+) -> str:
+    return get_or_create_strategy_draft_version(
+        strategy_id,
+        definition,
+        risk=risk,
+        metadata=metadata,
+    )
 
 
 # BACKTESTING_RESULTS
@@ -3102,6 +3198,8 @@ sql_create_symbols_by_market_phase_table = """
         Market_Phase TEXT,
         Perc_Above_DSMA50 REAL,
         Perc_Above_DSMA200 REAL,
+        ROC_30 REAL,
+        ROC_60 REAL,
         Rank INTEGER
     );
 """
@@ -3116,10 +3214,31 @@ sql_create_symbols_by_market_phase_historical_table = """
             Market_Phase TEXT,
             Perc_Above_DSMA50 REAL,
             Perc_Above_DSMA200 REAL,
+            ROC_30 REAL,
+            ROC_60 REAL,
             Rank INTEGER,
             Date_Inserted TEXT
         );
 """
+
+
+def _ensure_symbols_by_market_phase_columns(connection):
+    required_columns = {
+        "ROC_30": "REAL",
+        "ROC_60": "REAL",
+    }
+    for table_name in (
+        "Symbols_By_Market_Phase",
+        "Symbols_By_Market_Phase_Historical",
+    ):
+        cursor = connection.execute(f"PRAGMA table_info({table_name})")
+        existing_cols = {row[1] for row in cursor.fetchall()}
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_cols:
+                connection.execute(
+                    f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"
+                )
+
 
 sql_symbols_by_market_phase_Historical_get_symbols_days_at_top = """
     SELECT symbol, 
@@ -3149,7 +3268,9 @@ sql_get_all_symbols_by_market_phase = """
         DSMA200,
         Market_Phase,
         Perc_Above_DSMA50,
-        Perc_Above_DSMA200
+        Perc_Above_DSMA200,
+        ROC_30,
+        ROC_60
     FROM Symbols_By_Market_Phase;
 """
 
@@ -3241,8 +3362,10 @@ sql_insert_symbols_by_market_phase = """
         Market_Phase,
         Perc_Above_DSMA50,
         Perc_Above_DSMA200,
+        ROC_30,
+        ROC_60,
         Rank)
-    VALUES(?,?,?,?,?,?,?,?);
+    VALUES(?,?,?,?,?,?,?,?,?,?);
 """
 
 
@@ -3254,6 +3377,8 @@ def insert_symbols_by_market_phase(
     market_phase: str,
     perc_above_dsma50: float,
     perc_above_dsma200: float,
+    roc_30: float,
+    roc_60: float,
     rank: int,
 ):
     connection = _get_conn()
@@ -3268,6 +3393,8 @@ def insert_symbols_by_market_phase(
                 market_phase,
                 perc_above_dsma50,
                 perc_above_dsma200,
+                roc_30,
+                roc_60,
                 rank,
             ),
         )
@@ -3275,8 +3402,8 @@ def insert_symbols_by_market_phase(
 
 sql_insert_symbols_by_market_phase_historical = """
     INSERT INTO Symbols_By_Market_Phase_Historical 
-        (Symbol, Price, DSMA50, DSMA200, Market_Phase, Perc_Above_DSMA50, Perc_Above_DSMA200, Rank, Date_Inserted)
-    SELECT Symbol, Price, DSMA50, DSMA200, Market_Phase, Perc_Above_DSMA50, Perc_Above_DSMA200, Rank, ?
+        (Symbol, Price, DSMA50, DSMA200, Market_Phase, Perc_Above_DSMA50, Perc_Above_DSMA200, ROC_30, ROC_60, Rank, Date_Inserted)
+    SELECT Symbol, Price, DSMA50, DSMA200, Market_Phase, Perc_Above_DSMA50, Perc_Above_DSMA200, ROC_30, ROC_60, Rank, ?
     FROM Symbols_By_Market_Phase;
 """
 
@@ -3632,6 +3759,195 @@ def add_signal_log(
         )
 
 
+# ON-CHAIN BTC SUPPLY PROFIT/LOSS
+sql_create_onchain_btc_supply_profit_loss_table = """
+    CREATE TABLE IF NOT EXISTS Onchain_Btc_Supply_Profit_Loss (
+        Date TEXT PRIMARY KEY,
+        Btc_Price REAL NOT NULL,
+        Percent_Supply_In_Profit REAL NOT NULL,
+        Percent_Supply_In_Loss REAL NOT NULL,
+        Supply_In_Profit_Btc REAL,
+        Supply_In_Loss_Btc REAL,
+        Source TEXT NOT NULL,
+        Retrieved_At TEXT,
+        Created_At TEXT,
+        Updated_At TEXT NOT NULL
+    );
+"""
+
+sql_create_onchain_signal_alerts_sent_table = """
+    CREATE TABLE IF NOT EXISTS Onchain_Signal_Alerts_Sent (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        signal_name TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        event_date TEXT NOT NULL,
+        sent_at TEXT NOT NULL,
+        CONSTRAINT onchain_signal_alert_unique UNIQUE (
+            signal_name,
+            event_type,
+            event_date
+        )
+    );
+"""
+
+
+def upsert_onchain_btc_supply_profit_loss(df: pd.DataFrame) -> None:
+    if df is None or df.empty:
+        return
+
+    connection = _get_conn()
+    now = datetime.now(timezone.utc).isoformat()
+    with connection:
+        connection.execute(sql_create_onchain_btc_supply_profit_loss_table)
+        _ensure_onchain_btc_supply_profit_loss_columns(connection)
+        for row in df.itertuples(index=False):
+            date_value = pd.to_datetime(row.date).strftime("%Y-%m-%d")
+            retrieved_at = getattr(row, "retrieved_at", "") or now
+            supply_in_profit_btc = _nullable_float(
+                getattr(row, "supply_in_profit_btc", None)
+            )
+            supply_in_loss_btc = _nullable_float(
+                getattr(row, "supply_in_loss_btc", None)
+            )
+            connection.execute(
+                """
+                INSERT INTO Onchain_Btc_Supply_Profit_Loss (
+                    Date,
+                    Btc_Price,
+                    Percent_Supply_In_Profit,
+                    Percent_Supply_In_Loss,
+                    Supply_In_Profit_Btc,
+                    Supply_In_Loss_Btc,
+                    Source,
+                    Retrieved_At,
+                    Created_At,
+                    Updated_At
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(Date) DO UPDATE SET
+                    Btc_Price = excluded.Btc_Price,
+                    Percent_Supply_In_Profit = excluded.Percent_Supply_In_Profit,
+                    Percent_Supply_In_Loss = excluded.Percent_Supply_In_Loss,
+                    Supply_In_Profit_Btc = excluded.Supply_In_Profit_Btc,
+                    Supply_In_Loss_Btc = excluded.Supply_In_Loss_Btc,
+                    Source = excluded.Source,
+                    Retrieved_At = excluded.Retrieved_At,
+                    Updated_At = excluded.Updated_At
+                """,
+                (
+                    date_value,
+                    float(row.btc_price),
+                    float(row.percent_supply_in_profit),
+                    float(row.percent_supply_in_loss),
+                    supply_in_profit_btc,
+                    supply_in_loss_btc,
+                    str(row.source),
+                    str(retrieved_at),
+                    now,
+                    now,
+                ),
+            )
+
+
+def _nullable_float(value):
+    try:
+        if pd.isna(value):
+            return None
+    except TypeError:
+        pass
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _ensure_onchain_btc_supply_profit_loss_columns(connection):
+    cursor = connection.execute("PRAGMA table_info(Onchain_Btc_Supply_Profit_Loss)")
+    existing_cols = {row[1] for row in cursor.fetchall()}
+    required_columns = {
+        "Supply_In_Profit_Btc": "REAL",
+        "Supply_In_Loss_Btc": "REAL",
+        "Retrieved_At": "TEXT",
+        "Created_At": "TEXT",
+    }
+    for column_name, column_type in required_columns.items():
+        if column_name not in existing_cols:
+            connection.execute(
+                f"ALTER TABLE Onchain_Btc_Supply_Profit_Loss ADD COLUMN {column_name} {column_type}"
+            )
+
+
+def get_onchain_btc_supply_profit_loss() -> pd.DataFrame:
+    connection = _get_conn()
+    connection.execute(sql_create_onchain_btc_supply_profit_loss_table)
+    _ensure_onchain_btc_supply_profit_loss_columns(connection)
+    return pd.read_sql(
+        """
+        SELECT
+            Date AS date,
+            Btc_Price AS btc_price,
+            Percent_Supply_In_Profit AS percent_supply_in_profit,
+            Percent_Supply_In_Loss AS percent_supply_in_loss,
+            Supply_In_Profit_Btc AS supply_in_profit_btc,
+            Supply_In_Loss_Btc AS supply_in_loss_btc,
+            Source AS source,
+            Retrieved_At AS retrieved_at,
+            Updated_At AS updated_at
+        FROM Onchain_Btc_Supply_Profit_Loss
+        ORDER BY Date ASC
+        """,
+        connection,
+    )
+
+
+def onchain_signal_alert_sent(
+    signal_name: str,
+    event_type: str,
+    event_date: str,
+) -> bool:
+    connection = _get_conn()
+    connection.execute(sql_create_onchain_signal_alerts_sent_table)
+    row = connection.execute(
+        """
+        SELECT 1
+        FROM Onchain_Signal_Alerts_Sent
+        WHERE signal_name = ?
+          AND event_type = ?
+          AND event_date = ?
+        LIMIT 1
+        """,
+        (str(signal_name), str(event_type), str(event_date)),
+    ).fetchone()
+    return row is not None
+
+
+def record_onchain_signal_alert_sent(
+    signal_name: str,
+    event_type: str,
+    event_date: str,
+) -> None:
+    connection = _get_conn()
+    with connection:
+        connection.execute(sql_create_onchain_signal_alerts_sent_table)
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO Onchain_Signal_Alerts_Sent (
+                signal_name,
+                event_type,
+                event_date,
+                sent_at
+            )
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                str(signal_name),
+                str(event_type),
+                str(event_date),
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+
+
 # Locked_Values
 sql_create_locked_values_table = """
     CREATE TABLE IF NOT EXISTS Locked_Values (
@@ -3732,21 +4048,21 @@ sql_create_backtesting_settings_table = """
         Commission_Value REAL NOT NULL,
         Cash_Value REAL NOT NULL,
         Maximize TEXT NOT NULL,
-        Use_Intraday_Current_Timeframe_Market_Phase_Filter INTEGER NOT NULL DEFAULT 1,
-        Market_Phase_1h_SMA_Fast INTEGER NOT NULL DEFAULT 50,
-        Market_Phase_1h_SMA_Slow INTEGER NOT NULL DEFAULT 200,
-        Market_Phase_4h_SMA_Fast INTEGER NOT NULL DEFAULT 50,
-        Market_Phase_4h_SMA_Slow INTEGER NOT NULL DEFAULT 200,
-        Market_Phase_1d_SMA_Fast INTEGER NOT NULL DEFAULT 50,
-        Market_Phase_1d_SMA_Slow INTEGER NOT NULL DEFAULT 200,
         Buy_Hold_Start_Mode TEXT NOT NULL DEFAULT 'indicator_warmup',
         Optimization_Max_Combinations INTEGER NOT NULL DEFAULT 1000,
         Candidate_Backtest_Refresh_Days INTEGER NOT NULL DEFAULT 7,
+        Backtest_Use_Full_History INTEGER NOT NULL DEFAULT 0,
+        Backtest_Lookback_1d_Years INTEGER NOT NULL DEFAULT 4,
+        Backtest_Lookback_4h_Months INTEGER NOT NULL DEFAULT 18,
+        Backtest_Lookback_1h_Months INTEGER NOT NULL DEFAULT 12,
+        Backtest_Warmup_Candles INTEGER NOT NULL DEFAULT 200,
         Strategy_Quality_Return_Weight REAL NOT NULL DEFAULT 20,
         Strategy_Quality_Risk_Weight REAL NOT NULL DEFAULT 25,
         Strategy_Quality_Risk_Adjusted_Weight REAL NOT NULL DEFAULT 20,
         Strategy_Quality_Trade_Quality_Weight REAL NOT NULL DEFAULT 20,
-        Strategy_Quality_Robustness_Weight REAL NOT NULL DEFAULT 15
+        Strategy_Quality_Robustness_Weight REAL NOT NULL DEFAULT 15,
+        Monte_Carlo_Candle_Perturb_Min_Pct REAL NOT NULL DEFAULT 0.1,
+        Monte_Carlo_Candle_Perturb_Max_Pct REAL NOT NULL DEFAULT 0.5
     );
 """
 
@@ -3892,21 +4208,21 @@ DEFAULT_BACKTESTING_SETTINGS = {
     "Commission_Value": 0.005,
     "Cash_Value": 10000.0,
     "Maximize": "SQN",
-    "Use_Intraday_Current_Timeframe_Market_Phase_Filter": 1,
-    "Market_Phase_1h_SMA_Fast": 50,
-    "Market_Phase_1h_SMA_Slow": 200,
-    "Market_Phase_4h_SMA_Fast": 50,
-    "Market_Phase_4h_SMA_Slow": 200,
-    "Market_Phase_1d_SMA_Fast": 50,
-    "Market_Phase_1d_SMA_Slow": 200,
     "Buy_Hold_Start_Mode": "indicator_warmup",
     "Optimization_Max_Combinations": 1000,
     "Candidate_Backtest_Refresh_Days": 7,
+    "Backtest_Use_Full_History": False,
+    "Backtest_Lookback_1d_Years": 4,
+    "Backtest_Lookback_4h_Months": 18,
+    "Backtest_Lookback_1h_Months": 12,
+    "Backtest_Warmup_Candles": 200,
     "Strategy_Quality_Return_Weight": 20.0,
     "Strategy_Quality_Risk_Weight": 25.0,
     "Strategy_Quality_Risk_Adjusted_Weight": 20.0,
     "Strategy_Quality_Trade_Quality_Weight": 20.0,
     "Strategy_Quality_Robustness_Weight": 15.0,
+    "Monte_Carlo_Candle_Perturb_Min_Pct": 0.1,
+    "Monte_Carlo_Candle_Perturb_Max_Pct": 0.5,
 }
 
 sql_create_job_schedules_table = """
@@ -4118,6 +4434,14 @@ DEFAULT_JOB_SCHEDULES = [
         1,
         "Super RSI alerts on 15m data.",
     ),
+    (
+        "btc_supply_profit_loss_1d",
+        "bec/market_indicators/supply_profit_loss.py",
+        "",
+        "1d",
+        1,
+        "BTC Supply in Profit/Loss macro on-chain alert.",
+    ),
     # ("delisting_checker_1h", "delisting_checker.py", "", "1h", 1, "Checks Binance delisting announcements."),
 ]
 
@@ -4231,6 +4555,7 @@ def create_tables():
         connection.execute(sql_create_symbols_to_calc_table)
         connection.execute(sql_create_symbols_by_market_phase_table)
         connection.execute(sql_create_symbols_by_market_phase_historical_table)
+        _ensure_symbols_by_market_phase_columns(connection)
         # users
         connection.execute(sql_create_users_table)
         cursor = connection.execute("SELECT COUNT(*) FROM Users")
@@ -4249,6 +4574,9 @@ def create_tables():
         _ensure_balances_unique_index(connection)
         # signals log
         connection.execute(sql_create_signals_log_table)
+        connection.execute(sql_create_onchain_btc_supply_profit_loss_table)
+        _ensure_onchain_btc_supply_profit_loss_columns(connection)
+        connection.execute(sql_create_onchain_signal_alerts_sent_table)
         # locked values
         connection.execute(sql_create_locked_values_table)
         # settings
@@ -4287,6 +4615,9 @@ def create_tables():
         connection.execute(sql_create_monte_carlo_jobs_table)
         connection.execute(sql_create_monte_carlo_results_table)
         connection.execute(sql_create_auto_switch_signals_table)
+        connection.execute(sql_create_onchain_btc_supply_profit_loss_table)
+        _ensure_onchain_btc_supply_profit_loss_columns(connection)
+        connection.execute(sql_create_onchain_signal_alerts_sent_table)
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_monte_carlo_jobs_status_created ON Monte_Carlo_Jobs(status, created_at)"
         )
@@ -4397,27 +4728,65 @@ def _ensure_backtesting_settings_columns(connection):
     cursor = connection.execute("PRAGMA table_info(Backtesting_Settings)")
     existing_cols = {row[1] for row in cursor.fetchall()}
     required_columns = {
-        "Use_Intraday_Current_Timeframe_Market_Phase_Filter": "INTEGER NOT NULL DEFAULT 1",
-        "Market_Phase_1h_SMA_Fast": "INTEGER NOT NULL DEFAULT 50",
-        "Market_Phase_1h_SMA_Slow": "INTEGER NOT NULL DEFAULT 200",
-        "Market_Phase_4h_SMA_Fast": "INTEGER NOT NULL DEFAULT 50",
-        "Market_Phase_4h_SMA_Slow": "INTEGER NOT NULL DEFAULT 200",
-        "Market_Phase_1d_SMA_Fast": "INTEGER NOT NULL DEFAULT 50",
-        "Market_Phase_1d_SMA_Slow": "INTEGER NOT NULL DEFAULT 200",
         "Buy_Hold_Start_Mode": "TEXT NOT NULL DEFAULT 'indicator_warmup'",
         "Optimization_Max_Combinations": "INTEGER NOT NULL DEFAULT 1000",
         "Candidate_Backtest_Refresh_Days": "INTEGER NOT NULL DEFAULT 7",
+        "Backtest_Use_Full_History": "INTEGER NOT NULL DEFAULT 0",
+        "Backtest_Lookback_1d_Years": "INTEGER NOT NULL DEFAULT 4",
+        "Backtest_Lookback_4h_Months": "INTEGER NOT NULL DEFAULT 18",
+        "Backtest_Lookback_1h_Months": "INTEGER NOT NULL DEFAULT 12",
+        "Backtest_Warmup_Candles": "INTEGER NOT NULL DEFAULT 200",
         "Strategy_Quality_Return_Weight": "REAL NOT NULL DEFAULT 20",
         "Strategy_Quality_Risk_Weight": "REAL NOT NULL DEFAULT 25",
         "Strategy_Quality_Risk_Adjusted_Weight": "REAL NOT NULL DEFAULT 20",
         "Strategy_Quality_Trade_Quality_Weight": "REAL NOT NULL DEFAULT 20",
         "Strategy_Quality_Robustness_Weight": "REAL NOT NULL DEFAULT 15",
+        "Monte_Carlo_Candle_Perturb_Min_Pct": "REAL NOT NULL DEFAULT 0.1",
+        "Monte_Carlo_Candle_Perturb_Max_Pct": "REAL NOT NULL DEFAULT 0.5",
     }
     for column_name, column_type in required_columns.items():
         if column_name not in existing_cols:
             connection.execute(
                 f"ALTER TABLE Backtesting_Settings ADD COLUMN {column_name} {column_type}"
             )
+    _drop_legacy_backtesting_market_phase_settings(connection)
+
+
+def _drop_legacy_backtesting_market_phase_settings(connection):
+    legacy_columns = {
+        "Use_Intraday_Current_Timeframe_Market_Phase_Filter",
+        "Market_Phase_1h_SMA_Fast",
+        "Market_Phase_1h_SMA_Slow",
+        "Market_Phase_4h_SMA_Fast",
+        "Market_Phase_4h_SMA_Slow",
+        "Market_Phase_1d_SMA_Fast",
+        "Market_Phase_1d_SMA_Slow",
+    }
+    cursor = connection.execute("PRAGMA table_info(Backtesting_Settings)")
+    existing_cols = {row[1] for row in cursor.fetchall()}
+    if not (existing_cols & legacy_columns):
+        return
+
+    preserved_columns = ["Id", *DEFAULT_BACKTESTING_SETTINGS.keys()]
+    copy_columns = [column for column in preserved_columns if column in existing_cols]
+    copy_sql = ", ".join(copy_columns)
+    temp_table = "Backtesting_Settings_New"
+    connection.execute(f"DROP TABLE IF EXISTS {temp_table}")
+    connection.execute(
+        sql_create_backtesting_settings_table.replace(
+            "Backtesting_Settings", temp_table, 1
+        )
+    )
+    if copy_columns:
+        connection.execute(
+            f"""
+            INSERT INTO {temp_table} ({copy_sql})
+            SELECT {copy_sql}
+            FROM Backtesting_Settings
+            """
+        )
+    connection.execute("DROP TABLE Backtesting_Settings")
+    connection.execute(f"ALTER TABLE {temp_table} RENAME TO Backtesting_Settings")
 
 
 def _ensure_strategies_columns(connection):
@@ -4789,6 +5158,11 @@ def ensure_job_schedules():
                 connection.execute(
                     "UPDATE Job_Schedules SET script = ? WHERE name = ? AND script = ?",
                     (script, name, "signals/super_rsi.py"),
+                )
+            if name == "btc_supply_profit_loss_1d":
+                connection.execute(
+                    "UPDATE Job_Schedules SET script = ?, description = ? WHERE name = ?",
+                    (script, description, name),
                 )
 
 
@@ -5578,41 +5952,35 @@ def ensure_backtesting_settings():
                     Commission_Value,
                     Cash_Value,
                     Maximize,
-                    Use_Intraday_Current_Timeframe_Market_Phase_Filter,
-                    Market_Phase_1h_SMA_Fast,
-                    Market_Phase_1h_SMA_Slow,
-                    Market_Phase_4h_SMA_Fast,
-                    Market_Phase_4h_SMA_Slow,
-                    Market_Phase_1d_SMA_Fast,
-                    Market_Phase_1d_SMA_Slow,
                     Buy_Hold_Start_Mode,
                     Optimization_Max_Combinations,
                     Candidate_Backtest_Refresh_Days,
+                    Backtest_Use_Full_History,
+                    Backtest_Lookback_1d_Years,
+                    Backtest_Lookback_4h_Months,
+                    Backtest_Lookback_1h_Months,
+                    Backtest_Warmup_Candles,
                     Strategy_Quality_Return_Weight,
                     Strategy_Quality_Risk_Weight,
                     Strategy_Quality_Risk_Adjusted_Weight,
                     Strategy_Quality_Trade_Quality_Weight,
-                    Strategy_Quality_Robustness_Weight
+                    Strategy_Quality_Robustness_Weight,
+                    Monte_Carlo_Candle_Perturb_Min_Pct,
+                    Monte_Carlo_Candle_Perturb_Max_Pct
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     float(DEFAULT_BACKTESTING_SETTINGS["Commission_Value"]),
                     float(DEFAULT_BACKTESTING_SETTINGS["Cash_Value"]),
                     str(DEFAULT_BACKTESTING_SETTINGS["Maximize"]),
-                    int(
-                        DEFAULT_BACKTESTING_SETTINGS[
-                            "Use_Intraday_Current_Timeframe_Market_Phase_Filter"
-                        ]
-                    ),
-                    int(DEFAULT_BACKTESTING_SETTINGS["Market_Phase_1h_SMA_Fast"]),
-                    int(DEFAULT_BACKTESTING_SETTINGS["Market_Phase_1h_SMA_Slow"]),
-                    int(DEFAULT_BACKTESTING_SETTINGS["Market_Phase_4h_SMA_Fast"]),
-                    int(DEFAULT_BACKTESTING_SETTINGS["Market_Phase_4h_SMA_Slow"]),
-                    int(DEFAULT_BACKTESTING_SETTINGS["Market_Phase_1d_SMA_Fast"]),
-                    int(DEFAULT_BACKTESTING_SETTINGS["Market_Phase_1d_SMA_Slow"]),
                     str(DEFAULT_BACKTESTING_SETTINGS["Buy_Hold_Start_Mode"]),
                     int(DEFAULT_BACKTESTING_SETTINGS["Optimization_Max_Combinations"]),
                     int(DEFAULT_BACKTESTING_SETTINGS["Candidate_Backtest_Refresh_Days"]),
+                    int(bool(DEFAULT_BACKTESTING_SETTINGS["Backtest_Use_Full_History"])),
+                    int(DEFAULT_BACKTESTING_SETTINGS["Backtest_Lookback_1d_Years"]),
+                    int(DEFAULT_BACKTESTING_SETTINGS["Backtest_Lookback_4h_Months"]),
+                    int(DEFAULT_BACKTESTING_SETTINGS["Backtest_Lookback_1h_Months"]),
+                    int(DEFAULT_BACKTESTING_SETTINGS["Backtest_Warmup_Candles"]),
                     float(
                         DEFAULT_BACKTESTING_SETTINGS["Strategy_Quality_Return_Weight"]
                     ),
@@ -5632,6 +6000,16 @@ def ensure_backtesting_settings():
                             "Strategy_Quality_Robustness_Weight"
                         ]
                     ),
+                    float(
+                        DEFAULT_BACKTESTING_SETTINGS[
+                            "Monte_Carlo_Candle_Perturb_Min_Pct"
+                        ]
+                    ),
+                    float(
+                        DEFAULT_BACKTESTING_SETTINGS[
+                            "Monte_Carlo_Candle_Perturb_Max_Pct"
+                        ]
+                    ),
                 ),
             )
 
@@ -5645,21 +6023,21 @@ def get_backtesting_settings():
             Commission_Value,
             Cash_Value,
             Maximize,
-            Use_Intraday_Current_Timeframe_Market_Phase_Filter,
-            Market_Phase_1h_SMA_Fast,
-            Market_Phase_1h_SMA_Slow,
-            Market_Phase_4h_SMA_Fast,
-            Market_Phase_4h_SMA_Slow,
-            Market_Phase_1d_SMA_Fast,
-            Market_Phase_1d_SMA_Slow,
             Buy_Hold_Start_Mode,
             Optimization_Max_Combinations,
             Candidate_Backtest_Refresh_Days,
+            Backtest_Use_Full_History,
+            Backtest_Lookback_1d_Years,
+            Backtest_Lookback_4h_Months,
+            Backtest_Lookback_1h_Months,
+            Backtest_Warmup_Candles,
             Strategy_Quality_Return_Weight,
             Strategy_Quality_Risk_Weight,
             Strategy_Quality_Risk_Adjusted_Weight,
             Strategy_Quality_Trade_Quality_Weight,
-            Strategy_Quality_Robustness_Weight
+            Strategy_Quality_Robustness_Weight,
+            Monte_Carlo_Candle_Perturb_Min_Pct,
+            Monte_Carlo_Candle_Perturb_Max_Pct
         FROM Backtesting_Settings
         LIMIT 1
         """,
@@ -5671,15 +6049,6 @@ def get_backtesting_settings():
         "Commission_Value": float(df.iloc[0]["Commission_Value"]),
         "Cash_Value": float(df.iloc[0]["Cash_Value"]),
         "Maximize": str(df.iloc[0]["Maximize"]),
-        "Use_Intraday_Current_Timeframe_Market_Phase_Filter": int(
-            df.iloc[0]["Use_Intraday_Current_Timeframe_Market_Phase_Filter"]
-        ),
-        "Market_Phase_1h_SMA_Fast": int(df.iloc[0]["Market_Phase_1h_SMA_Fast"]),
-        "Market_Phase_1h_SMA_Slow": int(df.iloc[0]["Market_Phase_1h_SMA_Slow"]),
-        "Market_Phase_4h_SMA_Fast": int(df.iloc[0]["Market_Phase_4h_SMA_Fast"]),
-        "Market_Phase_4h_SMA_Slow": int(df.iloc[0]["Market_Phase_4h_SMA_Slow"]),
-        "Market_Phase_1d_SMA_Fast": int(df.iloc[0]["Market_Phase_1d_SMA_Fast"]),
-        "Market_Phase_1d_SMA_Slow": int(df.iloc[0]["Market_Phase_1d_SMA_Slow"]),
         "Buy_Hold_Start_Mode": str(
             df.iloc[0]["Buy_Hold_Start_Mode"] or "indicator_warmup"
         ),
@@ -5689,6 +6058,19 @@ def get_backtesting_settings():
         "Candidate_Backtest_Refresh_Days": int(
             df.iloc[0]["Candidate_Backtest_Refresh_Days"]
         ),
+        "Backtest_Use_Full_History": bool(
+            int(df.iloc[0]["Backtest_Use_Full_History"])
+        ),
+        "Backtest_Lookback_1d_Years": int(
+            df.iloc[0]["Backtest_Lookback_1d_Years"]
+        ),
+        "Backtest_Lookback_4h_Months": int(
+            df.iloc[0]["Backtest_Lookback_4h_Months"]
+        ),
+        "Backtest_Lookback_1h_Months": int(
+            df.iloc[0]["Backtest_Lookback_1h_Months"]
+        ),
+        "Backtest_Warmup_Candles": int(df.iloc[0]["Backtest_Warmup_Candles"]),
         "Strategy_Quality_Return_Weight": float(
             df.iloc[0]["Strategy_Quality_Return_Weight"]
         ),
@@ -5704,6 +6086,12 @@ def get_backtesting_settings():
         "Strategy_Quality_Robustness_Weight": float(
             df.iloc[0]["Strategy_Quality_Robustness_Weight"]
         ),
+        "Monte_Carlo_Candle_Perturb_Min_Pct": float(
+            df.iloc[0]["Monte_Carlo_Candle_Perturb_Min_Pct"]
+        ),
+        "Monte_Carlo_Candle_Perturb_Max_Pct": float(
+            df.iloc[0]["Monte_Carlo_Candle_Perturb_Max_Pct"]
+        ),
     }
 
 
@@ -5711,21 +6099,21 @@ def update_backtesting_settings(
     commission_value: float,
     cash_value: float,
     maximize: str,
-    use_intraday_current_timeframe_market_phase_filter: bool = True,
-    market_phase_1h_sma_fast: int = 50,
-    market_phase_1h_sma_slow: int = 200,
-    market_phase_4h_sma_fast: int = 50,
-    market_phase_4h_sma_slow: int = 200,
-    market_phase_1d_sma_fast: int = 50,
-    market_phase_1d_sma_slow: int = 200,
     buy_hold_start_mode: str = "indicator_warmup",
     optimization_max_combinations: int = 1000,
     candidate_backtest_refresh_days: int = 7,
+    backtest_use_full_history: bool = False,
+    backtest_lookback_1d_years: int = 4,
+    backtest_lookback_4h_months: int = 18,
+    backtest_lookback_1h_months: int = 12,
+    backtest_warmup_candles: int = 200,
     strategy_quality_return_weight: float = 20.0,
     strategy_quality_risk_weight: float = 25.0,
     strategy_quality_risk_adjusted_weight: float = 20.0,
     strategy_quality_trade_quality_weight: float = 20.0,
     strategy_quality_robustness_weight: float = 15.0,
+    monte_carlo_candle_perturb_min_pct: float = 0.1,
+    monte_carlo_candle_perturb_max_pct: float = 0.5,
 ):
     connection = _get_conn()
     with connection:
@@ -5736,42 +6124,42 @@ def update_backtesting_settings(
             SET Commission_Value = ?,
                 Cash_Value = ?,
                 Maximize = ?,
-                Use_Intraday_Current_Timeframe_Market_Phase_Filter = ?,
-                Market_Phase_1h_SMA_Fast = ?,
-                Market_Phase_1h_SMA_Slow = ?,
-                Market_Phase_4h_SMA_Fast = ?,
-                Market_Phase_4h_SMA_Slow = ?,
-                Market_Phase_1d_SMA_Fast = ?,
-                Market_Phase_1d_SMA_Slow = ?,
                 Buy_Hold_Start_Mode = ?,
                 Optimization_Max_Combinations = ?,
                 Candidate_Backtest_Refresh_Days = ?,
+                Backtest_Use_Full_History = ?,
+                Backtest_Lookback_1d_Years = ?,
+                Backtest_Lookback_4h_Months = ?,
+                Backtest_Lookback_1h_Months = ?,
+                Backtest_Warmup_Candles = ?,
                 Strategy_Quality_Return_Weight = ?,
                 Strategy_Quality_Risk_Weight = ?,
                 Strategy_Quality_Risk_Adjusted_Weight = ?,
                 Strategy_Quality_Trade_Quality_Weight = ?,
-                Strategy_Quality_Robustness_Weight = ?
+                Strategy_Quality_Robustness_Weight = ?,
+                Monte_Carlo_Candle_Perturb_Min_Pct = ?,
+                Monte_Carlo_Candle_Perturb_Max_Pct = ?
             WHERE Id = (SELECT Id FROM Backtesting_Settings LIMIT 1)
             """,
             (
                 float(commission_value),
                 float(cash_value),
                 str(maximize),
-                1 if use_intraday_current_timeframe_market_phase_filter else 0,
-                int(market_phase_1h_sma_fast),
-                int(market_phase_1h_sma_slow),
-                int(market_phase_4h_sma_fast),
-                int(market_phase_4h_sma_slow),
-                int(market_phase_1d_sma_fast),
-                int(market_phase_1d_sma_slow),
                 str(buy_hold_start_mode),
                 int(optimization_max_combinations),
                 int(candidate_backtest_refresh_days),
+                int(bool(backtest_use_full_history)),
+                int(backtest_lookback_1d_years),
+                int(backtest_lookback_4h_months),
+                int(backtest_lookback_1h_months),
+                int(backtest_warmup_candles),
                 float(strategy_quality_return_weight),
                 float(strategy_quality_risk_weight),
                 float(strategy_quality_risk_adjusted_weight),
                 float(strategy_quality_trade_quality_weight),
                 float(strategy_quality_robustness_weight),
+                float(monte_carlo_candle_perturb_min_pct),
+                float(monte_carlo_candle_perturb_max_pct),
             ),
         )
 

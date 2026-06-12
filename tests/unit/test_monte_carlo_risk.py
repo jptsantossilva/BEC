@@ -68,7 +68,7 @@ def test_prepare_backtest_df_skips_legacy_filters_for_declarative_strategy():
     strategy = SimpleNamespace(definition=get_builtin_template("ema_cross"))
     df = object()
 
-    prepared = monte_carlo._prepare_backtest_df(df, "BTCUSDC", "1h", "ema_cross", strategy, 50, 200)
+    prepared = monte_carlo._prepare_backtest_df(df, "BTCUSDC", "1h", "ema_cross", strategy)
 
     assert prepared is df
     assert strategy.execution_symbol == "BTCUSDC"

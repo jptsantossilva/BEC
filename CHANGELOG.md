@@ -2,6 +2,13 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-06-12]
+- Market Analysis - Added a generic Market Indicators dashboard for bull and bear market signals, with separate Top Signals and Bottom Signals tables.
+- Market Analysis - Added the BTC Supply Profit/Loss indicator page with BTC price, Supply in Profit, Supply in Loss, event markers, compact descriptions, and configurable signal thresholds.
+- Market Analysis - Added an optional enabled-by-default `btc_supply_profit_loss_1d` scheduled job to update cached market indicator data and send informational Telegram alerts.
+- Market Analysis - Added Bitview/Bitcoin Research Kit as the external source for BTC Supply Profit/Loss data, preserving cached history when the external source is unavailable or rate limited.
+
+
 ## [2026-05-25]
 - Trading - Live buy evaluation now ignores pending candidate positions whose `Strategy_Id` is not in `settings.main_strategies`.
 - Market Phases - Daily refresh now removes pending `Positions` candidates (`Position = 0`) for strategies that are no longer selected as Main Strategies, while preserving open positions.

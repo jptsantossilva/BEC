@@ -1497,7 +1497,13 @@ df_bt_results = database.get_all_backtesting_results()
 
 primary_filters = st.container(horizontal=True)
 with primary_filters:
-    strategy_options = list(dict_strategies.keys())
+    strategy_options = sorted(
+        dict_strategies.keys(),
+        key=lambda strategy_id: (
+            str(format_func_strategies(strategy_id)).casefold(),
+            str(strategy_id).casefold(),
+        ),
+    )
     restore_multiselect_filter(
         "bt_results_saved_strategy",
         "_bt_results_strategy",

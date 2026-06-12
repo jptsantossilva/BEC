@@ -201,9 +201,7 @@ def render_backtest_settings():
 
     settings = database.get_backtesting_settings()
 
-    execution_tab, market_phase_tab, quality_score_tab = st.tabs(
-        ["Execution", "Market Phase", "Quality Score"]
-    )
+    execution_tab, quality_score_tab = st.tabs(["Execution", "Quality Score"])
 
     with execution_tab:
         st.subheader("Execution")
@@ -257,12 +255,80 @@ def render_backtest_settings():
             step=1,
             value=int(settings.get("Candidate_Backtest_Refresh_Days", 7)),
             help=(
-                "Controls how long market-phase candidate backtests can be reused "
+                "Controls how long candidate backtests can be reused "
                 "when the strategy definition and backtesting settings have not changed. "
                 "Use 0 to force recalculation every run."
             ),
             width=350,
         )
+
+        st.subheader("Historical Window")
+        st.caption("Limits production backtests while keeping a warmup buffer for indicators.")
+
+        backtest_use_full_history = st.checkbox(
+            "Use full available history",
+            value=bool(settings.get("Backtest_Use_Full_History", False)),
+            help=(
+                "When enabled, backtests use all available candles from Binance. "
+                "When disabled, each timeframe uses the configured recent window plus warmup."
+            ),
+        )
+
+        with st.container(horizontal=True):
+            backtest_lookback_1d_years = st.number_input(
+                "1d lookback (years)",
+                min_value=1,
+                step=1,
+                value=int(settings.get("Backtest_Lookback_1d_Years", 4)),
+                width=180,
+            )
+            backtest_lookback_4h_months = st.number_input(
+                "4h lookback (months)",
+                min_value=1,
+                step=1,
+                value=int(settings.get("Backtest_Lookback_4h_Months", 18)),
+                width=190,
+            )
+            backtest_lookback_1h_months = st.number_input(
+                "1h lookback (months)",
+                min_value=1,
+                step=1,
+                value=int(settings.get("Backtest_Lookback_1h_Months", 12)),
+                width=190,
+            )
+            backtest_warmup_candles = st.number_input(
+                "Warmup candles",
+                min_value=0,
+                step=50,
+                value=int(settings.get("Backtest_Warmup_Candles", 200)),
+                help="Extra candles added before the lookback window for indicator warmup.",
+                width=170,
+            )
+
+        st.subheader("Monte Carlo")
+        st.caption("Controls used by candles-based robustness tests.")
+
+        with st.container(horizontal=True):
+            monte_carlo_candle_perturb_min_pct = st.number_input(
+                "Candle perturb min (%)",
+                min_value=0.0,
+                max_value=100.0,
+                step=0.1,
+                value=float(settings.get("Monte_Carlo_Candle_Perturb_Min_Pct", 0.1)),
+                format="%.2f",
+                help="Minimum absolute OHLC perturbation applied to each synthetic candle.",
+                width=220,
+            )
+            monte_carlo_candle_perturb_max_pct = st.number_input(
+                "Candle perturb max (%)",
+                min_value=0.0,
+                max_value=100.0,
+                step=0.1,
+                value=float(settings.get("Monte_Carlo_Candle_Perturb_Max_Pct", 0.5)),
+                format="%.2f",
+                help="Maximum absolute OHLC perturbation applied to each synthetic candle.",
+                width=220,
+            )
 
         st.subheader("Buy & Hold Benchmark")
         st.caption("Choose where the Buy & Hold comparison starts.")
@@ -288,73 +354,6 @@ def render_backtest_settings():
         execution_settings_actions = st.container()
         st.divider()
         approval_rules_section()
-
-    with market_phase_tab:
-        st.subheader("Market Phase Filters")
-        st.caption("Configure the SMA regime filters used by intraday and daily backtests.")
-
-        use_intraday_current_timeframe_market_phase_filter = st.checkbox(
-            "Include current timeframe market phase filter for 1h and 4h",
-            value=bool(int(settings.get("Use_Intraday_Current_Timeframe_Market_Phase_Filter", 1))),
-            help=(
-                "When enabled, intraday backtests that support market phases require both the 1h/4h "
-                "market phase and the 1d market phase. When disabled, 1h/4h backtests keep only the "
-                "1d market phase filter."
-            ),
-        )
-
-        st.subheader("SMA Periods By Timeframe")
-        st.caption("For 1h/4h backtests, the current timeframe uses its own row and the higher-timeframe filter uses 1D.")
-
-        with st.container(horizontal=True):
-            market_phase_1h_sma_fast = st.number_input(
-                "1H SMA fast",
-                min_value=1,
-                step=1,
-                value=int(settings.get("Market_Phase_1h_SMA_Fast", 50)),
-                width=150,
-            )
-            market_phase_1h_sma_slow = st.number_input(
-                "1H SMA slow",
-                min_value=1,
-                step=1,
-                value=int(settings.get("Market_Phase_1h_SMA_Slow", 200)),
-                width=150,
-            )
-
-        with st.container(horizontal=True):
-            market_phase_4h_sma_fast = st.number_input(
-                "4H SMA fast",
-                min_value=1,
-                step=1,
-                value=int(settings.get("Market_Phase_4h_SMA_Fast", 50)),
-                width=150,
-            )
-            market_phase_4h_sma_slow = st.number_input(
-                "4H SMA slow",
-                min_value=1,
-                step=1,
-                value=int(settings.get("Market_Phase_4h_SMA_Slow", 200)),
-                width=150,
-            )
-
-        with st.container(horizontal=True):
-            market_phase_1d_sma_fast = st.number_input(
-                "1D SMA fast",
-                min_value=1,
-                step=1,
-                value=int(settings.get("Market_Phase_1d_SMA_Fast", 50)),
-                width=150,
-            )
-            market_phase_1d_sma_slow = st.number_input(
-                "1D SMA slow",
-                min_value=1,
-                step=1,
-                value=int(settings.get("Market_Phase_1d_SMA_Slow", 200)),
-                width=150,
-            )
-
-        market_phase_settings_actions = st.container()
 
     with quality_score_tab:
         st.subheader("Strategy Quality Score")
@@ -438,17 +437,11 @@ def render_backtest_settings():
         )
 
     def save_backtesting_settings():
-        if market_phase_1h_sma_fast >= market_phase_1h_sma_slow:
-            st.error("1H SMA fast must be lower than 1H SMA slow.")
-            st.stop()
-        if market_phase_4h_sma_fast >= market_phase_4h_sma_slow:
-            st.error("4H SMA fast must be lower than 4H SMA slow.")
-            st.stop()
-        if market_phase_1d_sma_fast >= market_phase_1d_sma_slow:
-            st.error("1D SMA fast must be lower than 1D SMA slow.")
-            st.stop()
         if abs(strategy_quality_weight_total - 100.0) > 0.0001:
             st.error("Strategy Quality Score weights must add up to 100%.")
+            st.stop()
+        if monte_carlo_candle_perturb_min_pct > monte_carlo_candle_perturb_max_pct:
+            st.error("Monte Carlo candle perturb min must be lower than or equal to max.")
             st.stop()
 
         commission_value = commission_percent / 100.0
@@ -459,18 +452,18 @@ def render_backtest_settings():
             buy_hold_start_mode=buy_hold_start_mode,
             optimization_max_combinations=optimization_max_combinations,
             candidate_backtest_refresh_days=candidate_backtest_refresh_days,
-            use_intraday_current_timeframe_market_phase_filter=use_intraday_current_timeframe_market_phase_filter,
-            market_phase_1h_sma_fast=market_phase_1h_sma_fast,
-            market_phase_1h_sma_slow=market_phase_1h_sma_slow,
-            market_phase_4h_sma_fast=market_phase_4h_sma_fast,
-            market_phase_4h_sma_slow=market_phase_4h_sma_slow,
-            market_phase_1d_sma_fast=market_phase_1d_sma_fast,
-            market_phase_1d_sma_slow=market_phase_1d_sma_slow,
+            backtest_use_full_history=backtest_use_full_history,
+            backtest_lookback_1d_years=backtest_lookback_1d_years,
+            backtest_lookback_4h_months=backtest_lookback_4h_months,
+            backtest_lookback_1h_months=backtest_lookback_1h_months,
+            backtest_warmup_candles=backtest_warmup_candles,
             strategy_quality_return_weight=strategy_quality_return_weight,
             strategy_quality_risk_weight=strategy_quality_risk_weight,
             strategy_quality_risk_adjusted_weight=strategy_quality_risk_adjusted_weight,
             strategy_quality_trade_quality_weight=strategy_quality_trade_quality_weight,
             strategy_quality_robustness_weight=strategy_quality_robustness_weight,
+            monte_carlo_candle_perturb_min_pct=monte_carlo_candle_perturb_min_pct,
+            monte_carlo_candle_perturb_max_pct=monte_carlo_candle_perturb_max_pct,
         )
         st.success("Backtesting settings updated.")
         time.sleep(1.0)
@@ -478,10 +471,6 @@ def render_backtest_settings():
 
     with execution_settings_actions:
         if st.button("Save Settings", icon=icons.ICON_SAVE, key="save_backtesting_settings_execution"):
-            save_backtesting_settings()
-
-    with market_phase_settings_actions:
-        if st.button("Save Settings", icon=icons.ICON_SAVE, key="save_backtesting_settings_market_phase"):
             save_backtesting_settings()
 
     with quality_score_settings_actions:

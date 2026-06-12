@@ -22,6 +22,8 @@ METHOD_LABELS = {
     METHOD_CANDLES: "Monte Carlo Candles",
 }
 MIN_TRADE_SHUFFLE_TRADES = 10
+DEFAULT_CANDLE_PERTURB_MIN_PCT = 0.1
+DEFAULT_CANDLE_PERTURB_MAX_PCT = 0.5
 
 OUTPUT_DIR = os.path.join(
     my_backtesting.PROJECT_ROOT,
@@ -981,7 +983,6 @@ def _apply_saved_strategy_parameters(strategy, backtest_row):
 
 
 def _configure_strategy(strategy, strategy_id, timeframe):
-    bt_settings = database.get_backtesting_settings()
     strategy_risk = database.get_strategy_risk(strategy_id)
     atr_risk = strategy_risk.get("atr_trailing", {}) if isinstance(strategy_risk, dict) else {}
     take_profits = normalize_take_profit_levels(strategy_risk.get("take_profits", []) if isinstance(strategy_risk, dict) else [])
@@ -996,42 +997,18 @@ def _configure_strategy(strategy, strategy_id, timeframe):
         tp = next((item for item in take_profits if int(item.get("level", 0) or 0) == level), {})
         setattr(strategy, f"take_profit_{level}", float(tp.get("pnl_pct", 0.0) or 0.0))
         setattr(strategy, f"take_profit_{level}_amount", float(tp.get("amount_pct", 0.0) or 0.0))
-    current_fast, current_slow = my_backtesting.get_market_phase_sma_settings(bt_settings, timeframe)
-    daily_fast, daily_slow = my_backtesting.get_market_phase_sma_settings(bt_settings, "1d")
-    strategy.nFastSMA = current_fast
-    strategy.nSlowSMA = current_slow
-    strategy.current_market_phase_timeframe = str(timeframe)
-    strategy.use_current_timeframe_market_phase_filter = strategy_id in {"market_phases", "ema_cross_with_market_phases"}
-    strategy.use_daily_market_phase_filter = False
-    strategy.daily_market_phase_timeframe = ""
-    strategy.daily_market_phase_alignment = ""
-    strategy.daily_market_phase_sma_fast = 0
-    strategy.daily_market_phase_sma_slow = 0
     strategy.use_daily_linreg_filter = False
     strategy.daily_linreg_timeframe = ""
     strategy.daily_linreg_alignment = ""
     strategy.execution_timeframe = str(timeframe)
-    return bt_settings, daily_fast, daily_slow
 
 
-def _prepare_backtest_df(df, symbol, timeframe, strategy_id, strategy, daily_fast, daily_slow):
+def _prepare_backtest_df(df, symbol, timeframe, strategy_id, strategy):
     definition = getattr(strategy, "definition", None)
     if isinstance(definition, dict) and definition.get("engine") == "bec_strategy_ast_v2":
         strategy.execution_symbol = str(symbol)
         strategy.execution_timeframe = str(timeframe)
         return df
-    if strategy_id in {"ema_cross", "ema_cross_with_market_phases"} and str(timeframe) != "1d":
-        if strategy_id == "ema_cross_with_market_phases":
-            settings = database.get_backtesting_settings()
-            strategy.use_current_timeframe_market_phase_filter = bool(
-                int(settings.get("Use_Intraday_Current_Timeframe_Market_Phase_Filter", 1))
-            )
-        strategy.use_daily_market_phase_filter = True
-        strategy.daily_market_phase_timeframe = "1d"
-        strategy.daily_market_phase_alignment = "previous_closed_candle"
-        strategy.daily_market_phase_sma_fast = daily_fast
-        strategy.daily_market_phase_sma_slow = daily_slow
-        return my_backtesting.add_daily_market_phase_filter(df, symbol, sma_fast=daily_fast, sma_slow=daily_slow)
     if strategy_id == "hma_rsi_linreg":
         strategy.use_daily_linreg_filter = True
         strategy.daily_linreg_timeframe = "1d"
@@ -1065,34 +1042,57 @@ def _run_strategy_on_df(df, strategy, cash, commission):
     return bt.run()
 
 
-def _perturb_candles(df, rng):
+def _candle_perturbation_bounds(settings):
+    min_pct = _safe_float(
+        settings.get("Monte_Carlo_Candle_Perturb_Min_Pct"),
+        DEFAULT_CANDLE_PERTURB_MIN_PCT,
+    )
+    max_pct = _safe_float(
+        settings.get("Monte_Carlo_Candle_Perturb_Max_Pct"),
+        DEFAULT_CANDLE_PERTURB_MAX_PCT,
+    )
+    min_pct = max(0.0, float(min_pct))
+    max_pct = max(0.0, float(max_pct))
+    if min_pct > max_pct:
+        min_pct, max_pct = max_pct, min_pct
+    return min_pct / 100.0, max_pct / 100.0
+
+
+def _perturb_candles(
+    df,
+    rng,
+    min_pct=DEFAULT_CANDLE_PERTURB_MIN_PCT,
+    max_pct=DEFAULT_CANDLE_PERTURB_MAX_PCT,
+):
     base = df.copy()
-    close = pd.to_numeric(base["Close"], errors="coerce").astype(float)
-    log_returns = np.log(close / close.shift(1)).replace([np.inf, -np.inf], np.nan).dropna()
-    if log_returns.empty:
+    required_columns = ["Open", "High", "Low", "Close"]
+    if any(column not in base.columns for column in required_columns):
         return pd.DataFrame()
 
-    sampled = rng.choice(log_returns.to_numpy(), size=len(base) - 1, replace=True)
-    sampled = sampled + rng.normal(0.0, float(log_returns.std() or 0.0) * 0.15, size=len(sampled))
-    synthetic_close = [float(close.iloc[0])]
-    for value in sampled:
-        synthetic_close.append(max(0.00000001, synthetic_close[-1] * math.exp(float(value))))
-    synthetic_close = np.asarray(synthetic_close, dtype=float)
-    synthetic_open = np.r_[synthetic_close[0], synthetic_close[:-1]]
+    min_bound, max_bound = _candle_perturbation_bounds(
+        {
+            "Monte_Carlo_Candle_Perturb_Min_Pct": min_pct,
+            "Monte_Carlo_Candle_Perturb_Max_Pct": max_pct,
+        }
+    )
+    ohlc = base[required_columns].apply(pd.to_numeric, errors="coerce").astype(float)
+    if ohlc.empty or ohlc.isna().any().any():
+        return pd.DataFrame()
 
-    high_ratio = (pd.to_numeric(base["High"], errors="coerce") / close).replace([np.inf, -np.inf], np.nan).fillna(1.0).clip(lower=1.0)
-    low_ratio = (pd.to_numeric(base["Low"], errors="coerce") / close).replace([np.inf, -np.inf], np.nan).fillna(1.0).clip(upper=1.0)
-    sampled_high_ratio = rng.choice(high_ratio.to_numpy(), size=len(base), replace=True)
-    sampled_low_ratio = rng.choice(low_ratio.to_numpy(), size=len(base), replace=True)
+    magnitudes = rng.uniform(min_bound, max_bound, size=ohlc.shape)
+    signs = rng.choice(np.array([-1.0, 1.0]), size=ohlc.shape)
+    perturbed = ohlc.to_numpy(dtype=float) * (1.0 + (magnitudes * signs))
 
+    perturbed = np.maximum(perturbed, 0.00000001)
     synthetic = base.copy()
-    synthetic["Open"] = synthetic_open
-    synthetic["Close"] = synthetic_close
-    synthetic["High"] = np.maximum.reduce([synthetic["Open"].to_numpy(), synthetic["Close"].to_numpy(), synthetic_close * sampled_high_ratio])
-    synthetic["Low"] = np.minimum.reduce([synthetic["Open"].to_numpy(), synthetic["Close"].to_numpy(), synthetic_close * sampled_low_ratio])
-    if "Volume" in synthetic.columns:
-        volume = pd.to_numeric(base["Volume"], errors="coerce").fillna(0.0).to_numpy()
-        synthetic["Volume"] = rng.choice(volume, size=len(base), replace=True)
+    synthetic["Open"] = perturbed[:, 0]
+    synthetic["Close"] = perturbed[:, 3]
+    synthetic["High"] = np.maximum.reduce(
+        [perturbed[:, 1], synthetic["Open"].to_numpy(), synthetic["Close"].to_numpy()]
+    )
+    synthetic["Low"] = np.minimum.reduce(
+        [perturbed[:, 2], synthetic["Open"].to_numpy(), synthetic["Close"].to_numpy()]
+    )
     return synthetic
 
 
@@ -1100,6 +1100,18 @@ def run_candles_based(symbol, timeframe, strategy_id, scenarios=200, seed=42):
     settings = database.get_backtesting_settings()
     initial_cash = float(settings["Cash_Value"])
     commission = float(settings["Commission_Value"])
+    perturb_min_pct = float(
+        settings.get(
+            "Monte_Carlo_Candle_Perturb_Min_Pct",
+            DEFAULT_CANDLE_PERTURB_MIN_PCT,
+        )
+    )
+    perturb_max_pct = float(
+        settings.get(
+            "Monte_Carlo_Candle_Perturb_Max_Pct",
+            DEFAULT_CANDLE_PERTURB_MAX_PCT,
+        )
+    )
     strategy = _resolve_strategy(strategy_id)
     if strategy is None:
         raise ValueError(f"Strategy '{strategy_id}' is not available.")
@@ -1108,7 +1120,7 @@ def run_candles_based(symbol, timeframe, strategy_id, scenarios=200, seed=42):
     if bt_row.empty:
         raise ValueError(f"No backtest result found for {strategy_id} - {symbol} - {timeframe}.")
     _apply_saved_strategy_parameters(strategy, bt_row.iloc[0])
-    settings, daily_fast, daily_slow = _configure_strategy(strategy, strategy_id, timeframe)
+    _configure_strategy(strategy, strategy_id, timeframe)
     strategy.execution_symbol = str(symbol)
     strategy.execution_timeframe = str(timeframe)
     df = my_backtesting.get_data(symbol, timeframe)
@@ -1126,7 +1138,7 @@ def run_candles_based(symbol, timeframe, strategy_id, scenarios=200, seed=42):
         )
 
     try:
-        prepared_original = _prepare_backtest_df(df.copy(), symbol, timeframe, strategy_id, strategy, daily_fast, daily_slow)
+        prepared_original = _prepare_backtest_df(df.copy(), symbol, timeframe, strategy_id, strategy)
         original_stats = _run_strategy_on_df(prepared_original, strategy, initial_cash, commission)
         original_curve = _stats_equity_curve(original_stats, initial_cash)
         original_metrics = _stats_to_metrics(original_stats)
@@ -1136,10 +1148,15 @@ def run_candles_based(symbol, timeframe, strategy_id, scenarios=200, seed=42):
         scenario_metrics = []
         for index in range(int(scenarios)):
             try:
-                scenario_df = _perturb_candles(df, rng)
+                scenario_df = _perturb_candles(
+                    df,
+                    rng,
+                    min_pct=perturb_min_pct,
+                    max_pct=perturb_max_pct,
+                )
                 if scenario_df.empty:
                     continue
-                scenario_df = _prepare_backtest_df(scenario_df, symbol, timeframe, strategy_id, strategy, daily_fast, daily_slow)
+                scenario_df = _prepare_backtest_df(scenario_df, symbol, timeframe, strategy_id, strategy)
                 stats = _run_strategy_on_df(scenario_df, strategy, initial_cash, commission)
                 scenario_curves.append(_stats_equity_curve(stats, initial_cash))
                 scenario_metrics.append(_stats_to_metrics(stats))

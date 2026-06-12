@@ -3,7 +3,7 @@ Like my work?
 <a href='https://ko-fi.com/C0C3TDKPG' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi3.png?v=3' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
 
 # BEC
-Free and open-source automated trading app for Binance spot, combining multi-strategy execution, daily market-phase ranking, automated backtesting, a web dashboard, and Telegram notifications.
+Free and open-source automated trading app for Binance spot, combining multi-strategy execution, daily market-phase ranking, automated backtesting, market analysis dashboards, a web dashboard, and Telegram notifications.
 
 ## Installation
 ### Local deploy with Docker
@@ -114,8 +114,12 @@ Security note:
 - Backtesting risk controls including hard stop, ATR trailing stop, take-profit configuration, and exit reason tracking.
 - Auto-scheduling of jobs (bot runs, market phase rebuilds, signals) via the built-in scheduler.
 - Web dashboard with realized/unrealized PnL, balances, top performers, backtesting results, and settings.
+- Market analysis dashboard with bull and bear market indicator summaries.
+- BTC Supply Profit/Loss on-chain indicator with local SQLite cache, chart, signal thresholds, and optional Telegram alerts.
 - Telegram notifications for bot execution, position changes, and warnings.
 - Blacklist management to exclude symbols from trading.
+
+Market analysis signals are informational macro/on-chain signals only. They do not create Binance orders, change position sizing, or modify stop loss, take profit, symbol selection, balances, backtesting, or trading strategy logic.
 
 ## Project layout
 Most application code lives in the `bec/` package. Thin compatibility wrappers remain in

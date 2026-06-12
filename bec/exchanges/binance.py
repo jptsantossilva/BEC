@@ -230,6 +230,7 @@ def create_buy_order(
     strategy_id: str = "",
     strategy_name: str = "",
     position_id: int | None = None,
+    strategy_params_json: str = "",
 ):
     settings = config.load_settings()
     
@@ -301,11 +302,10 @@ def create_buy_order(
             avg_price = round(avg_price,8)
                 
             # update position with the buy order
-            strategy_params_json = ""
             if position_id is not None:
                 df_position = database.get_position_by_id(position_id)
                 if not df_position.empty:
-                    strategy_params_json = str(df_position.get("Strategy_Params_JSON", "").iloc[0] or "")
+                    strategy_params_json = strategy_params_json or str(df_position.get("Strategy_Params_JSON", "").iloc[0] or "")
             if not strategy_params_json:
                 strategy_params_json = database.build_strategy_params_json(strategy_id)
             if not convert_all_balance:

@@ -8,7 +8,7 @@ import argparse
 import builtins
 import html
 from numbers import Real
-from datetime import date
+from datetime import datetime, timezone
 from itertools import product
 from types import SimpleNamespace
 from dateutil.relativedelta import relativedelta
@@ -60,21 +60,6 @@ FOLDER_BACKTEST_RESULTS_FALLBACK = os.path.join(
 )
 DEFAULT_OPTIMIZATION_MAX_COMBINATIONS = 300
 
-# backtest with 4 years of price data
-# -------------------------------------
-today = date.today()
-# today - 4 years - 200 days (DSMA200)
-pastdate = today - relativedelta(years=4) - relativedelta(days=200)
-# print(pastdate)
-tuple = pastdate.timetuple()
-timestamp = time.mktime(tuple)
-
-startdate = str(timestamp)
-# startdate = "15 Dec, 2018 UTC"
-# startdate = "12 May, 2022 UTC"
-# startdate = "4 year ago UTC"
-# startdate = "10 day ago UTC"
-# -------------------------------------
 timeframe = ""
 
 
@@ -513,10 +498,6 @@ class RiskManagedStrategy(Strategy):
     atr_activation_pnl = 2.0
     take_profit_enabled = False
     take_profits = []
-    use_current_timeframe_market_phase_filter = False
-    use_daily_market_phase_filter = False
-    daily_market_phase_timeframe = ""
-    daily_market_phase_alignment = ""
     _last_exit_reason_map = {}
     _last_exit_reason_records = []
 
@@ -681,7 +662,6 @@ class RiskManagedStrategy(Strategy):
 class market_phases(RiskManagedStrategy):
     nFastSMA = 50
     nSlowSMA = 200
-    use_current_timeframe_market_phase_filter = True
 
     def init(self):
         super().init()
@@ -730,8 +710,6 @@ class market_phases(RiskManagedStrategy):
 class ema_cross(RiskManagedStrategy):
     n1 = 2
     n2 = 14
-    nFastSMA = 50
-    nSlowSMA = 200
 
     def init(self):
         super().init()
@@ -753,12 +731,9 @@ class ema_cross(RiskManagedStrategy):
             self._apply_take_profits(current_pnl_pct)
         fastEMA = self.emaFast
         slowEMA = self.emaSlow
-        daily_market_phase_ok = True
-        if bool(getattr(self, "use_daily_market_phase_filter", False)):
-            daily_market_phase_ok = bool(self.data.Daily_Market_Phase_OK[-1])
 
         if not self.position:
-            if daily_market_phase_ok and crossover(fastEMA, slowEMA):
+            if crossover(fastEMA, slowEMA):
                 self.buy()
 
         else:
@@ -772,7 +747,6 @@ class ema_cross_with_market_phases(RiskManagedStrategy):
     n2 = 40
     nFastSMA = 50
     nSlowSMA = 200
-    use_current_timeframe_market_phase_filter = True
 
     def init(self):
         super().init()
@@ -807,19 +781,9 @@ class ema_cross_with_market_phases(RiskManagedStrategy):
             (priceClose > SMA50) and (priceClose > SMA200) and (SMA50 > SMA200)
         )
         current_market_phase_ok = accumulationPhase or bullishPhase
-        if not bool(getattr(self, "use_current_timeframe_market_phase_filter", True)):
-            current_market_phase_ok = True
-
-        daily_market_phase_ok = True
-        if bool(getattr(self, "use_daily_market_phase_filter", False)):
-            daily_market_phase_ok = bool(self.data.Daily_Market_Phase_OK[-1])
 
         if not self.position:
-            if (
-                daily_market_phase_ok
-                and current_market_phase_ok
-                and crossover(fastEMA, slowEMA)
-            ):
+            if current_market_phase_ok and crossover(fastEMA, slowEMA):
                 self.buy()
 
         else:
@@ -888,6 +852,7 @@ class DeclarativeStrategy(RiskManagedStrategy):
     def init(self):
         super().init()
         self._definition = self.definition or {}
+        self._entry_state = {}
         parameter_overrides = dict(self.parameter_values or {})
         definition_parameters = (
             self._definition.get("parameters", {})
@@ -968,12 +933,18 @@ class DeclarativeStrategy(RiskManagedStrategy):
                 self._definition.get("entry", {}),
                 self._parameters,
             ):
+                self._entry_state = strategy_engine.capture_ast_entry_state(
+                    current_df,
+                    self._definition,
+                    self._parameters,
+                )
                 self.buy()
         else:
             if strategy_engine.evaluate_ast_group(
                 current_df,
                 self._definition.get("exit", {}),
                 self._parameters,
+                context={"entry_state": self._entry_state},
             ):
                 self._queue_exit_reason("strategy")
                 self.position.close()
@@ -1053,11 +1024,44 @@ def resolve_strategy(strategy_id: str):
     return None
 
 
+def _limited_backtest_start_date(timeframe, settings=None, now_utc=None):
+    """Return the configured start date for production backtest windows."""
+    settings = settings or database.get_backtesting_settings()
+    if bool(settings.get("Backtest_Use_Full_History", False)):
+        return None
+
+    warmup_candles = max(0, int(settings.get("Backtest_Warmup_Candles", 200)))
+    now_utc = now_utc or datetime.now(timezone.utc)
+
+    if timeframe == "1d":
+        return now_utc - relativedelta(
+            years=int(settings.get("Backtest_Lookback_1d_Years", 4)),
+            days=warmup_candles,
+        )
+    if timeframe == "4h":
+        return now_utc - relativedelta(
+            months=int(settings.get("Backtest_Lookback_4h_Months", 18)),
+            hours=4 * warmup_candles,
+        )
+    if timeframe == "1h":
+        return now_utc - relativedelta(
+            months=int(settings.get("Backtest_Lookback_1h_Months", 12)),
+            hours=warmup_candles,
+        )
+
+    return None
+
+
 def get_data(symbol, timeframe):
-    df = binance.get_ohlcv(
-        symbol=symbol,
-        interval=timeframe,
-    )
+    start_date = _limited_backtest_start_date(timeframe)
+    kwargs = {
+        "symbol": symbol,
+        "interval": timeframe,
+    }
+    if start_date is not None:
+        kwargs["start_date"] = start_date
+
+    df = binance.get_ohlcv(**kwargs)
 
     if df.empty:
         msg = f"Failed after max tries to get historical data for {symbol} ({timeframe}). "
@@ -1078,49 +1082,6 @@ def _normalize_datetime_index(index):
     if getattr(normalized, "tz", None) is not None:
         normalized = normalized.tz_convert(None)
     return normalized
-
-
-def _positive_market_phase(close, sma_fast, sma_slow):
-    accumulation = (close > sma_fast) & (close > sma_slow) & (sma_fast < sma_slow)
-    bullish = (close > sma_fast) & (close > sma_slow) & (sma_fast > sma_slow)
-    return accumulation | bullish
-
-
-def add_daily_market_phase_filter(df, symbol, sma_fast=50, sma_slow=200):
-    """
-    Add the runtime-like 1d market phase filter to intraday backtests.
-
-    The daily phase is shifted by one candle so 1h/4h candles only use the
-    previous closed daily candle, avoiding lookahead from the current day close.
-    """
-    df = df.copy()
-    df["Daily_Market_Phase_OK"] = False
-
-    df_daily = get_data(symbol, "1d")
-    if df_daily.empty:
-        return df
-
-    intraday_index = _normalize_datetime_index(df.index)
-    daily_index = _normalize_datetime_index(df_daily.index)
-    df.index = intraday_index
-    df_daily = df_daily.copy()
-    df_daily.index = daily_index
-
-    daily_close = pd.to_numeric(df_daily["Close"], errors="coerce")
-    daily_sma_fast = daily_close.rolling(int(sma_fast)).mean()
-    daily_sma_slow = daily_close.rolling(int(sma_slow)).mean()
-    daily_ok = _positive_market_phase(daily_close, daily_sma_fast, daily_sma_slow)
-    daily_ok = daily_ok.fillna(False).astype(bool).shift(1, fill_value=False)
-
-    daily_filter = pd.DataFrame(
-        {"Daily_Market_Phase_OK": daily_ok}, index=df_daily.index
-    )
-    aligned_filter = daily_filter.reindex(df.index, method="ffill")
-    df["Daily_Market_Phase_OK"] = (
-        aligned_filter["Daily_Market_Phase_OK"].fillna(False).astype(bool)
-    )
-
-    return df
 
 
 def add_daily_linreg_filter(df, symbol, linreg_period=50):
@@ -1496,28 +1457,12 @@ def build_strategy_parameters_config(strategy):
         params.setdefault("market_phase_filter", {})
         params["market_phase_filter"].update(
             {
-                "enabled": bool(
-                    getattr(
-                        strategy, "use_current_timeframe_market_phase_filter", False
-                    )
-                ),
-                "timeframe": getattr(strategy, "current_market_phase_timeframe", "")
-                or "current",
+                "enabled": True,
+                "timeframe": getattr(strategy, "execution_timeframe", "") or "current",
                 "sma_fast": int(getattr(strategy, "nFastSMA", 0) or 0),
                 "sma_slow": int(getattr(strategy, "nSlowSMA", 0) or 0),
             }
         )
-
-    if getattr(strategy, "use_daily_market_phase_filter", False):
-        params["higher_timeframe_market_phase_filter"] = {
-            "enabled": True,
-            "timeframe": getattr(strategy, "daily_market_phase_timeframe", "1d")
-            or "1d",
-            "sma_fast": int(getattr(strategy, "daily_market_phase_sma_fast", 0) or 0),
-            "sma_slow": int(getattr(strategy, "daily_market_phase_sma_slow", 0) or 0),
-            "alignment": getattr(strategy, "daily_market_phase_alignment", "")
-            or "previous_closed_candle",
-        }
 
     if hasattr(strategy, "nFastHMA") or hasattr(strategy, "nSlowHMA"):
         params["hma_rsi_linreg"] = {
@@ -1540,18 +1485,6 @@ def build_strategy_parameters_config(strategy):
         }
 
     return params
-
-
-def get_market_phase_sma_settings(bt_settings, timeframe):
-    normalized_timeframe = str(timeframe).lower()
-    if normalized_timeframe not in {"1h", "4h", "1d"}:
-        normalized_timeframe = "1d"
-
-    key_prefix = f"Market_Phase_{normalized_timeframe}_SMA"
-    return (
-        int(bt_settings.get(f"{key_prefix}_Fast", 50) or 50),
-        int(bt_settings.get(f"{key_prefix}_Slow", 200) or 200),
-    )
 
 
 def build_strategy_quality_context(
@@ -3892,30 +3825,6 @@ def run_backtest(symbol, timeframe, strategy, optimize):
     strategy.atr_activation_pnl = float(atr_risk.get("activation_pnl_pct", 0.0) or 0.0)
     strategy.take_profits = take_profits
     strategy.take_profit_enabled = take_profit_enabled(take_profits)
-    current_market_phase_sma_fast, current_market_phase_sma_slow = (
-        get_market_phase_sma_settings(
-            bt_settings,
-            timeframe,
-        )
-    )
-    daily_market_phase_sma_fast, daily_market_phase_sma_slow = (
-        get_market_phase_sma_settings(
-            bt_settings,
-            "1d",
-        )
-    )
-    strategy.nFastSMA = current_market_phase_sma_fast
-    strategy.nSlowSMA = current_market_phase_sma_slow
-    strategy.current_market_phase_timeframe = str(timeframe)
-    strategy.daily_market_phase_sma_fast = 0
-    strategy.daily_market_phase_sma_slow = 0
-    strategy.use_current_timeframe_market_phase_filter = strategy_name in {
-        "market_phases",
-        "ema_cross_with_market_phases",
-    }
-    strategy.use_daily_market_phase_filter = False
-    strategy.daily_market_phase_timeframe = ""
-    strategy.daily_market_phase_alignment = ""
     strategy.use_daily_linreg_filter = False
     strategy.daily_linreg_timeframe = ""
     strategy.daily_linreg_alignment = ""
@@ -3930,29 +3839,6 @@ def run_backtest(symbol, timeframe, strategy, optimize):
                 symbol,
                 timeframe,
             ),
-        )
-    elif (
-        strategy_name in {"ema_cross", "ema_cross_with_market_phases"}
-        and str(timeframe) != "1d"
-    ):
-        if strategy_name == "ema_cross_with_market_phases":
-            strategy.use_current_timeframe_market_phase_filter = bool(
-                int(
-                    bt_settings.get(
-                        "Use_Intraday_Current_Timeframe_Market_Phase_Filter", 1
-                    )
-                )
-            )
-        strategy.use_daily_market_phase_filter = True
-        strategy.daily_market_phase_timeframe = "1d"
-        strategy.daily_market_phase_alignment = "previous_closed_candle"
-        strategy.daily_market_phase_sma_fast = daily_market_phase_sma_fast
-        strategy.daily_market_phase_sma_slow = daily_market_phase_sma_slow
-        df = add_daily_market_phase_filter(
-            df,
-            symbol,
-            sma_fast=daily_market_phase_sma_fast,
-            sma_slow=daily_market_phase_sma_slow,
         )
     elif strategy_name == "hma_rsi_linreg":
         strategy.use_daily_linreg_filter = True
@@ -3978,13 +3864,6 @@ def run_backtest(symbol, timeframe, strategy, optimize):
             "buy_hold_start_mode": str(
                 bt_settings.get(
                     "Buy_Hold_Start_Mode", BUY_HOLD_START_MODE_INDICATOR_WARMUP
-                )
-            ),
-            "use_intraday_current_timeframe_market_phase_filter": bool(
-                int(
-                    bt_settings.get(
-                        "Use_Intraday_Current_Timeframe_Market_Phase_Filter", 1
-                    )
                 )
             ),
         },

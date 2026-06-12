@@ -889,6 +889,12 @@ def top_performers():
         df_mp["Perc_Above_DSMA200"] = df_mp["Perc_Above_DSMA200"].apply(
             lambda x: "{:.2f}".format(x)
         )
+        df_mp["ROC_30"] = df_mp["ROC_30"].apply(
+            lambda x: "" if pd.isna(x) else "{:.2f}%".format(float(x) * 100)
+        )
+        df_mp["ROC_60"] = df_mp["ROC_60"].apply(
+            lambda x: "" if pd.isna(x) else "{:.2f}%".format(float(x) * 100)
+        )
         st.dataframe(df_mp, width="content", hide_index=True)
 
         filename = "Top_performers_" + trade_against + ".txt"

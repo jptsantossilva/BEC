@@ -233,7 +233,12 @@ def format_market_phase_report(
             symbol = str(row.get("Symbol", "") or "")
             phase = str(row.get("Market_Phase", "") or "unknown")
             strength = _fmt_signed(row.get("Perc_Above_DSMA200", 0.0), 2, "%")
-            lines.append(f"{index}. {symbol} | {phase} | {strength} vs DSMA200")
+            roc_30 = _fmt_signed(_to_float(row.get("ROC_30", 0.0)) * 100, 2, "%")
+            roc_60 = _fmt_signed(_to_float(row.get("ROC_60", 0.0)) * 100, 2, "%")
+            lines.append(
+                f"{index}. {symbol} | {phase} | {strength} vs DSMA200 | "
+                f"ROC30 {roc_30} | ROC60 {roc_60}"
+            )
 
     return "\n".join(lines)
 

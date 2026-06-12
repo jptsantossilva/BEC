@@ -17,7 +17,8 @@ from bec.my_backtesting import calc_backtesting
 from bec.strategy_builder import engine as strategy_engine
 
 MARKET_PHASE_MIN_CANDLES = 200
-
+# Last SMA200/ROC60 values only need the latest 200 closed candles plus the current row.
+MARKET_PHASE_LOOKBACK_CANDLES = 201
 
 def get_blacklist(settings=None):
     """Return set of blacklisted symbols with trade-against suffix applied."""
@@ -45,6 +46,8 @@ def apply_technicals(df):
 
     df['Perc_Above_DSMA50'] = ((df['Price'] - df['DSMA50']) / df['DSMA50']) * 100
     df['Perc_Above_DSMA200'] = ((df['Price'] - df['DSMA200']) / df['DSMA200']) * 100
+    df['ROC_30'] = (df['Price'] / df['Price'].shift(30)) - 1
+    df['ROC_60'] = (df['Price'] / df['Price'].shift(60)) - 1
     
 def read_arguments(settings=None):    
     """Read CLI args for timeframe and trade-against settings."""
@@ -97,18 +100,33 @@ def get_symbols(trade_against, settings=None):
     symbols = sorted(symbols)
     return symbols
 
+
+def _market_phase_start_date(timeframe, now_utc=None):
+    """Return the start date for the fixed market phase candle lookback."""
+    timeframe_minutes = strategy_engine.TIMEFRAME_MINUTES.get(str(timeframe))
+    if not timeframe_minutes:
+        return None
+
+    now_utc = now_utc or datetime.datetime.now(datetime.timezone.utc)
+    return now_utc - datetime.timedelta(
+        minutes=timeframe_minutes * MARKET_PHASE_LOOKBACK_CANDLES
+    )
+
+
 def set_market_phases_to_symbols(symbols, timeframe, warning_stats=None):
     """Compute market phase labels for a list of symbols."""
     # Empty dataframe
     df_result = pd.DataFrame()
     if warning_stats is None:
         warning_stats = {"warnings": 0}
+    start_date = _market_phase_start_date(timeframe)
 
     for symbol in symbols:
         print("Calculating " + symbol)
         df = binance.get_close_df(
             symbol=symbol,
             interval=timeframe,
+            start_date=start_date,
             include_symbol=True,
             price_col="Price",            
         )
@@ -133,7 +151,15 @@ def set_market_phases_to_symbols(symbols, timeframe, warning_stats=None):
         # Last one is the one with 200DSMA value
         df = df.tail(1)
 
-        required_columns = ["Price", "DSMA50", "DSMA200", "Perc_Above_DSMA50", "Perc_Above_DSMA200"]
+        required_columns = [
+            "Price",
+            "DSMA50",
+            "DSMA200",
+            "Perc_Above_DSMA50",
+            "Perc_Above_DSMA200",
+            "ROC_30",
+            "ROC_60",
+        ]
         if df[required_columns].isna().any(axis=None):
             msg = (
                 f"Skipping {symbol} ({timeframe}): market phase indicators are incomplete. "
@@ -567,7 +593,15 @@ def main(timeframe):
     else:
         df_top = df_union.sort_values(by=['Perc_Above_DSMA200'], ascending=False)
     df_top = df_top.head(settings.trade_top_performance)
-    for column in ["Symbol", "Price", "Market_Phase", "Perc_Above_DSMA50", "Perc_Above_DSMA200"]:
+    for column in [
+        "Symbol",
+        "Price",
+        "Market_Phase",
+        "Perc_Above_DSMA50",
+        "Perc_Above_DSMA200",
+        "ROC_30",
+        "ROC_60",
+    ]:
         if column not in df_top.columns:
             df_top[column] = pd.Series(dtype="object")
 
@@ -587,6 +621,8 @@ def main(timeframe):
             row['Market_Phase'],
             row['Perc_Above_DSMA50'],
             row['Perc_Above_DSMA200'],
+            row['ROC_30'],
+            row['ROC_60'],
             row['Rank']
         )
 

@@ -1,4 +1,5 @@
 import logging
+import json
 import math
 import sys
 import time
@@ -305,7 +306,7 @@ def _snapshot_parameters(pos_row=None) -> dict:
     return {
         key: value
         for key, value in snapshot.items()
-        if key not in {"engine", "definition", "risk"}
+        if key not in {"engine", "definition", "risk", "entry_state"}
     }
 
 
@@ -315,6 +316,28 @@ def _snapshot_definition(pos_row=None) -> dict:
     snapshot = database.parse_strategy_params(pos_row.get("Strategy_Params_JSON", ""))
     definition = snapshot.get("definition") if isinstance(snapshot, dict) else None
     return definition if isinstance(definition, dict) else {}
+
+
+def _snapshot_entry_state(pos_row=None) -> dict:
+    if pos_row is None:
+        return {}
+    snapshot = database.parse_strategy_params(pos_row.get("Strategy_Params_JSON", ""))
+    entry_state = snapshot.get("entry_state") if isinstance(snapshot, dict) else None
+    return dict(entry_state) if isinstance(entry_state, dict) else {}
+
+
+def _build_live_strategy_snapshot(strategy_id: str, definition: dict, parameters: dict, entry_state: dict | None = None) -> str:
+    if not isinstance(definition, dict) or definition.get("engine") != "bec_strategy_ast_v2":
+        return database.build_strategy_params_json(strategy_id)
+    snapshot = {
+        "engine": definition.get("engine", "bec_strategy_ast_v2"),
+        "definition": definition,
+        "parameters": strategy_engine.resolve_parameters(definition, parameters),
+        "risk": database.get_strategy_risk(strategy_id),
+    }
+    if entry_state:
+        snapshot["entry_state"] = dict(entry_state)
+    return json.dumps(snapshot, separators=(",", ":"))
 
 
 def _apply_pair_to_parameters(definition: dict, parameters: dict, first_value=0, second_value=0, *, overwrite: bool = True) -> dict:
@@ -458,7 +481,7 @@ def apply_strategy_technicals(df, strategy_id: str, first_value: int = 0, second
     return
 
 
-def get_strategy_sell_condition(strategy_id: str, symbol: str, timeframe: str, df, lastrow, parameters: dict | None = None):
+def get_strategy_sell_condition(strategy_id: str, symbol: str, timeframe: str, df, lastrow, parameters: dict | None = None, pos_row=None):
     if strategy_uses_declarative_engine(strategy_id):
         definition = database.get_strategy_definition(strategy_id)
         parameters = parameters or get_strategy_parameter_overrides(strategy_id)
@@ -469,6 +492,7 @@ def get_strategy_sell_condition(strategy_id: str, symbol: str, timeframe: str, d
             symbol=symbol,
             base_timeframe=timeframe,
             data_loader=get_data,
+            context={"entry_state": _snapshot_entry_state(pos_row)},
         )
     return False
 
@@ -700,6 +724,7 @@ def trade(timeframe, run_mode, settings=None, send_summary=True):
             df,
             lastrow,
             parameters=strategy_parameters,
+            pos_row=pos_row,
         )
 
         # set current PnL
@@ -866,6 +891,23 @@ def trade(timeframe, run_mode, settings=None, send_summary=True):
         )
 
         if buy_condition:
+            strategy_definition = database.get_strategy_definition(strategy_id)
+            entry_state = {}
+            if isinstance(strategy_definition, dict) and strategy_definition.get("engine") == "bec_strategy_ast_v2":
+                entry_state = strategy_engine.capture_entry_state(
+                    df,
+                    strategy_definition,
+                    strategy_parameters,
+                    symbol=symbol,
+                    base_timeframe=timeframe,
+                    data_loader=get_data,
+                )
+            strategy_params_json = _build_live_strategy_snapshot(
+                strategy_id,
+                strategy_definition,
+                strategy_parameters,
+                entry_state,
+            )
             cycle_summary["buy_actions"] += 1
             binance.create_buy_order(
                 symbol=symbol,
@@ -873,6 +915,7 @@ def trade(timeframe, run_mode, settings=None, send_summary=True):
                 strategy_id=strategy_id,
                 strategy_name=strategy_name,
                 position_id=position_id,
+                strategy_params_json=strategy_params_json,
             )
         else:
             setup = strategy_context["setup"]

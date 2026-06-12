@@ -64,6 +64,46 @@ def test_perturb_candles_generates_valid_ohlc():
     assert (synthetic[["Open", "High", "Low", "Close"]] > 0).all().all()
 
 
+def test_perturb_candles_uses_configured_percent_bounds():
+    df = pd.DataFrame(
+        {
+            "Open": [100.0, 110.0, 120.0],
+            "High": [105.0, 115.0, 125.0],
+            "Low": [95.0, 105.0, 115.0],
+            "Close": [102.0, 112.0, 122.0],
+            "Volume": [10.0, 11.0, 12.0],
+        }
+    )
+
+    synthetic = monte_carlo._perturb_candles(
+        df,
+        np.random.default_rng(42),
+        min_pct=0.1,
+        max_pct=0.5,
+    )
+
+    deltas = (
+        synthetic[["Open", "High", "Low", "Close"]]
+        / df[["Open", "High", "Low", "Close"]]
+        - 1.0
+    ).abs()
+    assert (deltas >= 0.001 - 1e-12).all().all()
+    assert (deltas <= 0.005 + 1e-12).all().all()
+    assert synthetic["Volume"].equals(df["Volume"])
+
+
+def test_candle_perturbation_bounds_normalize_reversed_values():
+    min_bound, max_bound = monte_carlo._candle_perturbation_bounds(
+        {
+            "Monte_Carlo_Candle_Perturb_Min_Pct": 0.5,
+            "Monte_Carlo_Candle_Perturb_Max_Pct": 0.1,
+        }
+    )
+
+    assert min_bound == 0.001
+    assert max_bound == 0.005
+
+
 def test_robustness_interpretation_for_no_valid_scenarios():
     assert monte_carlo._robustness_score({}, 0, 100) == 0.0
     assert monte_carlo._interpretation(0.0, 0, 100, monte_carlo.METHOD_CANDLES) == "Insufficient scenarios"

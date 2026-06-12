@@ -59,6 +59,8 @@ pins unless the dependency workflow is being updated deliberately.
 - Keep README installation and Docker commands aligned with `docker-compose.yml`.
 - Add screenshots or generated reports only when they are intentionally part of
   the public docs.
+- Unless a task explicitly specifies another language, all user-facing app text,
+  captions, labels, docs, and messages must be written in English only.
 
 ## Known Gotchas
 - Runtime state may exist in the repo working tree during local development;

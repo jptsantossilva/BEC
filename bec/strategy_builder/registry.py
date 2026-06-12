@@ -20,7 +20,7 @@ COMPARISON_OPERATORS = {
     "crosses_below",
 }
 WINDOW_OPERATORS = {"for_n_bars", "within_n_bars", "wait_n_bars"}
-TRANSFORM_OPERATORS = {"lookback", "highest_high", "lowest_low"}
+TRANSFORM_OPERATORS = {"lookback", "highest_high", "lowest_low", "rolling_mean"}
 RISK_RULE_TYPES = {
     "take_profit_pct",
     "stop_loss_pct",
@@ -49,6 +49,7 @@ INDICATORS = {
     "DEMA": IndicatorSpec("DEMA", "trend", {"period": 20}),
     "RMA": IndicatorSpec("RMA", "trend", {"period": 14}),
     "RSI": IndicatorSpec("RSI", "momentum", {"period": 14}),
+    "ROC": IndicatorSpec("ROC", "momentum", {"period": 60}),
     "MACD": IndicatorSpec("MACD", "momentum", {"fast": 12, "slow": 26, "signal": 9}, ("macd", "signal", "histogram")),
     "STOCH": IndicatorSpec("STOCH", "momentum", {"k": 14, "d": 3, "smooth": 3}, ("k", "d")),
     "ATR": IndicatorSpec("ATR", "volatility", {"period": 14}),

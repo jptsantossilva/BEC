@@ -367,7 +367,6 @@ def test_declarative_strategy_parameters_config_uses_definition_indicators_only(
         execution_timeframe="1d",
         nFastSMA=50,
         nSlowSMA=200,
-        use_current_timeframe_market_phase_filter=False,
     )
 
     params = my_backtesting.build_strategy_parameters_config(strategy)

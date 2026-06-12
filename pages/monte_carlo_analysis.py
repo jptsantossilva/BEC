@@ -636,7 +636,13 @@ def main():
         st.info("No backtesting results found. Run backtests before Monte Carlo analysis.")
         return
 
-    strategy_options = list(strategy_map.keys())
+    strategy_options = sorted(
+        strategy_map.keys(),
+        key=lambda strategy_id: (
+            str(format_strategy(strategy_id)).casefold(),
+            str(strategy_id).casefold(),
+        ),
+    )
     timeframes = ["1d", "4h", "1h", "15m"]
 
     primary_filters = st.container(horizontal=True)
@@ -732,10 +738,9 @@ def main():
         help=(
             "**Trade-order shuffling** keeps the original trade results and randomly "
             "changes their order to test whether performance depends on a lucky trade sequence.\n\n"
-            "**Candles-based** builds new synthetic OHLCV market paths from the original "
-            "candle returns. It samples historical close-to-close returns in a new order, "
-            "adds small statistical noise equal to 15% of the historical return volatility, "
-            "reconstructs valid candles, and reruns the full backtest for each path."
+            "**Candles-based** applies a small random OHLC perturbation to the original "
+            "candles, keeps candles valid, and reruns the full backtest for each path. "
+            "The min/max perturbation is configured in Backtest Settings."
         ),
     )
     method = METHOD_OPTIONS[method_label]
@@ -887,15 +892,15 @@ def main():
     scenario_label = (
         "Trade Sequences"
         if method == monte_carlo.METHOD_TRADE_SHUFFLE
-        else "Market Paths"
+        else "Candle Scenarios"
     )
     scenario_help = (
         "Number of shuffled trade-order simulations to run."
         if method == monte_carlo.METHOD_TRADE_SHUFFLE
         else (
-            "Number of synthetic market paths to generate and backtest. "
+            "Number of perturbed OHLC candle scenarios to generate and backtest. "
             "Higher values make the robustness statistics more stable, "
-            "but take longer because each path reruns the full strategy."
+            "but take longer because each scenario reruns the full strategy."
         )
     )
     controls = st.container(horizontal=True)
@@ -916,7 +921,7 @@ def main():
         value=42,
         step=1,
         help=(
-            "Controls the random sample used to build the simulations. "
+            "Controls the random perturbations used to build the simulations. "
             "Keep the same seed to reproduce the same result with the same inputs; "
             "change it to test a different random sample."
         ),

@@ -24,13 +24,17 @@ def test_builtin_templates_validate():
         "ema_cross",
         "ema_cross_with_market_phases",
         "market_phases",
+        "dual_momentum_simple",
         "hma_rsi_linreg",
         "bullmarketsupportband",
         "wema20",
     ]:
         definition = get_builtin_template(strategy_id)
         assert schema.validate_definition(definition)["engine"] == "bec_strategy_ast_v2"
-        assert "1w" in definition["constraints"]["allowed_timeframes"]
+        if strategy_id == "dual_momentum_simple":
+            assert definition["constraints"]["allowed_timeframes"] == ["1h", "4h", "1d"]
+        else:
+            assert "1w" in definition["constraints"]["allowed_timeframes"]
 
 
 def test_ast_v2_accepts_weekly_timeframe():
@@ -48,6 +52,7 @@ def test_builtin_optimization_ranges_are_capped():
         "ema_cross": 145,
         "ema_cross_with_market_phases": 145,
         "market_phases": 0,
+        "dual_momentum_simple": 2,
         "hma_rsi_linreg": 145,
         "bullmarketsupportband": 0,
         "wema20": 0,
@@ -94,6 +99,88 @@ def test_builtin_templates_bind_indicators_to_definition_parameters():
 
     assert definition["entry"]["conditions"][0]["left"]["period_param"] == "ema_fast"
     assert definition["entry"]["conditions"][0]["right"]["period_param"] == "ema_slow"
+
+
+def test_dual_momentum_simple_template_is_declarative_without_risk_rules():
+    definition = get_builtin_template("dual_momentum_simple")
+
+    validated = schema.validate_definition(definition)
+
+    assert validated["engine"] == "bec_strategy_ast_v2"
+    assert validated["risk"]["rules"] == []
+    assert validated["parameters"]["momentum_window"] == {
+        "type": "int",
+        "default": 60,
+        "min": 30,
+        "max": 60,
+        "step": 30,
+        "optimizable": True,
+    }
+
+
+def test_strategy_builder_preserves_inclusive_comparison_operators():
+    assert strategy_builder._editable_operator("less_than_or_equal") == "less_than_or_equal"
+    assert strategy_builder._editable_operator("greater_than_or_equal") == "greater_than_or_equal"
+    assert strategy_builder.OPERATORS["less_than_or_equal"] == "below or equal"
+    assert strategy_builder.OPERATORS["greater_than_or_equal"] == "above or equal"
+
+
+def test_roc_indicator_has_warmup_and_treats_zero_as_not_positive():
+    values = pd.Series([10.0, 11.0, 10.0])
+
+    result = engine.roc(values, 2)
+
+    assert pd.isna(result.iloc[0])
+    assert pd.isna(result.iloc[1])
+    assert result.iloc[2] == 0.0
+
+
+def test_dual_momentum_simple_daily_entry_and_zero_roc_exit():
+    definition = get_builtin_template("dual_momentum_simple")
+    close = [float(value) for value in range(1, 261)]
+    df = _ohlcv(close)
+    df.index = pd.date_range("2024-01-01", periods=len(df), freq="D")
+
+    assert engine.evaluate_entry(
+        df,
+        definition,
+        {"momentum_window": 60},
+        base_timeframe="1d",
+        data_loader=lambda *_args: pytest.fail("daily execution should reuse base data"),
+    )
+
+    flat = _ohlcv([100.0] * 261)
+    flat.index = pd.date_range("2024-01-01", periods=len(flat), freq="D")
+    assert engine.evaluate_exit(
+        flat,
+        definition,
+        {"momentum_window": 60},
+        base_timeframe="1d",
+        data_loader=lambda *_args: pytest.fail("daily execution should reuse base data"),
+    )
+
+
+def test_dual_momentum_simple_intraday_entry_uses_previous_closed_daily_candle():
+    definition = get_builtin_template("dual_momentum_simple")
+    daily = _ohlcv([float(value) for value in range(1, 262)])
+    daily.index = pd.date_range("2023-01-01", periods=len(daily), freq="D")
+    base = _ohlcv([float(value) for value in range(100, 362)])
+    base.index = pd.date_range("2023-09-21 04:00", periods=len(base), freq="4h")
+    calls = []
+
+    def loader(symbol, timeframe):
+        calls.append((symbol, timeframe))
+        return daily
+
+    assert engine.evaluate_entry(
+        base,
+        definition,
+        {"momentum_window": 60},
+        symbol="TESTUSDC",
+        base_timeframe="4h",
+        data_loader=loader,
+    )
+    assert calls == [("TESTUSDC", "1d")]
 
 
 def test_builtin_strategy_resolves_to_declarative_strategy(monkeypatch):
@@ -639,6 +726,10 @@ def _comparison(left, operator, right):
     return {"type": "comparison", "left": left, "operator": operator, "right": right}
 
 
+def _transform(operator, source, bars=1):
+    return {"type": "transform", "operator": operator, "bars": bars, "source": source}
+
+
 def _ast_definition(entry_conditions, exit_conditions=None, risk_rules=None):
     return {
         "schema_version": 2,
@@ -977,6 +1068,82 @@ def test_ast_v2_engine_evaluates_entry_and_exit():
 
     assert engine.evaluate_entry(prepared.iloc[:4], definition)
     assert engine.evaluate_exit(prepared, definition)
+
+
+def test_ast_v2_engine_evaluates_breakout_atr_and_optional_volume_filters():
+    definition = _ast_definition(
+        [
+            _comparison(
+                _price("Close", "current"),
+                "greater_than",
+                _transform(
+                    "highest_high",
+                    _transform("lookback", _price("High", "current"), bars=1),
+                    bars=3,
+                ),
+            ),
+            _comparison(
+                _indicator("ATR", {"period": 1}, timeframe="current"),
+                "greater_than",
+                _transform("rolling_mean", _indicator("ATR", {"period": 1}, timeframe="current"), bars=3),
+            ),
+            _comparison(
+                _price("Volume", "current"),
+                "greater_than",
+                _transform("rolling_mean", _price("Volume", "current"), bars=3),
+            ),
+        ],
+        [_comparison(_price("Close", "current"), "below", _indicator("SMA", {"period": 2}, timeframe="current"))],
+    )
+    df = pd.DataFrame(
+        {
+            "Open": [10, 10, 10, 10, 20],
+            "High": [11, 11, 11, 11, 26],
+            "Low": [9, 9, 9, 9, 19],
+            "Close": [10, 10, 10, 10, 20],
+            "Volume": [100, 110, 120, 130, 300],
+        }
+    )
+
+    prepared = engine.add_indicators(df, definition)
+    validated = schema.validate_definition(definition)
+
+    assert validated["entry"]["conditions"][1]["right"]["operator"] == "rolling_mean"
+    assert engine.evaluate_entry(prepared, definition)
+
+
+def test_ast_v2_captures_entry_breakout_level_for_failed_breakout_exit():
+    breakout_level = _transform(
+        "highest_high",
+        _transform("lookback", _price("High", "current"), bars=1),
+        bars=3,
+    )
+    definition = _ast_definition(
+        [_comparison(_price("Close", "current"), "greater_than", breakout_level)],
+        [_comparison(_price("Close", "current"), "below", {"type": "entry_state", "name": "breakout_level"})],
+    )
+    definition["state"] = {"entry": {"breakout_level": breakout_level}}
+    df = pd.DataFrame(
+        {
+            "Open": [10, 10, 10, 10, 20, 10.5],
+            "High": [11, 11, 11, 11, 21, 11],
+            "Low": [9, 9, 9, 9, 19, 10],
+            "Close": [10, 10, 10, 10, 20, 10.5],
+            "Volume": [100, 100, 100, 100, 100, 100],
+        }
+    )
+
+    prepared = engine.add_indicators(df, definition)
+    entry_state = engine.capture_ast_entry_state(prepared.iloc[:5], definition, {})
+
+    assert schema.validate_definition(definition)["state"]["entry"]["breakout_level"]["operator"] == "highest_high"
+    assert entry_state == {"breakout_level": 11.0}
+    assert engine.evaluate_ast_group(
+        prepared,
+        definition["exit"],
+        {},
+        context={"entry_state": entry_state},
+    )
 
 
 def test_ast_v2_rejects_instrument_short_and_limit_order():

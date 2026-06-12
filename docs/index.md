@@ -16,6 +16,8 @@ hero:
 features:
   - title: Trading Dashboard
     details: Monitor PnL, balances, open positions, top performers, scheduled jobs, and trading settings.
+  - title: Market Analysis
+    details: Review bull and bear market indicator summaries, including BTC Supply Profit/Loss macro/on-chain signals.
   - title: Backtesting
     details: Configure strategy tests, review quality scores, inspect reports, and use AI analysis when enabled.
   - title: Monte Carlo Analysis
@@ -26,7 +28,7 @@ features:
 
 This manual explains how to install, configure, and use BEC without going into developer-level details.
 
-BEC is a free and open-source automated trading app for Binance spot. It combines multi-timeframe trading, market-phase ranking, backtesting, Monte Carlo robustness checks, a Streamlit dashboard, and Telegram notifications.
+BEC is a free and open-source automated trading app for Binance spot. It combines multi-timeframe trading, market-phase ranking, market analysis indicators, backtesting, Monte Carlo robustness checks, a Streamlit dashboard, and Telegram notifications.
 
 ## Who It Is For
 
@@ -35,6 +37,7 @@ Use this manual if you want to:
 - run BEC with Docker;
 - configure Binance, Telegram, and optional OpenAI credentials;
 - understand the main dashboard pages;
+- review market analysis indicators;
 - run and interpret backtesting results;
 - use Monte Carlo analysis as a robustness check.
 

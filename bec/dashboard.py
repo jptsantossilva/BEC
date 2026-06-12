@@ -380,11 +380,19 @@ def set_pages():
         default=False,
     )
 
-    bull_market_indicators_dashboard = st.Page(
-        "pages/bull_market_indicators_dashboard.py",
+    market_indicators_dashboard = st.Page(
+        "pages/market_indicators_dashboard.py",
         title="Dashboard",
         icon=":material/finance_mode:",
-        url_path="bull_market_indicators_dashboard",
+        url_path="market_indicators_dashboard",
+        default=False,
+    )
+
+    bitcoin_supply_profit_loss = st.Page(
+        "pages/bitcoin_supply_profit_loss.py",
+        title="BTC Supply Profit/Loss",
+        icon=":material/analytics:",
+        url_path="bitcoin_supply_profit_loss",
         default=False,
     )
 
@@ -398,7 +406,8 @@ def set_pages():
         "backtesting_settings": backtesting_settings,
         "backtesting_results": backtesting_results,
         "monte_carlo_analysis": monte_carlo_analysis,
-        "bull_market_indicators_dashboard": bull_market_indicators_dashboard,
+        "market_indicators_dashboard": market_indicators_dashboard,
+        "bitcoin_supply_profit_loss": bitcoin_supply_profit_loss,
     }
     if st.session_state.pop("redirect_to_dashboard_after_login", False):
         st.switch_page("pages/trading.py")
@@ -414,15 +423,15 @@ def set_pages():
     trading_pages = [trading, balances, scheduled_jobs]
     strategy_pages = [strategy_builder]
     backtesting_pages = [backtesting_settings, backtesting_results, monte_carlo_analysis]
-    # market_analysis_pages = [bull_market_indicators_dashboard]
+    market_analysis_pages = [market_indicators_dashboard, bitcoin_supply_profit_loss]
     page_dict = {}
     if st.session_state.authentication_status:
         if role in ["Trading", "Admin"]:
             page_dict["Trading"] = trading_pages
             page_dict["Strategy"] = strategy_pages
             page_dict["Backtesting"] = backtesting_pages
-        # if role in ["Market Analysis", "Trading", "Admin"]:
-        #     page_dict["Bull Market Indicators"] = market_analysis_pages
+        if role in ["Market Analysis", "Trading", "Admin"]:
+            page_dict["Market Analysis"] = market_analysis_pages
 
     if page_dict or account_pages:
         pg = st.navigation({"Account": account_pages} | page_dict)
@@ -439,7 +448,8 @@ def set_pages():
                 backtesting_settings,
                 backtesting_results,
                 monte_carlo_analysis,
-                bull_market_indicators_dashboard,
+                market_indicators_dashboard,
+                bitcoin_supply_profit_loss,
             ],
             position="hidden",
         )

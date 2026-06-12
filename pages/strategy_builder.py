@@ -25,9 +25,10 @@ from bec.utils.take_profit import normalize_take_profit_levels
 
 configure_page()
 
-INDICATOR_OPTIONS = ["EMA", "SMA", "HMA", "RSI", "LINREG"]
+INDICATOR_OPTIONS = ["EMA", "SMA", "HMA", "RSI", "ROC", "ATR", "LINREG"]
 PRICE_FIELD_OPTIONS = ["Open", "High", "Low", "Close", "Volume"]
 TIMEFRAME_OPTIONS = ["current", "15m", "1h", "4h", "1d", "1w"]
+TRANSFORM_OPTIONS = ["lookback", "highest_high", "lowest_low", "rolling_mean"]
 PARAMETER_TYPES = ["int", "float", "bool"]
 PARAMETER_CONSTRAINT_OPERATOR_OPTIONS = [
     "less_than",
@@ -46,11 +47,15 @@ OPERATORS = {
     "crosses_above": "crosses above",
     "crosses_below": "crosses below",
     "greater_than": "above",
+    "greater_than_or_equal": "above or equal",
     "less_than": "below",
+    "less_than_or_equal": "below or equal",
 }
 OPERAND_TYPES = {
     "indicator": "Indicator",
     "price": "Price",
+    "transform": "Transform",
+    "entry_state": "Entry State",
     "value": "Value",
     "parameter": "Parameter",
 }
@@ -62,6 +67,11 @@ def _timeframe_label(timeframe: str) -> str:
 
 def _timeframe_option_label(timeframe: str) -> str:
     return CURRENT_TIMEFRAME_UI_LABEL if str(timeframe or "current") == "current" else str(timeframe)
+
+
+def _editable_operator(value: str) -> str:
+    operator = str(value or "greater_than")
+    return operator if operator in OPERATORS else "greater_than"
 
 
 def _definition_has_optimizable_parameters(definition: dict) -> bool:
@@ -328,6 +338,11 @@ def _compact_operand_label(operand: dict, parameters: dict) -> str:
         return f"{label}.{output}" if output not in ("", "value", None) else label
     if operand_type == "price":
         return f"Price {operand.get('field', 'Close')}"
+    if operand_type == "transform":
+        operator = str(operand.get("operator", "transform") or "transform")
+        bars = operand.get("bars", operand.get("period", 1))
+        source = _compact_operand_label(operand.get("source", {}), parameters)
+        return f"{operator} {bars} of {source}"
     if operand_type == "value":
         return str(operand.get("value", "0"))
     if operand_type == "parameter":
@@ -335,6 +350,8 @@ def _compact_operand_label(operand: dict, parameters: dict) -> str:
         if isinstance(spec, dict):
             return str(spec.get("default", operand.get("name")))
         return str(operand.get("name", "parameter"))
+    if operand_type == "entry_state":
+        return f"Entry {operand.get('name', 'state')}"
     return "?"
 
 
@@ -412,10 +429,15 @@ def _operand_chips_html(operand: dict, parameters: dict) -> str:
         period = operand.get("period", params.get("period"))
         if operand.get("period_param"):
             period = f"<{operand.get('period_param')}>"
+        source = operand.get("source", {}) if isinstance(operand.get("source"), dict) else {}
+        source_field = str(source.get("field", "Close") or "Close")
         timeframe = _timeframe_label(str(operand.get("timeframe", "current") or "current"))
         parts = [_chip_html(name, "bec-chip-indicator")]
         if period not in (None, ""):
             parts.append(_chip_html(period, "bec-chip-period"))
+        if name not in {"ATR"} and source_field != "Close":
+            parts.append(_token_html("of"))
+            parts.append(_chip_html(source_field, "bec-chip-price"))
         parts.append(_token_html("on"))
         parts.append(_chip_html(timeframe, "bec-chip-timeframe"))
         return " ".join(parts)
@@ -433,6 +455,19 @@ def _operand_chips_html(operand: dict, parameters: dict) -> str:
     if operand_type == "parameter":
         name = str(operand.get("name", "parameter"))
         return _chip_html(name, "bec-chip-parameter")
+    if operand_type == "transform":
+        operator = str(operand.get("operator", "transform") or "transform")
+        bars = str(operand.get("bars", operand.get("period", 1)) or 1)
+        return " ".join(
+            [
+                _chip_html(operator, "bec-chip-operator"),
+                _chip_html(bars, "bec-chip-value"),
+                _token_html("of"),
+                _operand_chips_html(operand.get("source", {}), parameters),
+            ]
+        )
+    if operand_type == "entry_state":
+        return _chip_html(f"Entry {operand.get('name', 'state')}", "bec-chip-parameter")
     return _chip_html("?", "bec-chip-value")
 
 
@@ -2128,6 +2163,19 @@ def _normalize_operand(operand: dict, parameters: dict) -> dict:
     return {"type": "price", "field": "Close"}
 
 
+def _indicator_source_field(operand: dict) -> str:
+    source = operand.get("source", {}) if isinstance(operand, dict) else {}
+    if not isinstance(source, dict):
+        return "Close"
+    field = str(source.get("field", "Close") or "Close")
+    return field if field in PRICE_FIELD_OPTIONS else "Close"
+
+
+def _transform_operator(operand: dict) -> str:
+    operator = str(operand.get("operator", "rolling_mean") or "rolling_mean")
+    return operator if operator in TRANSFORM_OPTIONS else "rolling_mean"
+
+
 def render_operand_editor(operand: dict, parameters: dict, key_prefix: str, host=st) -> dict:
     operand = _normalize_operand(operand, parameters)
     parameter_names = list(parameters.keys())
@@ -2148,7 +2196,7 @@ def render_operand_editor(operand: dict, parameters: dict, key_prefix: str, host
         timeframe = str(operand.get("timeframe", "current") or "current")
         if timeframe not in TIMEFRAME_OPTIONS:
             timeframe = "current"
-        name_col, period_col, timeframe_col = host.columns([1.2, 1, 1.2])
+        name_col, period_col, source_col, timeframe_col = host.columns([1.2, 1, 1, 1.2])
         selected_name = name_col.selectbox(
             "Indicator",
             INDICATOR_OPTIONS,
@@ -2164,10 +2212,17 @@ def render_operand_editor(operand: dict, parameters: dict, key_prefix: str, host
             key=f"{key_prefix}_indicator_timeframe",
             label_visibility="collapsed",
         )
+        selected_source = source_col.selectbox(
+            "Source",
+            PRICE_FIELD_OPTIONS,
+            index=PRICE_FIELD_OPTIONS.index(_indicator_source_field(operand)),
+            key=f"{key_prefix}_indicator_source",
+            label_visibility="collapsed",
+        )
         result = {
             "type": "indicator",
             "name": selected_name,
-            "source": {"type": "price", "field": "Close", "timeframe": selected_timeframe},
+            "source": {"type": "price", "field": selected_source, "timeframe": selected_timeframe},
             "timeframe": selected_timeframe,
             "params": {},
             "output": str(operand.get("output", "value") or "value"),
@@ -2206,6 +2261,47 @@ def render_operand_editor(operand: dict, parameters: dict, key_prefix: str, host
             ),
         }
 
+    if operand_type == "transform":
+        source = operand.get("source", {}) if isinstance(operand.get("source"), dict) else {}
+        operator_col, bars_col = host.columns([1.2, 1])
+        operator = operator_col.selectbox(
+            "Transform",
+            TRANSFORM_OPTIONS,
+            index=TRANSFORM_OPTIONS.index(_transform_operator(operand)),
+            key=f"{key_prefix}_transform_operator",
+            label_visibility="collapsed",
+        )
+        bars = int(
+            bars_col.number_input(
+                "Bars",
+                min_value=1,
+                value=int(operand.get("bars", operand.get("period", 1)) or 1),
+                step=1,
+                key=f"{key_prefix}_transform_bars",
+                label_visibility="collapsed",
+            )
+        )
+        host.caption("Transform source")
+        return {
+            "type": "transform",
+            "operator": operator,
+            "bars": bars,
+            "source": render_operand_editor(source, parameters, f"{key_prefix}_transform_source", host),
+        }
+
+    if operand_type == "entry_state":
+        return {
+            "type": "entry_state",
+            "name": str(
+                host.text_input(
+                    "Entry state name",
+                    value=str(operand.get("name", "breakout_level") or "breakout_level"),
+                    key=f"{key_prefix}_entry_state_name",
+                    label_visibility="collapsed",
+                )
+            ).strip() or "breakout_level",
+        }
+
     if operand_type == "parameter":
         fallback = parameter_names[0] if parameter_names else ""
         current = str(operand.get("name", fallback))
@@ -2239,10 +2335,20 @@ def render_operand_editor(operand: dict, parameters: dict, key_prefix: str, host
     }
 
 
-def render_operand_editor_inline(operand: dict, parameters: dict, key_prefix: str, host, *, allow_value: bool = True) -> dict:
+def render_operand_editor_inline(
+    operand: dict,
+    parameters: dict,
+    key_prefix: str,
+    host,
+    *,
+    allow_value: bool = True,
+    depth: int = 0,
+) -> dict:
     operand = _normalize_operand(operand, parameters)
     parameter_names = list(parameters.keys())
     operand_type_options = [option for option in OPERAND_TYPES.keys() if option != "parameter"]
+    if depth >= 2:
+        operand_type_options = [option for option in operand_type_options if option != "transform"]
     if not allow_value:
         operand_type_options = [option for option in operand_type_options if option != "value"]
     if operand.get("type") not in operand_type_options:
@@ -2283,10 +2389,18 @@ def render_operand_editor_inline(operand: dict, parameters: dict, key_prefix: st
             label_visibility="collapsed",
             width=125,
         )
+        selected_source = host.selectbox(
+            "Source",
+            PRICE_FIELD_OPTIONS,
+            index=PRICE_FIELD_OPTIONS.index(_indicator_source_field(operand)),
+            key=f"{key_prefix}_indicator_source",
+            label_visibility="collapsed",
+            width=125,
+        )
         result = {
             "type": "indicator",
             "name": selected_name,
-            "source": {"type": "price", "field": "Close", "timeframe": selected_timeframe},
+            "source": {"type": "price", "field": selected_source, "timeframe": selected_timeframe},
             "timeframe": selected_timeframe,
             "params": {},
             "output": str(operand.get("output", "value") or "value"),
@@ -2323,6 +2437,51 @@ def render_operand_editor_inline(operand: dict, parameters: dict, key_prefix: st
                 label_visibility="collapsed",
                 width=125,
             ),
+        }
+
+    if operand_type == "transform":
+        source = operand.get("source", {}) if isinstance(operand.get("source"), dict) else {}
+        operator = host.selectbox(
+            "Transform",
+            TRANSFORM_OPTIONS,
+            index=TRANSFORM_OPTIONS.index(_transform_operator(operand)),
+            key=f"{key_prefix}_transform_operator",
+            label_visibility="collapsed",
+            width=145,
+        )
+        bars = int(
+            host.number_input(
+                "Bars",
+                min_value=1,
+                value=int(operand.get("bars", operand.get("period", 1)) or 1),
+                step=1,
+                key=f"{key_prefix}_transform_bars",
+                label_visibility="collapsed",
+                width=95,
+            )
+        )
+        source_operand = render_operand_editor_inline(
+            source,
+            parameters,
+            f"{key_prefix}_transform_source",
+            host,
+            allow_value=False,
+            depth=depth + 1,
+        )
+        return {"type": "transform", "operator": operator, "bars": bars, "source": source_operand}
+
+    if operand_type == "entry_state":
+        return {
+            "type": "entry_state",
+            "name": str(
+                host.text_input(
+                    "Entry state name",
+                    value=str(operand.get("name", "breakout_level") or "breakout_level"),
+                    key=f"{key_prefix}_entry_state_name",
+                    label_visibility="collapsed",
+                    width=160,
+                )
+            ).strip() or "breakout_level",
         }
 
     if operand_type == "parameter":
@@ -2398,9 +2557,7 @@ def render_rule_block(
         else:
             operator_host = row
         operator_keys = list(OPERATORS.keys())
-        operator = str(rule.get("operator", "greater_than"))
-        if operator not in operator_keys:
-            operator = "greater_than"
+        operator = _editable_operator(rule.get("operator", "greater_than"))
         selected_operator = operator_host.selectbox(
             "Operator",
             operator_keys,
@@ -2718,6 +2875,70 @@ def _ai_state_key(strategy_id: str, name: str) -> str:
     return f"{strategy_id}_ai_builder_{name}"
 
 
+def _strategy_filter_state_key(name: str) -> str:
+    return f"strategy_builder_filter_{name}"
+
+
+def _restore_strategy_filter_widget(widget_key: str, state_key: str, default):
+    if widget_key not in st.session_state:
+        st.session_state[widget_key] = copy.deepcopy(
+            st.session_state.get(state_key, default)
+        )
+
+
+def _persist_strategy_filter_widget(widget_key: str, state_key: str):
+    st.session_state[state_key] = copy.deepcopy(st.session_state.get(widget_key))
+
+
+def _working_copy_redirects() -> dict:
+    redirects = st.session_state.get("strategy_builder_working_copy_redirects")
+    if not isinstance(redirects, dict):
+        redirects = {}
+        st.session_state["strategy_builder_working_copy_redirects"] = redirects
+    return redirects
+
+
+def _select_working_copy(source_id: str, draft_id: str):
+    source_id = str(source_id)
+    draft_id = str(draft_id)
+    _working_copy_redirects()[source_id] = draft_id
+    st.session_state["strategy_builder_selected_id"] = draft_id
+    st.session_state["strategy_builder_working_copy_notice"] = {
+        "source_id": source_id,
+        "draft_id": draft_id,
+    }
+
+
+def _redirect_to_working_copy(strategy_id: str, available_ids: set[str]) -> str:
+    draft_id = str(_working_copy_redirects().get(str(strategy_id), "") or "")
+    return draft_id if draft_id in available_ids else str(strategy_id)
+
+
+@st.dialog("Approved Strategy Protected")
+def working_copy_notice_dialog(source_id: str, draft_id: str):
+    st.write(
+        f"The approved strategy **{source_id}** was not modified. "
+        f"Your changes were saved to the draft **{draft_id}**."
+    )
+    st.info("Further edits in this screen will update the selected draft.")
+    if st.button(
+        "Continue editing draft",
+        type="primary",
+        key=f"working_copy_notice_continue_{draft_id}",
+    ):
+        st.rerun()
+
+
+def _render_pending_working_copy_notice():
+    notice = st.session_state.pop("strategy_builder_working_copy_notice", None)
+    if not isinstance(notice, dict):
+        return
+    source_id = str(notice.get("source_id", "") or "")
+    draft_id = str(notice.get("draft_id", "") or "")
+    if source_id and draft_id:
+        working_copy_notice_dialog(source_id, draft_id)
+
+
 def _apply_ai_result_to_state(strategy_id: str, result: dict):
     st.session_state[_ai_state_key(strategy_id, "definition")] = result["definition"]
     st.session_state[_ai_state_key(strategy_id, "risk")] = result["risk"]
@@ -2742,8 +2963,10 @@ def _autosave_strategy_definition(strategy_id: str, definition: dict) -> str:
     metadata = strategy_schema.parse_json_object(row.get("Metadata_JSON"), "Metadata_JSON")
     status = str(row.get("Status", "draft") or "draft")
     if status == "approved":
-        new_id = database.create_strategy_draft_version(strategy_id, definition, metadata=metadata)
-        st.session_state["strategy_builder_selected_id"] = new_id
+        new_id = database.get_or_create_strategy_draft_version(
+            strategy_id, definition, metadata=metadata
+        )
+        _select_working_copy(strategy_id, new_id)
         for suffix in ("definition", "risk", "suggested_name"):
             st.session_state.pop(_ai_state_key(strategy_id, suffix), None)
         st.toast(f"Auto-saved as new draft: {new_id}")
@@ -3071,73 +3294,6 @@ def new_strategy_dialog():
         st.rerun()
 
 
-def render_templates(df: pd.DataFrame):
-    st.subheader("Built-in Templates")
-    st.caption(
-        "Official approved read-only templates. They run from Definition_JSON; clone one to create an editable strategy."
-    )
-    builtins = df[df["Type"].fillna("builtin") == "builtin"] if not df.empty else pd.DataFrame()
-    if builtins.empty:
-        st.info("No built-in strategies found.")
-        return
-
-    grid_columns = [
-        "Id",
-        "Name",
-        "Status",
-        "Backtest_Optimize",
-        "Main_Strategy",
-        "BTC_Strategy",
-        "Updated_At",
-    ]
-    display_columns = [column for column in grid_columns if column in builtins.columns]
-    grid_df = builtins[display_columns].copy()
-
-    signature = int(
-        pd.util.hash_pandas_object(
-            grid_df[[column for column in ["Id", "Name", "Status"] if column in grid_df.columns]].astype(str),
-            index=False,
-        ).sum()
-    )
-    dataframe_event = st.dataframe(
-        grid_df,
-        width="content",
-        hide_index=True,
-        key=f"strategy_templates_grid_{len(grid_df)}_{signature}",
-        on_select="rerun",
-        selection_mode="single-row",
-        column_config={
-            "Id": st.column_config.TextColumn("Id"),
-            "Name": st.column_config.TextColumn("Strategy"),
-            "Status": st.column_config.TextColumn("Status"),
-            "Backtest_Optimize": st.column_config.CheckboxColumn("Optimize"),
-            "Main_Strategy": st.column_config.CheckboxColumn("Main"),
-            "BTC_Strategy": st.column_config.CheckboxColumn("BTC"),
-            "Updated_At": st.column_config.TextColumn("Updated"),
-        },
-    )
-
-    selected_rows = dataframe_event.selection.rows
-    valid_selected_rows = [
-        row_index for row_index in selected_rows if 0 <= row_index < len(grid_df)
-    ]
-    if not valid_selected_rows:
-        st.caption("Select one template row to clone it or inspect its definition.")
-        return
-
-    selected_row = builtins.iloc[valid_selected_rows[0]]
-    selected_id = str(selected_row["Id"])
-    st.markdown(f"### {selected_row.get('Name') or selected_id}")
-    description = _definition_description(selected_row.get("Definition_JSON"))
-    if description:
-        st.caption(description)
-    if st.button("Clone", icon=icons.ICON_COPY, key=f"clone_{selected_id}"):
-        clone_strategy_dialog(selected_id)
-
-    with st.expander("Definition JSON", expanded=False):
-        st.code(_json_text(selected_row.get("Definition_JSON")), language="json")
-
-
 def render_import_export(df: pd.DataFrame):
     st.subheader("Import / Export")
     uploaded = st.file_uploader("Import .bec-strategy.json", type=["json"], key="strategy_import_upload")
@@ -3187,13 +3343,94 @@ def render_import_export(df: pd.DataFrame):
 
 def render_editor(df: pd.DataFrame):
     st.subheader("My Strategies")
-    st.caption("Editable user strategies. Drafts are not eligible for live trading until approved.")
-    if st.button("New Strategy", icon=icons.ICON_ADD, type="primary", key="new_strategy_open"):
-        new_strategy_dialog()
+    st.caption("Editable strategies. Drafts are not eligible for live trading until approved.")
+    _render_pending_working_copy_notice()
     editable = df[df["Type"].fillna("builtin") == "custom"] if not df.empty else pd.DataFrame()
     if editable.empty:
-        st.info("Create a strategy from scratch, clone a built-in template, or import a package to create your first custom strategy.")
+        if st.button("New Strategy", icon=icons.ICON_ADD, type="primary", key="new_strategy_open_empty"):
+            new_strategy_dialog()
+        st.info("Create a strategy from scratch or import a package to create your first strategy.")
         return
+
+    filter_query_key = "strategy_filter_query"
+    filter_status_key = "strategy_filter_status"
+    filter_main_key = "strategy_filter_main"
+    filter_btc_key = "strategy_filter_btc"
+    query_state_key = _strategy_filter_state_key("query")
+    status_state_key = _strategy_filter_state_key("status")
+    main_state_key = _strategy_filter_state_key("main")
+    btc_state_key = _strategy_filter_state_key("btc")
+
+    status_options = sorted(
+        {
+            str(status)
+            for status in editable["Status"].fillna("").astype(str).tolist()
+            if str(status).strip()
+        }
+    )
+    persisted_status = [
+        status
+        for status in st.session_state.get(status_state_key, [])
+        if status in status_options
+    ]
+    st.session_state[status_state_key] = persisted_status
+
+    _restore_strategy_filter_widget(filter_query_key, query_state_key, "")
+    _restore_strategy_filter_widget(filter_status_key, status_state_key, [])
+    _restore_strategy_filter_widget(filter_main_key, main_state_key, False)
+    _restore_strategy_filter_widget(filter_btc_key, btc_state_key, False)
+    st.session_state[filter_status_key] = [
+        status
+        for status in st.session_state.get(filter_status_key, [])
+        if status in status_options
+    ]
+
+    with st.expander("Filters", expanded=True):
+        filter_bar = st.container(horizontal=True, vertical_alignment="bottom")
+        strategy_query = filter_bar.text_input(
+            "Strategy",
+            placeholder="Name or id",
+            key=filter_query_key,
+            on_change=_persist_strategy_filter_widget,
+            args=(filter_query_key, query_state_key),
+            width=260,
+        )
+        status_filter = filter_bar.multiselect(
+            "Status",
+            options=status_options,
+            key=filter_status_key,
+            on_change=_persist_strategy_filter_widget,
+            args=(filter_status_key, status_state_key),
+            width=400,
+        )
+        main_filter = filter_bar.checkbox(
+            "Main strategies",
+            key=filter_main_key,
+            on_change=_persist_strategy_filter_widget,
+            args=(filter_main_key, main_state_key),
+        )
+        btc_filter = filter_bar.checkbox(
+            "BTC strategies",
+            key=filter_btc_key,
+            on_change=_persist_strategy_filter_widget,
+            args=(filter_btc_key, btc_state_key),
+        )
+
+    filtered = editable.copy()
+    query = str(strategy_query or "").strip().lower()
+    if query:
+        searchable = (
+            filtered["Name"].fillna("").astype(str)
+            + " "
+            + filtered["Id"].fillna("").astype(str)
+        ).str.lower()
+        filtered = filtered[searchable.str.contains(query, regex=False)]
+    if status_filter:
+        filtered = filtered[filtered["Status"].fillna("").astype(str).isin(status_filter)]
+    if main_filter:
+        filtered = filtered[filtered["Main_Strategy"].astype(bool)]
+    if btc_filter:
+        filtered = filtered[filtered["BTC_Strategy"].astype(bool)]
 
     grid_columns = [
         "Id",
@@ -3206,11 +3443,29 @@ def render_editor(df: pd.DataFrame):
         "Created_At",
         "Updated_At",
     ]
-    display_columns = [column for column in grid_columns if column in editable.columns]
-    grid_df = editable[display_columns].copy()
+    display_columns = [column for column in grid_columns if column in filtered.columns]
+    grid_df = filtered[display_columns].copy()
+    if grid_df.empty:
+        st.info("No strategies match the selected filters.")
+        if st.button("New Strategy", icon=icons.ICON_ADD, type="primary", key="new_strategy_open_no_results"):
+            new_strategy_dialog()
+        return
     signature = int(
         pd.util.hash_pandas_object(
-            grid_df[[column for column in ["Id", "Name", "Status", "Version"] if column in grid_df.columns]].astype(str),
+            grid_df[
+                [
+                    column
+                    for column in [
+                        "Id",
+                        "Name",
+                        "Status",
+                        "Main_Strategy",
+                        "BTC_Strategy",
+                        "Version",
+                    ]
+                    if column in grid_df.columns
+                ]
+            ].astype(str),
             index=False,
         ).sum()
     )
@@ -3235,16 +3490,23 @@ def render_editor(df: pd.DataFrame):
         },
     )
 
+    if st.button("New Strategy", icon=icons.ICON_ADD, type="primary", key="new_strategy_open"):
+        new_strategy_dialog()
+
     selected_rows = dataframe_event.selection.rows
     valid_selected_rows = [
         row_index for row_index in selected_rows if 0 <= row_index < len(grid_df)
     ]
     if valid_selected_rows:
-        selected_id = str(editable.iloc[valid_selected_rows[0]]["Id"])
+        selected_id = str(filtered.iloc[valid_selected_rows[0]]["Id"])
     else:
         saved_id = str(st.session_state.get("strategy_builder_selected_id", "") or "")
-        editable_ids = set(editable["Id"].astype(str))
+        editable_ids = set(filtered["Id"].astype(str))
         selected_id = saved_id if saved_id in editable_ids else ""
+    selected_id = _redirect_to_working_copy(
+        selected_id,
+        set(filtered["Id"].astype(str)),
+    )
 
     if not selected_id:
         st.caption("Select one strategy row to edit, backtest, approve, archive or export it.")
@@ -3339,8 +3601,10 @@ def render_editor(df: pd.DataFrame):
                 definition = strategy_schema.validate_definition(edited_definition)
                 metadata = strategy_schema.parse_json_object(row.get("Metadata_JSON"), "Metadata_JSON")
                 if str(row.get("Status", "draft")) == "approved":
-                    new_id = database.create_strategy_draft_version(selected_id, definition, metadata=metadata)
-                    st.session_state["strategy_builder_selected_id"] = new_id
+                    new_id = database.get_or_create_strategy_draft_version(
+                        selected_id, definition, metadata=metadata
+                    )
+                    _select_working_copy(selected_id, new_id)
                     st.toast(f"Approved strategy was versioned into new draft: {new_id}")
                 else:
                     database.upsert_custom_strategy(
@@ -3416,10 +3680,8 @@ st.markdown("## Strategy Builder")
 st.caption("Create, clone, import, export, backtest and approve no-code strategies. Imported strategies never execute code.")
 
 df_strategies = _load_strategies()
-editor_tab, templates_tab, package_tab = st.tabs(["My Strategies", "Templates", "Import / Export"])
+editor_tab, package_tab = st.tabs(["My Strategies", "Import / Export"])
 with editor_tab:
     render_editor(df_strategies)
-with templates_tab:
-    render_templates(df_strategies)
 with package_tab:
     render_import_export(df_strategies)

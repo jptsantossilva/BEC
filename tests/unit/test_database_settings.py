@@ -1,6 +1,73 @@
 import sqlite3
 
 import bec.utils.database as database
+from bec.strategy_builder.templates import get_builtin_template
+
+
+def test_backtesting_settings_include_monte_carlo_candle_perturbation(tmp_path):
+    original_conn = getattr(database._thread_local, "conn", None)
+    test_conn = sqlite3.connect(tmp_path / "data.db", check_same_thread=False)
+
+    database._thread_local.conn = test_conn
+    try:
+        database.ensure_backtesting_settings()
+        settings = database.get_backtesting_settings()
+        assert settings["Monte_Carlo_Candle_Perturb_Min_Pct"] == 0.1
+        assert settings["Monte_Carlo_Candle_Perturb_Max_Pct"] == 0.5
+        assert settings["Backtest_Use_Full_History"] is False
+        assert settings["Backtest_Lookback_1d_Years"] == 4
+        assert settings["Backtest_Lookback_4h_Months"] == 18
+        assert settings["Backtest_Lookback_1h_Months"] == 12
+        assert settings["Backtest_Warmup_Candles"] == 200
+
+        database.update_backtesting_settings(
+            commission_value=settings["Commission_Value"],
+            cash_value=settings["Cash_Value"],
+            maximize=settings["Maximize"],
+            buy_hold_start_mode=settings["Buy_Hold_Start_Mode"],
+            optimization_max_combinations=settings["Optimization_Max_Combinations"],
+            candidate_backtest_refresh_days=settings[
+                "Candidate_Backtest_Refresh_Days"
+            ],
+            backtest_use_full_history=True,
+            backtest_lookback_1d_years=5,
+            backtest_lookback_4h_months=24,
+            backtest_lookback_1h_months=18,
+            backtest_warmup_candles=400,
+            strategy_quality_return_weight=settings[
+                "Strategy_Quality_Return_Weight"
+            ],
+            strategy_quality_risk_weight=settings["Strategy_Quality_Risk_Weight"],
+            strategy_quality_risk_adjusted_weight=settings[
+                "Strategy_Quality_Risk_Adjusted_Weight"
+            ],
+            strategy_quality_trade_quality_weight=settings[
+                "Strategy_Quality_Trade_Quality_Weight"
+            ],
+            strategy_quality_robustness_weight=settings[
+                "Strategy_Quality_Robustness_Weight"
+            ],
+            monte_carlo_candle_perturb_min_pct=0.2,
+            monte_carlo_candle_perturb_max_pct=0.8,
+        )
+
+        updated = database.get_backtesting_settings()
+        assert updated["Monte_Carlo_Candle_Perturb_Min_Pct"] == 0.2
+        assert updated["Monte_Carlo_Candle_Perturb_Max_Pct"] == 0.8
+        assert updated["Backtest_Use_Full_History"] is True
+        assert updated["Backtest_Lookback_1d_Years"] == 5
+        assert updated["Backtest_Lookback_4h_Months"] == 24
+        assert updated["Backtest_Lookback_1h_Months"] == 18
+        assert updated["Backtest_Warmup_Candles"] == 400
+    finally:
+        test_conn.close()
+        if original_conn is None:
+            try:
+                delattr(database._thread_local, "conn")
+            except AttributeError:
+                pass
+        else:
+            database._thread_local.conn = original_conn
 
 
 def test_builtin_strategy_template_seed_updates_existing_builtin_rows(tmp_path):
@@ -21,7 +88,7 @@ def test_builtin_strategy_template_seed_updates_existing_builtin_rows(tmp_path):
         row = test_conn.execute(
             "SELECT Type, Status, Definition_JSON FROM Strategies WHERE Id = 'ema_cross'"
         ).fetchone()
-        assert row[0] == "builtin"
+        assert row[0] == "custom"
         assert row[1] == "approved"
         assert '"engine":"bec_strategy_ast_v2"' in row[2]
     finally:
@@ -58,12 +125,173 @@ def test_builtin_strategy_seed_creates_weekly_btc_strategies(tmp_path):
 
         assert [row[0] for row in rows] == ["bullmarketsupportband", "wema20"]
         for row in rows:
-            assert row[1] == "builtin"
+            assert row[1] == "custom"
             assert row[2] == "approved"
             assert row[3] == 0
             assert row[4] == 0
             assert row[5] == 1
             assert '"timeframe":"1w"' in row[6]
+    finally:
+        test_conn.close()
+        if original_conn is None:
+            try:
+                delattr(database._thread_local, "conn")
+            except AttributeError:
+                pass
+        else:
+            database._thread_local.conn = original_conn
+
+
+def test_dual_momentum_simple_seed_is_available_for_main_only(tmp_path):
+    test_conn = sqlite3.connect(tmp_path / "data.db", check_same_thread=False)
+    test_conn.execute(database.sql_create_strategies_table)
+    for statement in database.sql_strategies_add_default_strategies.split(";"):
+        if statement.strip():
+            test_conn.execute(statement)
+
+    database.seed_builtin_strategy_templates(test_conn)
+
+    row = test_conn.execute(
+        """
+        SELECT Type, Status, Backtest_Optimize, Main_Strategy, BTC_Strategy,
+               Definition_JSON
+        FROM Strategies
+        WHERE Id = 'dual_momentum_simple'
+        """
+    ).fetchone()
+    assert row[:5] == ("custom", "approved", 1, 1, 0)
+    assert '"engine":"bec_strategy_ast_v2"' in row[5]
+    assert '"rules":[]' in row[5]
+    test_conn.close()
+
+
+def test_approved_strategy_reuses_working_copy_draft_version(tmp_path):
+    original_conn = getattr(database._thread_local, "conn", None)
+    test_conn = sqlite3.connect(tmp_path / "data.db", check_same_thread=False)
+    test_conn.execute(database.sql_create_strategies_table)
+    database._thread_local.conn = test_conn
+
+    source_id = "approved_strategy"
+    first_definition = get_builtin_template("dual_momentum_simple")
+    second_definition = get_builtin_template("dual_momentum_simple")
+    second_definition["description"] = "Updated working copy"
+
+    try:
+        database.upsert_custom_strategy(
+            strategy_id=source_id,
+            name="Approved Strategy",
+            definition=first_definition,
+            status="approved",
+        )
+
+        first_draft_id = database.get_or_create_strategy_draft_version(
+            source_id,
+            first_definition,
+        )
+        second_draft_id = database.get_or_create_strategy_draft_version(
+            source_id,
+            second_definition,
+        )
+
+        assert second_draft_id == first_draft_id
+        rows = test_conn.execute(
+            """
+            SELECT Id, Status, Parent_Strategy_Id, Version, Definition_JSON
+            FROM Strategies
+            WHERE Parent_Strategy_Id = ? AND Version = 2
+            """,
+            (source_id,),
+        ).fetchall()
+        assert len(rows) == 1
+        assert rows[0][0] == first_draft_id
+        assert rows[0][1:4] == ("draft", source_id, 2)
+        assert "Updated working copy" in rows[0][4]
+
+        database.approve_strategy_for_live(first_draft_id)
+        third_draft_id = database.get_or_create_strategy_draft_version(
+            first_draft_id,
+            second_definition,
+        )
+        third_draft = database.get_strategy_by_id(third_draft_id).iloc[0]
+        assert third_draft_id == f"{source_id}_v3"
+        assert third_draft["Name"] == "Approved Strategy v3"
+        assert third_draft["Parent_Strategy_Id"] == source_id
+        assert third_draft["Version"] == 3
+    finally:
+        test_conn.close()
+        if original_conn is None:
+            try:
+                delattr(database._thread_local, "conn")
+            except AttributeError:
+                pass
+        else:
+            database._thread_local.conn = original_conn
+
+
+def test_symbols_by_market_phase_migration_adds_roc_columns(tmp_path):
+    test_conn = sqlite3.connect(tmp_path / "data.db", check_same_thread=False)
+    test_conn.execute(
+        """
+        CREATE TABLE Symbols_By_Market_Phase (
+            Id INTEGER PRIMARY KEY,
+            Symbol TEXT,
+            Rank INTEGER
+        )
+        """
+    )
+    test_conn.execute(
+        """
+        CREATE TABLE Symbols_By_Market_Phase_Historical (
+            Id INTEGER PRIMARY KEY,
+            Symbol TEXT,
+            Rank INTEGER,
+            Date_Inserted TEXT
+        )
+        """
+    )
+
+    database._ensure_symbols_by_market_phase_columns(test_conn)
+
+    for table_name in (
+        "Symbols_By_Market_Phase",
+        "Symbols_By_Market_Phase_Historical",
+    ):
+        columns = {
+            row[1] for row in test_conn.execute(f"PRAGMA table_info({table_name})")
+        }
+        assert {"ROC_30", "ROC_60"}.issubset(columns)
+
+    test_conn.close()
+
+
+def test_symbols_by_market_phase_persists_roc_columns_to_history(tmp_path):
+    original_conn = getattr(database._thread_local, "conn", None)
+    test_conn = sqlite3.connect(tmp_path / "data.db", check_same_thread=False)
+    test_conn.execute(database.sql_create_symbols_by_market_phase_table)
+    test_conn.execute(database.sql_create_symbols_by_market_phase_historical_table)
+    database._thread_local.conn = test_conn
+
+    try:
+        database.insert_symbols_by_market_phase(
+            "TESTUSDC",
+            10.0,
+            9.0,
+            8.0,
+            "bullish",
+            11.0,
+            25.0,
+            0.30,
+            0.60,
+            1,
+        )
+        database.insert_symbols_by_market_phase_historical("2026-06-01")
+
+        assert test_conn.execute(
+            "SELECT ROC_30, ROC_60 FROM Symbols_By_Market_Phase"
+        ).fetchone() == (0.30, 0.60)
+        assert test_conn.execute(
+            "SELECT ROC_30, ROC_60 FROM Symbols_By_Market_Phase_Historical"
+        ).fetchone() == (0.30, 0.60)
     finally:
         test_conn.close()
         if original_conn is None:

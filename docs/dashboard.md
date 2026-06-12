@@ -49,6 +49,14 @@ BEC uses the latest daily price, 50-day simple moving average, and 200-day simpl
 
 Only `accumulation` and `bullish` symbols become top performer candidates for trading. The final ranking favors symbols trading furthest above their 200-day moving average, and the Telegram report summarizes the selected top performers.
 
+## Market Analysis
+
+Use **Market Analysis > Dashboard** to review consolidated bull and bear market indicator summaries.
+
+Use **Market Analysis > BTC Supply Profit/Loss** to inspect the detailed Bitcoin Percentage of Supply in Profit and Loss chart.
+
+For details about market analysis indicators, data sources, scheduled updates, and safety boundaries, see [Market Analysis](/market-analysis).
+
 ## Trading > Balances
 
 Use **Balances** to review daily balance snapshots and asset balances. This page helps confirm whether Binance balances match the bot's internal view.

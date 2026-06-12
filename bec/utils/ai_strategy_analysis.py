@@ -43,8 +43,7 @@ Important:
 - Take-profits may create multiple partial exits from the same original position when enabled.
 - Exit_Reason describes why each partial or full exit happened.
 - Hard_Stop_Loss, ATR_Stop_Loss and Active_Stop_Loss are snapshots at exit time.
-- config.strategy_parameters contains the actual indicator parameters used in the backtest when available, including EMA fast/slow periods, SMA market phase filters, and any higher-timeframe market phase filter.
-- config.backtesting.use_intraday_current_timeframe_market_phase_filter controls whether 1h/4h backtests also require the current timeframe market phase filter, or only the higher-timeframe 1d market phase filter.
+- config.strategy_parameters contains the actual indicator parameters used in the backtest when available. Strategy rules and filters are defined by the strategy definition, not by global Market Phase settings.
 - Buy & Hold Return [%] is normalized by BEC to use the full dataset period, from the first candle to the last candle, so it is comparable across strategies using the same symbol/timeframe/date range.
 """.strip()
 
@@ -291,33 +290,10 @@ def _get_result_indicator_params(row, symbol, timeframe, strategy_id):
     except Exception:
         pass
 
-    if str(strategy_id) in {"market_phases", "ema_cross", "ema_cross_with_market_phases"}:
-        settings = database.get_backtesting_settings()
-        current_timeframe = str(timeframe).lower()
-        if current_timeframe not in {"1h", "4h", "1d"}:
-            current_timeframe = "1d"
-        current_prefix = f"Market_Phase_{current_timeframe}_SMA"
-        daily_prefix = "Market_Phase_1d_SMA"
-        params["market_phase_filter"] = {
-            "enabled": str(strategy_id) in {"market_phases", "ema_cross_with_market_phases"},
-            "timeframe": current_timeframe,
-            "sma_fast": int(settings.get(f"{current_prefix}_Fast", 50)),
-            "sma_slow": int(settings.get(f"{current_prefix}_Slow", 200)),
-        }
-        if str(strategy_id) in {"ema_cross", "ema_cross_with_market_phases"} and str(timeframe) != "1d":
-            params["higher_timeframe_market_phase_filter"] = {
-                "enabled": True,
-                "timeframe": "1d",
-                "sma_fast": int(settings.get(f"{daily_prefix}_Fast", 50)),
-                "sma_slow": int(settings.get(f"{daily_prefix}_Slow", 200)),
-                "alignment": "previous_closed_candle",
-            }
-
     if params:
         params["note"] = (
-            "ema_cross and ema_cross_with_market_phases use EMA crossovers. "
-            "ema_cross uses the higher-timeframe SMA market phase filter in intraday backtests. "
-            "market_phases uses the SMA market phase filter only."
+            "Fallback parameters were inferred from the saved backtest row. "
+            "Use config.strategy_definition for the authoritative strategy rules."
         )
 
     return params

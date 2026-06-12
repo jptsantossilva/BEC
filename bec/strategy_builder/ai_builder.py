@@ -27,11 +27,14 @@ Rules:
 - Use timeframe "current" when a rule should run on the selected backtest/live timeframe.
 - Use only Market Order actions.
 - Use only Buy for entry and Sell for exit.
-- Use only these indicators: SMA, EMA, WMA, HMA, DEMA, RMA, RSI, MACD, STOCH, ATR, BB, OBV, VWAP, LINREG.
+- Use only these indicators: SMA, EMA, WMA, HMA, DEMA, RMA, RSI, ROC, MACD, STOCH, ATR, BB, OBV, VWAP, LINREG.
 - Use only these price fields: Open, High, Low, Close, Volume.
 - Use only these comparison operators: above, below, greater_than, less_than, greater_than_or_equal, less_than_or_equal, between, crosses_above, crosses_below.
 - Use window_condition only for: for_n_bars, within_n_bars, wait_n_bars.
-- Use transform operands only for: lookback, highest_high, lowest_low.
+- Use transform operands only for: lookback, highest_high, lowest_low, rolling_mean.
+- To compare current close with the previous N-period high, use highest_high over a lookback(1) price High source so the current candle is excluded.
+- To compare an indicator or Volume with its M-period average, use rolling_mean over the same source.
+- To sell on a failed breakout at the original breakout level, store that level in Definition_JSON.state.entry, then compare Close with an entry_state operand of the same name in exit.conditions.
 - Use risk.rules for take_profit_pct, stop_loss_pct, take_profit_indicator, stop_loss_indicator, atr_stop, trailing_indicator, take_profit_r_multiple.
 - For stop_loss_pct and take_profit_pct, pct must be a JSON number such as 10, never a string such as "10%".
 - For size_pct, multiplier, r_multiple, and activation_pnl_pct, use JSON numbers only.

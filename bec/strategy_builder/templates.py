@@ -9,19 +9,20 @@ BUILTIN_TEMPLATE_IDS = {
     "ema_cross",
     "ema_cross_with_market_phases",
     "market_phases",
+    "dual_momentum_simple",
     "hma_rsi_linreg",
     "bullmarketsupportband",
     "wema20",
 }
 
 
-def _constraints():
+def _constraints(allowed_timeframes=None):
     return {
         "market": "spot",
         "side": "long",
         "order_type": "market",
         "allowed_actions": ["buy", "sell"],
-        "allowed_timeframes": ["15m", "1h", "4h", "1d", "1w"],
+        "allowed_timeframes": allowed_timeframes or ["15m", "1h", "4h", "1d", "1w"],
     }
 
 
@@ -59,13 +60,14 @@ def _definition(
     exit_conditions,
     risk_rules=None,
     parameter_constraints=None,
+    allowed_timeframes=None,
 ):
     return {
         "schema_version": SCHEMA_VERSION,
         "engine": ENGINE,
         "name": name,
         "description": description,
-        "constraints": _constraints(),
+        "constraints": _constraints(allowed_timeframes),
         "parameters": parameters,
         "parameter_constraints": parameter_constraints or [],
         "entry": {
@@ -147,6 +149,38 @@ BUILTIN_TEMPLATES = {
             _rule(_price("Close"), "below", _indicator("SMA", {"period": 50}, period_param="sma_fast")),
             _rule(_price("Close"), "below", _indicator("SMA", {"period": 200}, period_param="sma_slow")),
         ],
+    ),
+    "dual_momentum_simple": _definition(
+        "Dual Momentum Simple",
+        "Buy when the current and daily timeframes are bullish and have positive momentum. "
+        "Sell when either timeframe loses its bullish phase or positive momentum.",
+        {
+            "momentum_window": {
+                "type": "int",
+                "default": 60,
+                "min": 30,
+                "max": 60,
+                "step": 30,
+                "optimizable": True,
+            },
+        },
+        [
+            _rule(_price("Close"), "above", _indicator("SMA", {"period": 50})),
+            _rule(_indicator("SMA", {"period": 50}), "above", _indicator("SMA", {"period": 200})),
+            _rule(_indicator("ROC", {"period": 60}, period_param="momentum_window"), "above", _value(0)),
+            _rule(_price("Close", timeframe="1d"), "above", _indicator("SMA", {"period": 50}, timeframe="1d")),
+            _rule(_indicator("SMA", {"period": 50}, timeframe="1d"), "above", _indicator("SMA", {"period": 200}, timeframe="1d")),
+            _rule(_indicator("ROC", {"period": 60}, timeframe="1d", period_param="momentum_window"), "above", _value(0)),
+        ],
+        [
+            _rule(_price("Close"), "less_than_or_equal", _indicator("SMA", {"period": 50})),
+            _rule(_indicator("SMA", {"period": 50}), "less_than_or_equal", _indicator("SMA", {"period": 200})),
+            _rule(_indicator("ROC", {"period": 60}, period_param="momentum_window"), "less_than_or_equal", _value(0)),
+            _rule(_price("Close", timeframe="1d"), "less_than_or_equal", _indicator("SMA", {"period": 50}, timeframe="1d")),
+            _rule(_indicator("SMA", {"period": 50}, timeframe="1d"), "less_than_or_equal", _indicator("SMA", {"period": 200}, timeframe="1d")),
+            _rule(_indicator("ROC", {"period": 60}, timeframe="1d", period_param="momentum_window"), "less_than_or_equal", _value(0)),
+        ],
+        allowed_timeframes=["1h", "4h", "1d"],
     ),
     "hma_rsi_linreg": _definition(
         "HMA RSI LINREG",

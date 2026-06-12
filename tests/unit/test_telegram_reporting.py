@@ -3,6 +3,7 @@ import json
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
 import bec.add_symbol as add_symbol
 import bec.exchanges.binance as binance
@@ -64,6 +65,53 @@ def test_main_get_data_accepts_weekly_timeframe(monkeypatch):
 
     assert not df.empty
     assert calls[0]["interval"] == "1w"
+
+
+def test_backtesting_get_data_uses_configured_limited_start_date(monkeypatch):
+    import bec.my_backtesting as my_backtesting
+
+    calls = []
+    start_date = datetime(2025, 1, 1, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(
+        my_backtesting,
+        "_limited_backtest_start_date",
+        lambda timeframe: start_date,
+    )
+    monkeypatch.setattr(
+        my_backtesting.binance,
+        "get_ohlcv",
+        lambda **kwargs: calls.append(kwargs) or _market_data(rows=3),
+    )
+
+    df = my_backtesting.get_data("JSTBTC", "1h")
+
+    assert not df.empty
+    assert calls[0]["symbol"] == "JSTBTC"
+    assert calls[0]["interval"] == "1h"
+    assert calls[0]["start_date"] == start_date
+
+
+def test_backtesting_full_history_omits_start_date(monkeypatch):
+    import bec.my_backtesting as my_backtesting
+
+    calls = []
+
+    monkeypatch.setattr(
+        my_backtesting,
+        "_limited_backtest_start_date",
+        lambda timeframe: None,
+    )
+    monkeypatch.setattr(
+        my_backtesting.binance,
+        "get_ohlcv",
+        lambda **kwargs: calls.append(kwargs) or _market_data(rows=3),
+    )
+
+    df = my_backtesting.get_data("JSTBTC", "1h")
+
+    assert not df.empty
+    assert "start_date" not in calls[0]
 
 
 def test_auto_switch_signal_timeframe_prefers_largest_fixed_timeframe(monkeypatch):
@@ -893,7 +941,13 @@ def test_market_phase_report_is_compact_and_limits_top_performers():
     )
     df_top = pd.DataFrame(
         [
-            {"Symbol": f"S{i}USDC", "Market_Phase": "bullish", "Perc_Above_DSMA200": 20 - i}
+            {
+                "Symbol": f"S{i}USDC",
+                "Market_Phase": "bullish",
+                "Perc_Above_DSMA200": 20 - i,
+                "ROC_30": 0.10,
+                "ROC_60": 0.20,
+            }
             for i in range(1, 8)
         ]
     )
@@ -923,6 +977,8 @@ def test_market_phase_report_is_compact_and_limits_top_performers():
     assert "Approved: 5" in msg
     assert "Rejected: 13" in msg
     assert "5. S5USDC" in msg
+    assert "ROC30 +10.00%" in msg
+    assert "ROC60 +20.00%" in msg
     assert "S6USDC" not in msg
     assert "TradingView list attached." not in msg
 
@@ -1445,6 +1501,8 @@ def test_market_phase_removes_inactive_pending_position_strategies(monkeypatch):
                 "Market_Phase": "bullish",
                 "Perc_Above_DSMA50": 10.0,
                 "Perc_Above_DSMA200": 20.0,
+                "ROC_30": 0.3,
+                "ROC_60": 0.6,
             }
         ]
     )
@@ -1529,3 +1587,47 @@ def test_market_phase_skips_symbols_without_enough_closed_candles(monkeypatch):
     assert result.empty
     assert warning_stats["warnings"] == 0
     assert errors == []
+
+
+def test_market_phase_uses_configured_candle_lookback(monkeypatch):
+    import bec.symbol_by_market_phase as market_phase
+
+    calls = []
+    history = pd.DataFrame(
+        {
+            "Symbol": ["AAAUSDC"] * 220,
+            "Price": [float(value) for value in range(1, 221)],
+        },
+        index=pd.date_range("2026-01-01", periods=220, freq="d"),
+    )
+    now_utc = datetime(2026, 6, 7, tzinfo=timezone.utc)
+
+    def fake_get_close_df(**kwargs):
+        calls.append(kwargs)
+        return history
+
+    monkeypatch.setattr(
+        market_phase,
+        "_market_phase_start_date",
+        lambda timeframe: now_utc - timedelta(days=market_phase.MARKET_PHASE_LOOKBACK_CANDLES),
+    )
+    monkeypatch.setattr(market_phase.binance, "get_close_df", fake_get_close_df)
+
+    result = market_phase.set_market_phases_to_symbols(["AAAUSDC"], "1d")
+
+    assert calls[0]["start_date"] == now_utc - timedelta(
+        days=market_phase.MARKET_PHASE_LOOKBACK_CANDLES
+    )
+    assert result.iloc[0]["Symbol"] == "AAAUSDC"
+    assert result.iloc[0]["Market_Phase"] == "bullish"
+
+
+def test_market_phase_technicals_include_daily_roc_columns():
+    import bec.symbol_by_market_phase as market_phase
+
+    df = pd.DataFrame({"Price": [float(value) for value in range(1, 202)]})
+
+    market_phase.apply_technicals(df)
+
+    assert df["ROC_30"].iloc[-1] == pytest.approx((201 / 171) - 1)
+    assert df["ROC_60"].iloc[-1] == pytest.approx((201 / 141) - 1)

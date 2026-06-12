@@ -133,10 +133,31 @@ def _validate_ast_operand(operand, path: str):
         if not name:
             raise StrategyValidationError(f"{path}.name is required.")
         return
+    if operand_type == "entry_state":
+        name = str(operand.get("name", "")).strip()
+        if not name:
+            raise StrategyValidationError(f"{path}.name is required.")
+        return
     if operand_type == "transform":
         _validate_transform_operand(operand, path)
         return
     raise StrategyValidationError(f"{path}.type has unsupported operand type '{operand_type}'.")
+
+
+def _validate_entry_state(definition: dict):
+    state = definition.get("state", {})
+    if state in (None, ""):
+        return
+    state = _ensure_object(state, "state")
+    entry = state.get("entry", {})
+    if entry in (None, ""):
+        return
+    entry = _ensure_object(entry, "state.entry")
+    for name, operand in entry.items():
+        state_name = str(name).strip()
+        if not state_name:
+            raise StrategyValidationError("state.entry names must not be empty.")
+        _validate_ast_operand(operand, f"state.entry.{state_name}")
 
 
 def _validate_comparison_condition(condition: dict, path: str):
@@ -372,6 +393,7 @@ def validate_ast_definition(definition) -> dict:
     _validate_action(definition.get("entry", {}).get("action"), "entry.action", "buy")
     _validate_ast_group(definition.get("exit"), "exit", allow_empty=True)
     _validate_action(definition.get("exit", {}).get("action"), "exit.action", "sell")
+    _validate_entry_state(definition)
     risk = _ensure_object(definition.get("risk", {"rules": []}), "risk")
     rules = risk.get("rules", [])
     if not isinstance(rules, list):
