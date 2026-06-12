@@ -115,7 +115,7 @@ def test_supply_profit_loss_summary_ignores_zero_extreme_top_setting(monkeypatch
 
 def test_supply_profit_loss_bottom_summary_uses_loss_above_profit(monkeypatch):
     _use_memory_db(monkeypatch)
-    database.set_setting("onchain_supply_profit_loss_cross_tolerance", 1.0)
+    database.set_setting("onchain_supply_profit_loss_cross_tolerance", 0.0)
     spl.save_cached_supply_profit_loss(_sample_rows([50.5]))
 
     row = summary.summarize_btc_supply_profit_loss()[1]

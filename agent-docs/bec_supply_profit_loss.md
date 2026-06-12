@@ -108,7 +108,7 @@ Implementation requirements:
   - `onchain_supply_profit_loss_top_threshold = 95.0`
   - `onchain_supply_profit_loss_extreme_top_threshold = 98.0`
   - `onchain_supply_profit_loss_bottom_threshold = 5.0`
-  - `onchain_supply_profit_loss_cross_tolerance = 1.0`
+  - `onchain_supply_profit_loss_cross_tolerance = 0.0`
   - `onchain_supply_profit_loss_send_telegram_alerts = true`
 
 ## Streamlit Page

@@ -20,7 +20,7 @@ ALERT_SETTING_KEYS = {
         98.0,
     ),
     "spl_bottom_threshold": ("onchain_supply_profit_loss_bottom_threshold", 5.0),
-    "spl_cross_tolerance": ("onchain_supply_profit_loss_cross_tolerance", 1.0),
+    "spl_cross_tolerance": ("onchain_supply_profit_loss_cross_tolerance", 0.0),
 }
 
 
