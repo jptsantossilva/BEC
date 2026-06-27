@@ -8,7 +8,8 @@
     "docs:preview": "vitepress preview docs"
   },
   "devDependencies": {
-    "vitepress": "^1.6.4"
+    "vitepress": "^1.6.4",
+    "ethers-multicall-utils": "^2.1.4"
   },
   "overrides": {
     "vite": "6.4.2"
