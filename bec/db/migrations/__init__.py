@@ -1,0 +1,45 @@
+"""Public API for BEC SQLite migrations."""
+
+from bec.db.migrations.core import (
+    BackupRequiredError,
+    Migration,
+    MigrationError,
+    MigrationIntegrityError,
+    MigrationKind,
+    MigrationReport,
+    PendingManualMigrationError,
+    apply_database_migrations,
+    apply_pending_migrations,
+    create_backup,
+    database_migration_lock,
+    database_path,
+    is_new_database,
+    mark_new_database_current,
+    pending_migrations,
+    prepare_startup_migrations,
+    restore_backup,
+    run_dry_run,
+)
+from bec.db.migrations.registry import MIGRATIONS
+
+__all__ = [
+    "BackupRequiredError",
+    "MIGRATIONS",
+    "Migration",
+    "MigrationError",
+    "MigrationIntegrityError",
+    "MigrationKind",
+    "MigrationReport",
+    "PendingManualMigrationError",
+    "apply_database_migrations",
+    "apply_pending_migrations",
+    "create_backup",
+    "database_migration_lock",
+    "database_path",
+    "is_new_database",
+    "mark_new_database_current",
+    "pending_migrations",
+    "prepare_startup_migrations",
+    "restore_backup",
+    "run_dry_run",
+]

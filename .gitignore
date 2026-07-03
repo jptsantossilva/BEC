@@ -6,6 +6,7 @@ data.db
 *.db
 *.sqlite
 *.sqlite3
+*.migration.lock
 persist/
 config_old.yaml
 config_backup_*.yaml

@@ -4634,22 +4634,10 @@ def create_tables():
             "CREATE INDEX IF NOT EXISTS idx_auto_switch_signals_target ON Auto_Switch_Signals(strategy_id, symbol, signal_timeframe, candle_id)"
         )
 
-        # --------
-        # apply database scripts updates
-        # check changelog version
-        version_changelog = general.extract_date_from_local_changelog()
-        # Remove "-" characters
-        version_changelog = int(version_changelog.replace("-", ""))
-        # check changelog version
-        version_db = get_pragma_user_version()
-        # if database is new then ignore the updates
-        if (version_db > 0) and (version_db != version_changelog):
-            apply_database_scripts_updates()
-        # --------
-
-        # update version on db
-        # commented because the db user version must be in the end of database script to make sure everything was ok with the script
-        # set_pragma_user_version(version=version_changelog)
+        # Versioned migrations are handled by ``bec.db.migrations`` before this
+        # compatibility initializer runs. Legacy dated SQL scripts remain in the
+        # repository for audit purposes but are no longer renamed or executed at
+        # application startup.
 
 
 def _ensure_backtesting_results_columns(connection):
@@ -6469,7 +6457,26 @@ def is_backtest_approved(timeframe: str, stats_row):
 
 # --- Module initialization ---
 conn = connect()  # open global connection
-create_tables()  # create/update schema
+
+from bec.db.migrations import (  # noqa: E402
+    MIGRATIONS,
+    database_migration_lock as _database_migration_lock,
+    database_path as _migration_database_path,
+    is_new_database as _is_new_database,
+    mark_new_database_current as _mark_new_database_current,
+    prepare_startup_migrations as _prepare_startup_migrations,
+)
+
+with _database_migration_lock(_migration_database_path(conn)):
+    _database_is_new = _is_new_database(conn)
+    _prepare_startup_migrations(
+        conn,
+        MIGRATIONS,
+        new_database=_database_is_new,
+    )
+    create_tables()  # create/update schema
+    if _database_is_new:
+        _mark_new_database_current(conn, MIGRATIONS)
 migrate_config_to_db()  # migrate config.yaml to the DB (uses _get_conn internally)
 ensure_job_schedules()  # seed default schedules
 ensure_backtesting_jobs()  # create backtesting job queue

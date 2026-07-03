@@ -7,6 +7,8 @@ All notable changes to this project will be documented in this file.
 - Exchanges - Routed trading, signals, market-phase ranking, backtesting, market indicators, balances, and dashboard trading actions through an exchange-neutral compatibility service while preserving existing Binance behavior.
 - Exchanges - Restricted direct `python-binance` imports to the native Binance adapter and added architecture and adapter contract tests to enforce the boundary.
 - Trading Settings - Fixed dashboard startup for databases without the obsolete global `take_profit_enabled` setting; take-profit activation continues to be resolved from each strategy's risk configuration.
+- Database - Added an ordered, checksummed SQLite migration framework with transactional execution, integrity and foreign-key validation, row-count reports, and idempotent migration tracking.
+- Database - Added migration dry-run on a temporary SQLite copy, mandatory backups for manual apply, backup checksums/restoration, and startup blocking for pending table rebuilds.
 
 ## [2026-06-12]
 - Market Analysis - Added a generic Market Indicators dashboard for bull and bear market signals, with separate Top Signals and Bottom Signals tables.
