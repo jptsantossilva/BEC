@@ -1,7 +1,34 @@
 import sqlite3
 
+import bec.utils.config as config
 import bec.utils.database as database
 from bec.strategy_builder.templates import get_builtin_template
+
+
+def test_app_settings_load_without_legacy_take_profit_enabled():
+    original_conn = getattr(database._thread_local, "conn", None)
+    test_conn = sqlite3.connect(":memory:", check_same_thread=False)
+    test_conn.execute(database.sql_create_settings_table)
+    test_conn.execute(database.sql_create_strategies_table)
+    database._thread_local.conn = test_conn
+    config._invalidate_settings_cache()
+
+    try:
+        settings = config.load_settings(refresh=True)
+
+        assert settings.trade_against == "USDC"
+        assert not hasattr(settings, "take_profit_enabled")
+        assert database.setting_exists("take_profit_enabled") is False
+    finally:
+        config._invalidate_settings_cache()
+        test_conn.close()
+        if original_conn is None:
+            try:
+                delattr(database._thread_local, "conn")
+            except AttributeError:
+                pass
+        else:
+            database._thread_local.conn = original_conn
 
 
 def test_backtesting_settings_include_monte_carlo_candle_perturbation(tmp_path):
