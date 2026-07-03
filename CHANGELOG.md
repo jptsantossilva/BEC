@@ -2,6 +2,12 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-07-03]
+- Exchanges - Added the canonical `ExchangeAdapter` contract, normalized market, balance, ticker, order book, order, fill, validation, and health types, and a native `BinanceAdapter` implementation.
+- Exchanges - Routed trading, signals, market-phase ranking, backtesting, market indicators, balances, and dashboard trading actions through an exchange-neutral compatibility service while preserving existing Binance behavior.
+- Exchanges - Restricted direct `python-binance` imports to the native Binance adapter and added architecture and adapter contract tests to enforce the boundary.
+- Trading Settings - Fixed dashboard startup for databases without the obsolete global `take_profit_enabled` setting; take-profit activation continues to be resolved from each strategy's risk configuration.
+
 ## [2026-06-12]
 - Market Analysis - Added a generic Market Indicators dashboard for bull and bear market signals, with separate Top Signals and Bottom Signals tables.
 - Market Analysis - Added the BTC Supply Profit/Loss indicator page with BTC price, Supply in Profit, Supply in Loss, event markers, compact descriptions, and configurable signal thresholds.
