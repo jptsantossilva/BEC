@@ -71,6 +71,8 @@ pins unless the dependency workflow is being updated deliberately.
   fixtures are controlled.
 
 ## Task-Specific Docs
+- Use `agent-docs/bec-multi-exchange-migration-plan.md` for the approved,
+  gated multi-exchange migration sequence and PR completion criteria.
 - Use `agent-docs/plans.md` for large tasks, multi-step refactors, and
   architecture-impacting changes.
 - Use `agent-docs/add-tests.md` when adding tests or improving coverage for
