@@ -3622,18 +3622,34 @@ sql_add_balances = """
 
 
 def _ensure_balances_unique_index(connection):
-    connection.execute("""
-        DELETE FROM Balances
-        WHERE Id NOT IN (
-            SELECT MAX(Id)
-            FROM Balances
-            GROUP BY Date, Asset
-        );
-        """)
-    connection.execute("""
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_balances_date_asset
-        ON Balances(Date, Asset);
-        """)
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(Balances)")}
+    if "Exchange_Id" in columns:
+        connection.execute("DROP INDEX IF EXISTS idx_balances_date_asset")
+        connection.execute("""
+            DELETE FROM Balances
+            WHERE Id NOT IN (
+                SELECT MAX(Id)
+                FROM Balances
+                GROUP BY Exchange_Id, Date, Asset
+            );
+            """)
+        connection.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_balances_exchange_date_asset
+            ON Balances(Exchange_Id, Date, Asset);
+            """)
+    else:
+        connection.execute("""
+            DELETE FROM Balances
+            WHERE Id NOT IN (
+                SELECT MAX(Id)
+                FROM Balances
+                GROUP BY Date, Asset
+            );
+            """)
+        connection.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_balances_date_asset
+            ON Balances(Date, Asset);
+            """)
 
 
 def add_balances(balances: pd.DataFrame):
@@ -4573,7 +4589,7 @@ def migrate_config_to_db():
 
 
 # create tables
-def create_tables():
+def create_tables(*, new_database: bool = False):
     connection = _get_conn()
     with connection:
 
@@ -4676,6 +4692,13 @@ def create_tables():
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_auto_switch_signals_target ON Auto_Switch_Signals(strategy_id, symbol, signal_timeframe, candle_id)"
+        )
+
+        from bec.db.exchange_schema import apply_exchange_aware_schema
+
+        apply_exchange_aware_schema(
+            connection,
+            upgraded_install=not new_database,
         )
 
         # Versioned migrations are handled by ``bec.db.migrations`` before this
@@ -5196,6 +5219,20 @@ def ensure_job_schedules():
                     "UPDATE Job_Schedules SET script = ?, description = ? WHERE name = ?",
                     (script, description, name),
                 )
+        has_active_exchange = connection.execute(
+            "SELECT 1 FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1"
+        ).fetchone()
+        if has_active_exchange is None:
+            connection.execute(
+                """
+                UPDATE Job_Schedules
+                SET enabled=0
+                WHERE name IN (
+                    'main_1h', 'main_4h', 'main_1d',
+                    'symbol_by_market_phase_1d', 'super_rsi_15m'
+                )
+                """
+            )
 
 
 def ensure_backtesting_jobs():
@@ -6518,7 +6555,7 @@ with _database_migration_lock(_migration_database_path(conn)):
         MIGRATIONS,
         new_database=_database_is_new,
     )
-    create_tables()  # create/update schema
+    create_tables(new_database=_database_is_new)  # create/update schema
     if _database_is_new:
         _mark_new_database_current(conn, MIGRATIONS)
 migrate_config_to_db()  # migrate config.yaml to the DB (uses _get_conn internally)

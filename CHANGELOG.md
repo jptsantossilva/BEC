@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 - Database - Added an ordered, checksummed SQLite migration framework with transactional execution, integrity and foreign-key validation, row-count reports, and idempotent migration tracking.
 - Database - Added migration dry-run on a temporary SQLite copy, mandatory backups for manual apply, backup checksums/restoration, and startup blocking for pending table rebuilds.
 - Database - Prevented position cleanup from leaving orphaned `Locked_Values`; released locks are removed transactionally and positions with active locks cannot be deleted.
+- Database - Added the manual exchange-aware schema migration, Binance legacy backfill, normalized symbol metadata, exchange-aware uniqueness, order execution fields, unresolved-symbol reporting, and safe no-default behavior for new installations.
 
 ## [2026-06-12]
 - Market Analysis - Added a generic Market Indicators dashboard for bull and bear market signals, with separate Top Signals and Bottom Signals tables.

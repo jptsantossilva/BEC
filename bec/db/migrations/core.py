@@ -86,6 +86,7 @@ class MigrationReport:
     backup_sha256: str = ""
     integrity_check: str = ""
     foreign_key_violations: int = 0
+    unresolved_legacy_symbols: list[str] = field(default_factory=list)
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=2, sort_keys=True)
@@ -257,6 +258,15 @@ def validate_database(connection: sqlite3.Connection) -> tuple[str, int]:
             f"SQLite foreign_key_check found {len(foreign_key_rows)} violation(s)"
         )
     return integrity, len(foreign_key_rows)
+
+
+def collect_unresolved_legacy_symbols(connection: sqlite3.Connection) -> list[str]:
+    try:
+        from bec.db.exchange_schema import unresolved_legacy_symbols
+
+        return unresolved_legacy_symbols(connection)
+    except sqlite3.OperationalError:
+        return []
 
 
 def table_row_counts(connection: sqlite3.Connection) -> dict[str, int]:
@@ -540,6 +550,9 @@ def run_dry_run(
             report.integrity_check, report.foreign_key_violations = validate_database(
                 connection
             )
+            report.unresolved_legacy_symbols = collect_unresolved_legacy_symbols(
+                connection
+            )
 
     report.source_sha256_after = sha256_file(source)
     if report.source_sha256_after != source_hash_before:
@@ -586,6 +599,7 @@ def _apply_database_migrations_unlocked(
         report.integrity_check, report.foreign_key_violations = validate_database(
             connection
         )
+        report.unresolved_legacy_symbols = collect_unresolved_legacy_symbols(connection)
 
     report.source_sha256_after = sha256_file(source)
     report.finished_at = utc_now()

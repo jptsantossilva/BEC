@@ -456,7 +456,10 @@ def test_cli_dry_run_and_backup_apply(tmp_path, capsys):
     assert migration_cli(["--database", str(database), "--dry-run"]) == 0
     dry_run_report = loads(capsys.readouterr().out)
     assert dry_run_report["mode"] == "dry-run"
-    assert dry_run_report["applied"] == ["1:migration_framework_baseline"]
+    assert dry_run_report["applied"] == [
+        "1:migration_framework_baseline",
+        "2:exchange_aware_schema",
+    ]
 
     assert migration_cli(["--database", str(database), "--apply"]) == 2
     assert "requires --backup" in capsys.readouterr().err

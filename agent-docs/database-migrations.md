@@ -42,6 +42,26 @@ The apply command refuses pending work without `--backup`. It creates a
 timestamped SQLite backup beside the source database and reports its SHA-256
 checksum. Keep that backup until the deployment and application checks pass.
 
+## Exchange-Aware Schema Migration (Version 2)
+
+Migration `2:exchange_aware_schema` is a manual `rebuild` migration. It adds
+the `Exchanges` and `Exchange_Symbols` metadata tables, backfills legacy rows
+as Binance, adds normalized symbol and execution fields, and replaces legacy
+symbol-only uniqueness with exchange-aware constraints.
+
+For an upgraded database, Binance remains enabled and default so existing
+behavior is preserved. A fresh database contains Binance metadata only; it has
+no enabled/default exchange and exchange-dependent schedules are disabled.
+
+The migration report lists symbols that could not be normalized in
+`unresolved_legacy_symbols`. Their `Exchange_Symbols` records have
+`Is_Tradable=0` and require manual review.
+
+Do not deploy this application build over an unmigrated production database.
+Startup intentionally blocks on this rebuild. Validate a current production
+copy and review its unresolved symbols and row counts before applying during a
+write-free maintenance window.
+
 ## Rollback
 
 Migration steps run in explicit SQLite transactions. A failed step rolls back

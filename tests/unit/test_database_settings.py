@@ -4,6 +4,7 @@ import pytest
 
 import bec.utils.config as config
 import bec.utils.database as database
+from bec.db.exchange_schema import create_exchange_metadata
 from bec.strategy_builder.templates import get_builtin_template
 
 
@@ -88,6 +89,43 @@ def test_backtesting_settings_include_monte_carlo_candle_perturbation(tmp_path):
         assert updated["Backtest_Lookback_4h_Months"] == 24
         assert updated["Backtest_Lookback_1h_Months"] == 18
         assert updated["Backtest_Warmup_Candles"] == 400
+    finally:
+        test_conn.close()
+        if original_conn is None:
+            try:
+                delattr(database._thread_local, "conn")
+            except AttributeError:
+                pass
+        else:
+            database._thread_local.conn = original_conn
+
+
+def test_new_install_disables_exchange_dependent_jobs(tmp_path):
+    original_conn = getattr(database._thread_local, "conn", None)
+    test_conn = sqlite3.connect(tmp_path / "data.db", check_same_thread=False)
+    test_conn.execute(database.sql_create_job_schedules_table)
+    create_exchange_metadata(test_conn, upgraded_install=False)
+    test_conn.commit()
+
+    database._thread_local.conn = test_conn
+    try:
+        database.ensure_job_schedules()
+        disabled = {
+            row[0]
+            for row in test_conn.execute(
+                "SELECT name FROM Job_Schedules WHERE enabled=0"
+            ).fetchall()
+        }
+        assert disabled == {
+            "main_1h",
+            "main_4h",
+            "main_1d",
+            "symbol_by_market_phase_1d",
+            "super_rsi_15m",
+        }
+        assert test_conn.execute(
+            "SELECT COUNT(*) FROM Exchanges WHERE Enabled=1 OR Is_Default=1"
+        ).fetchone()[0] == 0
     finally:
         test_conn.close()
         if original_conn is None:
