@@ -22,7 +22,7 @@ import ta
 
 import bec.utils.telegram as telegram
 import bec.utils.database as database
-import bec.exchanges.binance as binance
+import bec.exchanges.service as binance
 
 TELEGRAM_PREFIX_SIGNAL = "Bollinger Bands Width"
 BB_LENGTH = 20
@@ -139,7 +139,7 @@ def _check_bb_width(symbol, time_frame, timeframe_label, lookback_days):
 
 def bb_width(symbol):
     _check_bb_width(symbol,
-                    binance.get_client().KLINE_INTERVAL_1DAY,
+                    "1d",
                     "1D",
                     LOOKBACK_DAYS_1D)
 

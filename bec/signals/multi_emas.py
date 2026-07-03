@@ -27,7 +27,7 @@ import time
 import bec.utils.config as config
 import bec.utils.telegram as telegram
 import bec.utils.database as database 
-import bec.exchanges.binance as binance
+import bec.exchanges.service as binance
 
 TELEGRAM_PREFIX_SIGNAL = "MULTI-EMAs" 
 
@@ -81,7 +81,7 @@ def apply_technicals(df):
 
 def main(symbol):
     # 1D timeframe
-    time_frame = binance.get_client().KLINE_INTERVAL_1DAY
+    time_frame = "1d"
 
     # get start date
     # get max data as possible to make sure the slowest emas 200 and 300 get the same values as tradingview 
@@ -205,31 +205,10 @@ def main(symbol):
 def get_symbols(trade_against):    
     # Get blacklist
     # blacklist = get_blacklist()
-
-    exchange_info = binance.get_exchange_info()
-
-    symbols = set()
-
-    # Get symbols
-    for s in exchange_info['symbols']:
-        if (
-            s['symbol'].endswith(trade_against)
-            and not (s['symbol'].endswith('DOWN' + trade_against))
-            and not (s['symbol'].endswith('UP' + trade_against))
-            and not (s['symbol'] == "AUD" + trade_against)  # Australian Dollar
-            and not (s['symbol'] == "EUR" + trade_against)  # Euro
-            and not (s['symbol'] == "GBP" + trade_against)  # British pound
-            and not (s['symbol'] == "BUSD" + trade_against)  # British pound
-            and not (s['symbol'] == "USDC" + trade_against)  # British pound
-            and s['status'] == 'TRADING'
-        ):
-            symbols.add(s['symbol'])
-
-    # From the symbols to trade, exclude symbols from blacklist
-    # symbols -= blacklist
-
-    symbols = sorted(symbols)
-    return symbols
+    return binance.get_tradable_symbols(
+        trade_against,
+        excluded_base_assets={"AUD", "EUR", "GBP", "BUSD", "USDC"},
+    )
 
 def run():
     settings = config.load_settings(refresh=True)
@@ -264,8 +243,8 @@ def run():
                 
 
     if not df_signals.empty:
-        # get TV prices from binance  
-        df_signals['Symbol'] = "BINANCE:" + df_signals['Symbol']
+        # Add the active exchange prefix for TradingView.
+        df_signals['Symbol'] = df_signals['Symbol'].map(binance.format_chart_symbol)
 
         # Filter rows where Signal is "EMA13"
         df_ema13 = df_signals[df_signals['Signal'] == 'EMA13']

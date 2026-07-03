@@ -28,7 +28,7 @@ import bec.utils.database as database
 from bec.utils.strategy_quality_score import calculate_strategy_quality_score
 
 # import bec.utils.config as config
-import bec.exchanges.binance as binance
+import bec.exchanges.service as binance
 from bec.strategy_builder import engine as strategy_engine
 from bec.strategy_builder import schema as strategy_schema
 from bec.utils.take_profit import normalize_take_profit_levels, take_profit_enabled

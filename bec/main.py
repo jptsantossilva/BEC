@@ -11,7 +11,7 @@ import pandas as pd
 from backtesting.lib import crossover
 from dateutil.relativedelta import relativedelta
 
-import bec.exchanges.binance as binance
+import bec.exchanges.service as binance
 import bec.utils.config as config
 import bec.utils.database as database
 import bec.utils.telegram as telegram

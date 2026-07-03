@@ -25,7 +25,7 @@ import ta
 
 import bec.utils.telegram as telegram
 import bec.utils.database as database 
-import bec.exchanges.binance as binance
+import bec.exchanges.service as binance
 
 
 
@@ -77,7 +77,7 @@ def apply_technicals(df, rsi_length):
 
 def super_rsi(symbol):
     # 15min timeframe
-    time_frame = binance.get_client().KLINE_INTERVAL_15MINUTE
+    time_frame = "15m"
     rsi_lookback_periods = 14 # 14 days
 
     # get start date

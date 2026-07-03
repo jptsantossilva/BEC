@@ -4,8 +4,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Union, Callable
 import streamlit as st
 
-from bec.exchanges.binance import get_ohlcv as fetch_binance_OHLCV
-from binance.client import Client 
+from bec.exchanges.service import get_ohlcv as fetch_exchange_ohlcv
 
 # ----------------------
 # Data access & caching
@@ -14,7 +13,7 @@ from binance.client import Client
 
 @st.cache_data(ttl=60*15, show_spinner=False)
 def get_OHLCV(symbol: str,
-    interval: str = Client.KLINE_INTERVAL_1DAY,
+    interval: str = "1d",
     start_date: Union[str, int, datetime] = "1 Jan, 2010",
     end_date: Optional[Union[str, int, datetime]] = None,
     max_retries: int = 3,
@@ -23,7 +22,7 @@ def get_OHLCV(symbol: str,
     """Fetch OHLCV data. Replace this with your real source (e.g., your DB, CCXT, yfinance).
     Returns DataFrame with columns: [timestamp, open, high, low, close, volume]
     """
-    df = fetch_binance_OHLCV(symbol, interval, start_date, end_date)
+    df = fetch_exchange_ohlcv(symbol, interval, start_date, end_date)
     if df.empty:
         return df
 

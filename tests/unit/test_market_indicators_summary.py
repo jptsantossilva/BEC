@@ -113,7 +113,7 @@ def test_supply_profit_loss_summary_ignores_zero_extreme_top_setting(monkeypatch
     assert row.reference == ">= 98.00%"
 
 
-def test_supply_profit_loss_bottom_summary_uses_loss_above_profit(monkeypatch):
+def test_supply_profit_loss_bottom_summary_with_zero_tolerance_is_neutral(monkeypatch):
     _use_memory_db(monkeypatch)
     database.set_setting("onchain_supply_profit_loss_cross_tolerance", 0.0)
     spl.save_cached_supply_profit_loss(_sample_rows([50.5]))
@@ -123,9 +123,25 @@ def test_supply_profit_loss_bottom_summary_uses_loss_above_profit(monkeypatch):
     assert row.name == "BTC Supply Profit/Loss - Bottom"
     assert row.signal_group == "Bottom"
     assert row.hit is False
-    assert row.status == "Watch"
+    assert row.status == "Neutral"
     assert row.bias == "Neutral"
     assert row.reference == "Loss >= Profit"
+    assert row.distance_to_hit == "1.00 p.p."
+    assert row.progress_pct == 99.0
+
+
+def test_supply_profit_loss_bottom_summary_watches_with_configured_tolerance(
+    monkeypatch,
+):
+    _use_memory_db(monkeypatch)
+    database.set_setting("onchain_supply_profit_loss_cross_tolerance", 1.0)
+    spl.save_cached_supply_profit_loss(_sample_rows([50.5]))
+
+    row = summary.summarize_btc_supply_profit_loss()[1]
+
+    assert row.hit is False
+    assert row.status == "Watch"
+    assert row.bias == "Neutral"
     assert row.distance_to_hit == "1.00 p.p."
     assert row.progress_pct == 99.0
 

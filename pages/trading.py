@@ -12,7 +12,7 @@ import altair as alt
 
 import bec.utils.config as config
 import bec.utils.database as database
-import bec.exchanges.binance as binance
+import bec.exchanges.service as binance
 import bec.utils.trading_service as trading_service
 from bec.page_config import configure_page
 from bec.utils.take_profit import (

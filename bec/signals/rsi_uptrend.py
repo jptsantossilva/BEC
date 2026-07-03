@@ -27,7 +27,7 @@ import ta
 
 import bec.utils.telegram as telegram
 import bec.utils.database as database 
-import bec.exchanges.binance as binance
+import bec.exchanges.service as binance
 
 TELEGRAM_PREFIX_SIGNAL = "RSI-Uptrend" 
 RSI_LOOKBACK_PERIODS = 14 # 14 days
@@ -76,7 +76,7 @@ def apply_technicals(df):
 
 def main(symbol):
     # 4H timeframe
-    time_frame = binance.get_client().KLINE_INTERVAL_4HOUR
+    time_frame = "4h"
 
     # get start date
     today = date.today() 
@@ -135,31 +135,10 @@ def main(symbol):
 def get_symbols(trade_against):    
     # Get blacklist
     # blacklist = get_blacklist()
-
-    exchange_info = binance.get_exchange_info()
-
-    symbols = set()
-
-    # Get symbols
-    for s in exchange_info['symbols']:
-        if (
-            s['symbol'].endswith(trade_against)
-            and not (s['symbol'].endswith('DOWN' + trade_against))
-            and not (s['symbol'].endswith('UP' + trade_against))
-            and not (s['symbol'] == "AUD" + trade_against)  # Australian Dollar
-            and not (s['symbol'] == "EUR" + trade_against)  # Euro
-            and not (s['symbol'] == "GBP" + trade_against)  # British pound
-            and not (s['symbol'] == "BUSD" + trade_against)  # British pound
-            and not (s['symbol'] == "USDC" + trade_against)  # British pound
-            and s['status'] == 'TRADING'
-        ):
-            symbols.add(s['symbol'])
-
-    # From the symbols to trade, exclude symbols from blacklist
-    # symbols -= blacklist
-
-    symbols = sorted(symbols)
-    return symbols
+    return binance.get_tradable_symbols(
+        trade_against,
+        excluded_base_assets={"AUD", "EUR", "GBP", "BUSD", "USDC"},
+    )
 
 def run():
 
@@ -191,8 +170,8 @@ def run():
                 
 
     if not df_signals.empty:
-        # get TV prices from binance  
-        df_signals['Symbol'] = "BINANCE:" + df_signals['Symbol']
+        # Add the active exchange prefix for TradingView.
+        df_signals['Symbol'] = df_signals['Symbol'].map(binance.format_chart_symbol)
 
         # Filter rows where Signal is "RSI<30"
         df_rsi30 = df_signals[df_signals['Signal'] == 'RSI<30']

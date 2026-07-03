@@ -1,5 +1,4 @@
 import sys
-import os
 import logging
 import pandas as pd
 from datetime import datetime, date, timedelta, timezone
@@ -8,67 +7,20 @@ import time
 from typing import Optional, Union, Callable
 import sqlite3
 
-from binance.client import Client
-from binance.exceptions import BinanceAPIException, BinanceOrderException, BinanceRequestException
-from binance.helpers import round_step_size
+from bec.exchanges.binance_adapter import (
+    BinanceAPIException,
+    BinanceOrderException,
+    BinanceRequestException,
+    Client,
+    connect,
+    get_client,
+    round_step_size,
+)
 
 import bec.utils.config as config
 import bec.utils.telegram as telegram
 import bec.utils.database as database
 from bec.utils.risk import get_runtime_risk_settings
-
-_client: Optional[Client] = None # private to module
-
-def _env(name: str) -> str:
-    val = os.environ.get(name)
-    if not val:
-        msg = f"[binance] Missing env var: {name}"
-        print(msg)
-        telegram.send_telegram_message(telegram.telegram_token_errors, telegram.EMOJI_WARNING, msg)
-        raise RuntimeError(msg)
-    return val
-
-def connect(api_key: Optional[str]=None, api_secret: Optional[str]=None, test_ping: bool=True) -> Client:
-    """Create (or recreate) the Binance client. No side-effects on import."""
-    global _client
-    api_key = api_key or _env("binance_api")
-    api_secret = api_secret or _env("binance_secret")
-
-    max_retry = 3
-    for attempt in range(1, max_retry + 1):
-        try:
-            _client = Client(api_key, api_secret, requests_params={"timeout": 15})
-            if test_ping:
-                _client.ping()  # valida conectividade/credenciais
-            return _client
-        except BinanceAPIException as e:
-            msg = f"[binance] Error connecting to Binance: {repr(e)}"
-            print(msg)
-            logging.exception(msg)
-            if e.status_code in (418, 429, 503) and attempt < max_retry:
-                time.sleep(2 ** attempt)
-                continue
-            telegram.send_telegram_message(telegram.telegram_token_errors, telegram.EMOJI_WARNING, msg)
-            _client = None
-            raise
-        except Exception as e:
-            msg = f"[binance] Error connecting to Binance: {repr(e)}"
-            print(msg)
-            logging.exception(msg)
-            if attempt < max_retry:
-                time.sleep(2 ** attempt)
-                continue
-            telegram.send_telegram_message(telegram.telegram_token_errors, telegram.EMOJI_WARNING, msg)
-            _client = None
-            raise
-
-def get_client() -> Client:
-    """Lazy getter: use existing or create new."""
-    global _client
-    if _client is None:
-        return connect()
-    return _client
-
 
 def _primary_parameter_pair_names_from_definition(definition: dict) -> tuple[str, str]:
     parameters = definition.get("parameters", {}) if isinstance(definition, dict) else {}

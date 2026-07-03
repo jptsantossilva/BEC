@@ -9,7 +9,7 @@ import importlib
 
 import bec.utils.config as config
 import bec.utils.database as database
-import bec.exchanges.binance as binance
+import bec.exchanges.service as binance
 import bec.utils.telegram as telegram
 import bec.utils.telegram_reporting as telegram_reporting
 import bec.add_symbol as add_symbol
@@ -77,22 +77,12 @@ def get_symbols(trade_against, settings=None):
     # Get blacklist
     blacklist = get_blacklist(settings=settings)
 
-    exchange_info = binance.get_exchange_info()
-
-    symbols = set()
-
-    # Get symbols
-    for s in exchange_info['symbols']:
-        if (
-            s['symbol'].endswith(trade_against)
-            and not (s['symbol'].endswith('DOWN' + trade_against))
-            and not (s['symbol'].endswith('UP' + trade_against))
-            and not (s['symbol'] == "AUD" + trade_against)  # Australian Dollar
-            and not (s['symbol'] == "EUR" + trade_against)  # Euro
-            and not (s['symbol'] == "GBP" + trade_against)  # British pound
-            and s['status'] == 'TRADING'
-        ):
-            symbols.add(s['symbol'])
+    symbols = set(
+        binance.get_tradable_symbols(
+            trade_against,
+            excluded_base_assets={"AUD", "EUR", "GBP"},
+        )
+    )
 
     # From the symbols to trade, exclude symbols from blacklist
     symbols -= blacklist
