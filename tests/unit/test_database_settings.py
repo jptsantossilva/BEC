@@ -1,5 +1,7 @@
 import sqlite3
 
+import pytest
+
 import bec.utils.config as config
 import bec.utils.database as database
 from bec.strategy_builder.templates import get_builtin_template
@@ -455,6 +457,7 @@ def test_delete_inactive_position_candidates_preserves_only_active_pending_rows(
     original_conn = getattr(database._thread_local, "conn", None)
     test_conn = sqlite3.connect(tmp_path / "data.db", check_same_thread=False)
     test_conn.execute(database.sql_create_positions_table)
+    test_conn.execute(database.sql_create_locked_values_table)
     test_conn.executemany(
         """
         INSERT INTO Positions (Bot, Symbol, Position, Strategy_Id, Strategy_Name)
@@ -466,6 +469,17 @@ def test_delete_inactive_position_candidates_preserves_only_active_pending_rows(
             ("1h", "BLANKUSDC", 0, "", ""),
             ("1h", "OPENUSDC", 1, "hma_rsi_linreg", "HMA RSI LINREG"),
         ],
+    )
+    old_position_id = test_conn.execute(
+        "SELECT Id FROM Positions WHERE Symbol = 'OLDUSDC'"
+    ).fetchone()[0]
+    test_conn.execute(
+        """
+        INSERT INTO Locked_Values
+            (Position_Id, Buy_Order_Id, Locked_Amount, Released)
+        VALUES (?, 'released-order', 12.5, 1)
+        """,
+        (old_position_id,),
     )
     test_conn.commit()
 
@@ -479,6 +493,55 @@ def test_delete_inactive_position_candidates_preserves_only_active_pending_rows(
             ("ACTIVEUSDC", 0, "hma_rsi_linreg_copy"),
             ("OPENUSDC", 1, "hma_rsi_linreg"),
         ]
+        assert (
+            test_conn.execute("SELECT COUNT(*) FROM Locked_Values").fetchone()[0]
+            == 0
+        )
+        assert test_conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        test_conn.close()
+        if original_conn is None:
+            try:
+                delattr(database._thread_local, "conn")
+            except AttributeError:
+                pass
+        else:
+            database._thread_local.conn = original_conn
+
+
+def test_position_cleanup_refuses_to_orphan_active_locked_values(tmp_path):
+    original_conn = getattr(database._thread_local, "conn", None)
+    test_conn = sqlite3.connect(tmp_path / "data.db", check_same_thread=False)
+    test_conn.execute(database.sql_create_positions_table)
+    test_conn.execute(database.sql_create_locked_values_table)
+    position_id = test_conn.execute(
+        """
+        INSERT INTO Positions (Bot, Symbol, Position, Strategy_Id)
+        VALUES ('1h', 'LOCKEDUSDC', 0, 'inactive')
+        RETURNING Id
+        """
+    ).fetchone()[0]
+    test_conn.execute(
+        """
+        INSERT INTO Locked_Values
+            (Position_Id, Buy_Order_Id, Locked_Amount, Released)
+        VALUES (?, 'active-order', 25, 0)
+        """,
+        (position_id,),
+    )
+    test_conn.commit()
+
+    database._thread_local.conn = test_conn
+    try:
+        with pytest.raises(sqlite3.IntegrityError, match="active locked value"):
+            database.delete_inactive_position_candidates([])
+
+        assert test_conn.execute("SELECT COUNT(*) FROM Positions").fetchone()[0] == 1
+        assert (
+            test_conn.execute("SELECT COUNT(*) FROM Locked_Values").fetchone()[0]
+            == 1
+        )
+        assert test_conn.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
         test_conn.close()
         if original_conn is None:

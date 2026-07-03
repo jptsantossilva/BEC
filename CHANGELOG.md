@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 - Trading Settings - Fixed dashboard startup for databases without the obsolete global `take_profit_enabled` setting; take-profit activation continues to be resolved from each strategy's risk configuration.
 - Database - Added an ordered, checksummed SQLite migration framework with transactional execution, integrity and foreign-key validation, row-count reports, and idempotent migration tracking.
 - Database - Added migration dry-run on a temporary SQLite copy, mandatory backups for manual apply, backup checksums/restoration, and startup blocking for pending table rebuilds.
+- Database - Prevented position cleanup from leaving orphaned `Locked_Values`; released locks are removed transactionally and positions with active locks cannot be deleted.
 
 ## [2026-06-12]
 - Market Analysis - Added a generic Market Indicators dashboard for bull and bear market signals, with separate Top Signals and Bottom Signals tables.

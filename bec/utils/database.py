@@ -1899,10 +1899,52 @@ def mark_position_take_profit(
 sql_delete_all_positions = "DELETE FROM Positions;"
 
 
+def _delete_positions_and_released_locks(
+    connection: sqlite3.Connection,
+    where_clause: str = "1 = 1",
+    params: tuple = (),
+):
+    """Delete positions without leaving orphaned balance-lock records.
+
+    Position cleanup is allowed to remove released locks, which are no longer
+    included in the tradable-balance calculation. An active lock must retain
+    its parent position, so abort the whole transaction instead of silently
+    orphaning it.
+    """
+    active_lock_count = connection.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM Locked_Values
+        WHERE Released = 0
+          AND Position_Id IN (
+              SELECT Id FROM Positions WHERE {where_clause}
+          )
+        """,
+        params,
+    ).fetchone()[0]
+    if active_lock_count:
+        raise sqlite3.IntegrityError(
+            "Cannot delete positions referenced by "
+            f"{active_lock_count} active locked value(s)"
+        )
+
+    connection.execute(
+        f"""
+        DELETE FROM Locked_Values
+        WHERE Released = 1
+          AND Position_Id IN (
+              SELECT Id FROM Positions WHERE {where_clause}
+          )
+        """,
+        params,
+    )
+    connection.execute(f"DELETE FROM Positions WHERE {where_clause}", params)
+
+
 def delete_all_positions():
     connection = _get_conn()
     with connection:
-        connection.execute(sql_delete_all_positions)
+        _delete_positions_and_released_locks(connection)
 
 
 sql_delete_positions_not_top_rank = "DELETE FROM Positions where Position = 0 and Symbol not in (select Symbol from Symbols_By_Market_Phase);"
@@ -1911,7 +1953,11 @@ sql_delete_positions_not_top_rank = "DELETE FROM Positions where Position = 0 an
 def delete_positions_not_top_rank():
     connection = _get_conn()
     with connection:
-        connection.execute(sql_delete_positions_not_top_rank)
+        _delete_positions_and_released_locks(
+            connection,
+            "Position = 0 AND Symbol NOT IN "
+            "(SELECT Symbol FROM Symbols_By_Market_Phase)",
+        )
 
 
 def delete_inactive_position_candidates(active_strategy_ids):
@@ -1923,16 +1969,14 @@ def delete_inactive_position_candidates(active_strategy_ids):
     connection = _get_conn()
     with connection:
         if not strategy_ids:
-            connection.execute("DELETE FROM Positions WHERE Position = 0")
+            _delete_positions_and_released_locks(connection, "Position = 0")
             return
 
         placeholders = ",".join("?" for _ in strategy_ids)
-        connection.execute(
-            f"""
-            DELETE FROM Positions
-            WHERE Position = 0
-              AND TRIM(COALESCE(Strategy_Id, '')) NOT IN ({placeholders})
-            """,
+        _delete_positions_and_released_locks(
+            connection,
+            "Position = 0 "
+            f"AND TRIM(COALESCE(Strategy_Id, '')) NOT IN ({placeholders})",
             tuple(strategy_ids),
         )
 
@@ -1942,7 +1986,7 @@ sql_delete_all_positions_not_open = "DELETE FROM Positions where Position = 0"
 def delete_all_positions_not_open():
     connection = _get_conn()
     with connection:
-        connection.execute(sql_delete_all_positions_not_open)
+        _delete_positions_and_released_locks(connection, "Position = 0")
 
 
 sql_total_value = """
