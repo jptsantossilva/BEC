@@ -36,6 +36,136 @@ MONTE_CARLO_OUTPUT_DIR = os.path.join(
     PROJECT_ROOT, "static", "backtest_results", "monte_carlo"
 )
 
+ACTIVE_EXCHANGE_ID_SQL = """(
+    SELECT Id FROM Exchanges
+    WHERE Enabled = 1 AND Is_Default = 1
+    ORDER BY Id LIMIT 1
+)"""
+EXCHANGE_DEPENDENT_JOBS = (
+    "main_1h",
+    "main_4h",
+    "main_1d",
+    "symbol_by_market_phase_1d",
+    "super_rsi_15m",
+)
+UNSETTLED_ORDER_STATUSES = ("pending", "open", "partially_filled", "unknown")
+
+
+def get_exchanges():
+    connection = _get_conn()
+    return pd.read_sql(
+        "SELECT * FROM Exchanges ORDER BY Is_Default DESC, Name", connection
+    )
+
+
+def get_active_exchange(required: bool = False) -> dict | None:
+    connection = _get_conn()
+    row = connection.execute(
+        """
+        SELECT Id, Code, Name, Enabled, Is_Default, Quote_Asset, Trading_Mode
+        FROM Exchanges
+        WHERE Enabled=1 AND Is_Default=1
+        ORDER BY Id LIMIT 1
+        """
+    ).fetchone()
+    if row is None:
+        if required:
+            raise RuntimeError(
+                "No active exchange is selected. Select an exchange in Trading Settings."
+            )
+        return None
+    keys = ("id", "code", "name", "enabled", "is_default", "quote_asset", "trading_mode")
+    return dict(zip(keys, row))
+
+
+def get_active_exchange_id(required: bool = False) -> int | None:
+    exchange = get_active_exchange(required=required)
+    return int(exchange["id"]) if exchange else None
+
+
+def get_active_exchange_code(default: str = "unselected") -> str:
+    exchange = get_active_exchange(required=False)
+    return str(exchange["code"]) if exchange else default
+
+
+def get_active_exchange_log_identity() -> str:
+    exchange = get_active_exchange(required=False)
+    return f"{exchange['id']}:{exchange['code']}" if exchange else "unselected"
+
+
+def exchange_log_prefix() -> str:
+    return f"[exchange_id={get_active_exchange_log_identity()}]"
+
+
+def get_exchange_switch_blockers(connection=None) -> dict[str, int]:
+    connection = connection or _get_conn()
+    open_positions = int(
+        connection.execute("SELECT COUNT(*) FROM Positions WHERE Position=1").fetchone()[0]
+    )
+    placeholders = ",".join("?" for _ in UNSETTLED_ORDER_STATUSES)
+    unsettled_orders = int(
+        connection.execute(
+            f"SELECT COUNT(*) FROM Orders WHERE LOWER(COALESCE(Order_Status,'')) IN ({placeholders})",
+            UNSETTLED_ORDER_STATUSES,
+        ).fetchone()[0]
+    )
+    return {"open_positions": open_positions, "unsettled_orders": unsettled_orders}
+
+
+def set_active_exchange(exchange_id: int) -> dict:
+    connection = _get_conn()
+    started_transaction = not connection.in_transaction
+    try:
+        if started_transaction:
+            connection.execute("BEGIN IMMEDIATE")
+        target = connection.execute(
+            "SELECT Id, Code FROM Exchanges WHERE Id=?", (int(exchange_id),)
+        ).fetchone()
+        if target is None:
+            raise ValueError(f"Unknown exchange id: {exchange_id}")
+        current = get_active_exchange(required=False)
+        if current and int(current["id"]) == int(exchange_id):
+            if started_transaction:
+                connection.commit()
+            return current
+        blockers = get_exchange_switch_blockers(connection)
+        if blockers["open_positions"] or blockers["unsettled_orders"]:
+            raise ValueError(
+                "Cannot switch exchange while open positions or unsettled orders exist "
+                f"(open_positions={blockers['open_positions']}, "
+                f"unsettled_orders={blockers['unsettled_orders']})"
+            )
+        connection.execute("UPDATE Exchanges SET Is_Default=0")
+        connection.execute(
+            "UPDATE Exchanges SET Enabled=1, Is_Default=1, Updated_At=CURRENT_TIMESTAMP WHERE Id=?",
+            (int(exchange_id),),
+        )
+        if current is None:
+            placeholders = ",".join("?" for _ in EXCHANGE_DEPENDENT_JOBS)
+            connection.execute(
+                f"UPDATE Job_Schedules SET enabled=1 WHERE name IN ({placeholders})",
+                EXCHANGE_DEPENDENT_JOBS,
+            )
+        if started_transaction:
+            connection.commit()
+    except Exception:
+        if started_transaction:
+            connection.rollback()
+        raise
+    from bec.exchanges.registry import set_default_adapter
+
+    set_default_adapter(None)
+    return get_active_exchange(required=True)
+
+
+def _exchange_symbol_metadata(symbol: str) -> tuple[int, str, str, str, str]:
+    from bec.db.exchange_schema import normalize_legacy_binance_symbol
+
+    exchange_id = get_active_exchange_id(required=True)
+    exchange_symbol = str(symbol or "").strip().upper()
+    normalized, base, quote, _ = normalize_legacy_binance_symbol(exchange_symbol)
+    return exchange_id, normalized, exchange_symbol, base, quote
+
 
 def _definition_parameter_names(definition: dict) -> list[str]:
     parameters = (
@@ -291,7 +421,10 @@ _thread_local = threading.local()
 def connect(path: str = ""):
     try:
         file_path = os.path.join(path, "data.db")
-        return sqlite3.connect(file_path, check_same_thread=False)
+        return sqlite3.connect(
+            file_path,
+            check_same_thread=False
+        )
     except sqlite3.Error as e:
         print(e)
         return None
@@ -580,7 +713,7 @@ create_orders_table = """
     );
 """
 
-sql_get_all_orders = "SELECT * FROM Orders;"
+sql_get_all_orders = f"SELECT * FROM Orders WHERE Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};"
 
 
 def get_all_orders():
@@ -588,7 +721,7 @@ def get_all_orders():
     return pd.read_sql(sql_get_all_orders, connection)
 
 
-sql_get_orders_by_bot = "SELECT * FROM Orders WHERE Bot = ?;"
+sql_get_orders_by_bot = f"SELECT * FROM Orders WHERE Bot=? AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};"
 
 
 def get_orders_by_bot(bot):
@@ -597,11 +730,12 @@ def get_orders_by_bot(bot):
     return pd.read_sql(sql_get_orders_by_bot, connection, params=(bot,))
 
 
-sql_get_orders_by_exchange_order_id = """
+sql_get_orders_by_exchange_order_id = f"""
     SELECT * 
     FROM Orders 
     WHERE 
         Exchange_Order_Id = ?
+        AND Exchange_Id = {ACTIVE_EXCHANGE_ID_SQL}
     LIMIT 1;
     """
 
@@ -613,7 +747,7 @@ def get_orders_by_exchange_order_id(order_id):
     )
 
 
-sql_delete_all_orders = "DELETE FROM Orders;"
+sql_delete_all_orders = f"DELETE FROM Orders WHERE Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};"
 
 
 def delete_all_orders():
@@ -622,9 +756,10 @@ def delete_all_orders():
         connection.execute(sql_delete_all_orders)
 
 
-sql_get_years_from_orders = """
+sql_get_years_from_orders = f"""
     SELECT DISTINCT(strftime('%Y', Date)) AS Year 
     FROM Orders 
+    WHERE Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
     ORDER BY Year DESC;"""
 
 
@@ -638,10 +773,10 @@ def get_years_from_orders():
         return result
 
 
-sql_get_years_from_orders_by_side = """
+sql_get_years_from_orders_by_side = f"""
     SELECT DISTINCT(strftime('%Y', Date)) AS Year
     FROM Orders
-    WHERE Side = ?
+    WHERE Side = ? AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
     ORDER BY Year DESC;"""
 
 
@@ -655,11 +790,11 @@ def get_years_from_orders_by_side(side: str):
         return result
 
 
-sql_get_months_from_orders_by_year = """
+sql_get_months_from_orders_by_year = f"""
     SELECT DISTINCT(strftime('%m', Date)) AS Month 
     FROM Orders
     WHERE 
-        Date LIKE ?
+        Date LIKE ? AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
     ORDER BY Month DESC;"""
 
 
@@ -681,12 +816,13 @@ def get_months_from_orders_by_year(year: str):
         return result
 
 
-sql_get_months_from_orders_by_year_side = """
+sql_get_months_from_orders_by_year_side = f"""
     SELECT DISTINCT(strftime('%m', Date)) AS Month
     FROM Orders
     WHERE
         Side = ?
         AND Date LIKE ?
+        AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
     ORDER BY Month DESC;"""
 
 
@@ -713,6 +849,7 @@ def get_months_from_orders_by_year_side(year: str, side: str):
 
 sql_add_order_buy = """
     INSERT INTO Orders (
+        Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset, Quote_Asset,
         Exchange_Order_Id,
         Date,
         Bot,
@@ -721,9 +858,9 @@ sql_add_order_buy = """
         Price,
         Qty,
         Strategy_Id,
-        Strategy_Params_JSON)
+        Strategy_Params_JSON, Order_Status, Executed_Qty, Average_Price, Fee_Amount, Net_Qty)
     VALUES (
-        ?,?,?,?,?,?,?,?,?
+        ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
         );
 """
 
@@ -739,6 +876,7 @@ def add_order_buy(
     strategy_params_json: str = "",
 ):
     connection = _get_conn()
+    exchange_fields = _exchange_symbol_metadata(symbol)
 
     side = "BUY"
     if not strategy_params_json:
@@ -747,6 +885,7 @@ def add_order_buy(
         connection.execute(
             sql_add_order_buy,
             (
+                *exchange_fields,
                 exchange_order_id,
                 date,
                 bot,
@@ -756,12 +895,18 @@ def add_order_buy(
                 qty,
                 strategy_id,
                 strategy_params_json,
+                "filled",
+                qty,
+                price,
+                0.0,
+                qty,
             ),
         )
 
 
 sql_add_order_sell = """
     INSERT INTO Orders (
+        Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset, Quote_Asset,
         Exchange_Order_Id,
         Date,
         Bot,
@@ -780,8 +925,8 @@ sql_add_order_sell = """
         Stop_Trigger_Price,
         Trail_Stop_ATR_At_Exit,
         Highest_Price_Since_Entry_At_Exit,
-        Atr_Params_At_Exit)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);
+        Atr_Params_At_Exit, Order_Status, Executed_Qty, Average_Price, Fee_Amount, Net_Qty)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);
 """
 
 
@@ -805,6 +950,7 @@ def add_order_sell(
 ):
     # sell_order_id and buy_order_id are the exchange ids from the exchange order
     connection = _get_conn()
+    exchange_fields = _exchange_symbol_metadata(symbol)
 
     if buy_order_id == "0":
         msg = "No Buy_Order_ID!"
@@ -861,6 +1007,7 @@ def add_order_sell(
         connection.execute(
             sql_add_order_sell,
             (
+                *exchange_fields,
                 sell_order_id,
                 date,
                 bot,
@@ -880,17 +1027,23 @@ def add_order_sell(
                 trail_stop_atr_at_exit,
                 highest_price_since_entry_at_exit,
                 atr_params_at_exit,
+                "filled",
+                qty,
+                price,
+                0.0,
+                qty,
             ),
         )
         return float(pnl_value), float(pnl_perc)
 
 
-sql_get_last_buy_order_by_bot_symbol = """
+sql_get_last_buy_order_by_bot_symbol = f"""
     SELECT * FROM Orders
     WHERE 
         Side = 'BUY' 
         AND Bot = ?
         AND Symbol LIKE ?
+        AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
     ORDER BY Id DESC LIMIT 1;
 """
 
@@ -927,7 +1080,7 @@ def get_last_buy_order_by_bot_symbol(bot: str, symbol: str):
 #         AND Side = ?
 #         AND Date LIKE ?;
 # """
-sql_get_orders_by_bot_side_year_month = """
+sql_get_orders_by_bot_side_year_month = f"""
     SELECT   
         os.Id,
         os.Bot,
@@ -951,11 +1104,12 @@ sql_get_orders_by_bot_side_year_month = """
         os.Highest_Price_Since_Entry_At_Exit,
         os.Atr_Params_At_Exit
     FROM Orders as os
-    LEFT JOIN orders ob ON os.Buy_Order_Id = ob.Id    
+    LEFT JOIN orders ob ON os.Buy_Order_Id = ob.Id AND ob.Exchange_Id=os.Exchange_Id
     WHERE
         os.Bot = ?
         AND os.Side = ?
-        AND os.Date LIKE ?;
+        AND os.Date LIKE ?
+        AND os.Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};
 """
 
 
@@ -1003,7 +1157,7 @@ def get_orders_by_bot_side_year_month(bot: str, side: str, year: str, month: str
     return df
 
 
-sql_get_orders_by_side_year_month = """
+sql_get_orders_by_side_year_month = f"""
     SELECT
         os.Id,
         os.Bot,
@@ -1028,16 +1182,17 @@ sql_get_orders_by_side_year_month = """
         os.Highest_Price_Since_Entry_At_Exit,
         os.Atr_Params_At_Exit
     FROM Orders as os
-    LEFT JOIN Orders ob ON os.Buy_Order_Id = ob.Id
+    LEFT JOIN Orders ob ON os.Buy_Order_Id = ob.Id AND ob.Exchange_Id=os.Exchange_Id
     LEFT JOIN Strategies st ON st.Id = os.Strategy_Id
     WHERE
         os.Side = ?
         AND os.Date LIKE ?
+        AND os.Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
     ORDER BY os.Date DESC;
 """
 
 
-sql_get_orders_by_side = """
+sql_get_orders_by_side = f"""
     SELECT
         os.Id,
         os.Bot,
@@ -1062,10 +1217,10 @@ sql_get_orders_by_side = """
         os.Highest_Price_Since_Entry_At_Exit,
         os.Atr_Params_At_Exit
     FROM Orders as os
-    LEFT JOIN Orders ob ON os.Buy_Order_Id = ob.Id
+    LEFT JOIN Orders ob ON os.Buy_Order_Id = ob.Id AND ob.Exchange_Id=os.Exchange_Id
     LEFT JOIN Strategies st ON st.Id = os.Strategy_Id
     WHERE
-        os.Side = ?
+        os.Side = ? AND os.Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
     ORDER BY os.Date DESC;
 """
 
@@ -1118,7 +1273,7 @@ def get_orders_by_side_year_month(side: str, year: str, month: str):
     )
 
 
-sql_get_orders_by_side_date_range = """
+sql_get_orders_by_side_date_range = f"""
     SELECT
         os.Id,
         os.Bot,
@@ -1145,11 +1300,12 @@ sql_get_orders_by_side_date_range = """
         os.Highest_Price_Since_Entry_At_Exit,
         os.Atr_Params_At_Exit
     FROM Orders os
-    LEFT JOIN Orders ob ON os.Buy_Order_Id = ob.Id
+    LEFT JOIN Orders ob ON os.Buy_Order_Id = ob.Id AND ob.Exchange_Id=os.Exchange_Id
     WHERE
         os.Side = ?
         AND os.Date >= ?
         AND os.Date < ?
+        AND os.Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
     ORDER BY os.Date ASC;
 """
 
@@ -1163,7 +1319,7 @@ def get_orders_by_side_date_range(side: str, start_utc: str, end_utc: str):
     )
 
 
-sql_get_sell_orders_by_position_id = """
+sql_get_sell_orders_by_position_id = f"""
     SELECT
         os.Id,
         os.Bot,
@@ -1188,11 +1344,12 @@ sql_get_sell_orders_by_position_id = """
         os.Highest_Price_Since_Entry_At_Exit,
         os.Atr_Params_At_Exit
     FROM Positions pos
-    JOIN Orders ob ON pos.Buy_Order_Id = ob.Exchange_Order_Id
-    JOIN Orders os ON os.Buy_Order_Id = ob.Id
+    JOIN Orders ob ON pos.Buy_Order_Id = ob.Exchange_Order_Id AND pos.Exchange_Id=ob.Exchange_Id
+    JOIN Orders os ON os.Buy_Order_Id = ob.Id AND os.Exchange_Id=ob.Exchange_Id
     WHERE
         pos.Id = ?
         AND os.Side = 'SELL'
+        AND pos.Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
     ORDER BY os.Id DESC;
 """
 
@@ -1230,8 +1387,10 @@ sql_create_positions_table = """
 """
 
 sql_insert_position = """
-    INSERT INTO Positions (Bot, Symbol, Position, Rank, Strategy_Id, Strategy_Name, Strategy_Params_JSON)
-        VALUES (?,?,0,?,?,?,?);
+    INSERT INTO Positions (
+        Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset, Quote_Asset,
+        Bot, Symbol, Position, Rank, Strategy_Id, Strategy_Name, Strategy_Params_JSON)
+        VALUES (?,?,?,?,?,?,?,0,?,?,?,?);
 """
 
 
@@ -1243,21 +1402,22 @@ def insert_position(
     strategy_params_json: str = "",
 ):
     connection = _get_conn()
+    exchange_fields = _exchange_symbol_metadata(symbol)
     rank = get_rank_from_symbols_by_market_phase_by_symbol(symbol)
     if not strategy_params_json:
         strategy_params_json = build_strategy_params_json(strategy_id)
     with connection:
         connection.execute(
             sql_insert_position,
-            (bot, symbol, rank, strategy_id, strategy_name, strategy_params_json),
+            (*exchange_fields, bot, symbol, rank, strategy_id, strategy_name, strategy_params_json),
         )
 
 
-sql_get_positions_by_position = """
+sql_get_positions_by_position = f"""
     SELECT *
     FROM Positions 
     WHERE 
-        Position = ?
+        Position = ? AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
 """
 
 
@@ -1266,12 +1426,13 @@ def get_positions_by_position(position):
     return pd.read_sql(sql_get_positions_by_position, connection, params=(position,))
 
 
-sql_get_positions_by_bot_position = """
+sql_get_positions_by_bot_position = f"""
     SELECT *
     FROM Positions 
     WHERE 
         Bot = ?
         AND Position = ?
+        AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
     ORDER BY Rank
 """
 
@@ -1283,13 +1444,14 @@ def get_positions_by_bot_position(bot: str, position: int):
     )
 
 
-sql_get_unrealized_pnl_by_bot = """
+sql_get_unrealized_pnl_by_bot = f"""
     SELECT pos.Id, pos.Bot, pos.Symbol, pos.Strategy_Id, pos.Strategy_Name, pos.Strategy_Params_JSON, pos.PnL_Perc, pos.PnL_Value, pos.Take_Profits_JSON, ROUND((pos.Qty/ord.Qty)*100,2) as "RPQ%", pos.Qty, pos.Buy_Price, (pos.Qty*pos.Buy_Price) Position_Value, pos.Date, pos.Duration, pos.Trail_Stop_ATR, pos.Highest_Price_Since_Entry
     FROM Positions pos
-    JOIN Orders ord ON pos.Buy_Order_Id = ord.Exchange_Order_Id 
+    JOIN Orders ord ON pos.Buy_Order_Id = ord.Exchange_Order_Id AND pos.Exchange_Id=ord.Exchange_Id
     WHERE 
         pos.Bot = ?
         AND pos.Position = ?
+        AND pos.Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
 """
 
 
@@ -1310,13 +1472,14 @@ def get_unrealized_pnl_by_bot(bot: str):
     return df
 
 
-sql_get_positions_by_bot_symbol_position = """
+sql_get_positions_by_bot_symbol_position = f"""
     SELECT *
     FROM Positions 
     WHERE 
         Bot = ?
         AND Symbol = ?
         AND Position = ?
+        AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
 """
 
 
@@ -1329,7 +1492,7 @@ def get_positions_by_bot_symbol_position(bot: str, symbol: str, position: int):
     )
 
 
-sql_get_positions_by_bot_symbol_strategy_position = """
+sql_get_positions_by_bot_symbol_strategy_position = f"""
     SELECT *
     FROM Positions
     WHERE
@@ -1337,6 +1500,7 @@ sql_get_positions_by_bot_symbol_strategy_position = """
         AND Symbol = ?
         AND Strategy_Id = ?
         AND Position = ?
+        AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
 """
 
 
@@ -1351,7 +1515,7 @@ def get_positions_by_bot_symbol_strategy_position(
     )
 
 
-sql_get_position_by_id = "SELECT * FROM Positions WHERE Id = ?;"
+sql_get_position_by_id = f"SELECT * FROM Positions WHERE Id=? AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};"
 
 
 def get_position_by_id(position_id: int):
@@ -1359,12 +1523,13 @@ def get_position_by_id(position_id: int):
     return pd.read_sql(sql_get_position_by_id, connection, params=(position_id,))
 
 
-sql_get_all_positions_by_bot_symbol = """
+sql_get_all_positions_by_bot_symbol = f"""
     SELECT COUNT(*)
     FROM Positions 
     WHERE 
         Bot = ?
         AND symbol = ?
+        AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
 """
 
 
@@ -1382,13 +1547,14 @@ def get_all_positions_by_bot_symbol(bot: str, symbol: str):
     return result
 
 
-sql_get_all_positions_by_bot_symbol_strategy = """
+sql_get_all_positions_by_bot_symbol_strategy = f"""
     SELECT COUNT(*)
     FROM Positions
     WHERE
         Bot = ?
         AND Symbol = ?
         AND Strategy_Id = ?
+        AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
 """
 
 
@@ -1402,11 +1568,11 @@ def get_all_positions_by_bot_symbol_strategy(bot: str, symbol: str, strategy_id:
     return int(df.iloc[0, 0]) >= 1
 
 
-sql_get_distinct_symbol_from_positions_where_position1 = """
+sql_get_distinct_symbol_from_positions_where_position1 = f"""
     SELECT DISTINCT(symbol)
     FROM Positions 
     WHERE 
-        Position = 1
+        Position = 1 AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
 """
 
 
@@ -1417,11 +1583,12 @@ def get_distinct_symbol_from_positions_where_position1():
     )
 
 
-sql_get_all_positions_by_bot = """
+sql_get_all_positions_by_bot = f"""
     SELECT *
     FROM Positions 
     WHERE 
         Bot = ?
+        AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
     ORDER BY
         Rank
 """
@@ -1432,8 +1599,8 @@ def get_all_positions_by_bot(bot: str):
     return pd.read_sql(sql_get_all_positions_by_bot, connection, params=(bot,))
 
 
-sql_get_num_open_positions = """
-    SELECT COUNT(*) FROM Positions WHERE Position = 1;
+sql_get_num_open_positions = f"""
+    SELECT COUNT(*) FROM Positions WHERE Position=1 AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};
 """
 
 
@@ -1444,8 +1611,8 @@ def get_num_open_positions():
     return result
 
 
-sql_get_num_open_positions_by_bot = """
-    SELECT COUNT(*) FROM Positions WHERE Position = 1 and Bot = ?;
+sql_get_num_open_positions_by_bot = f"""
+    SELECT COUNT(*) FROM Positions WHERE Position=1 AND Bot=? AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};
 """
 
 
@@ -1457,7 +1624,7 @@ def get_num_open_positions_by_bot(bot: str):
 
 
 # Candidates for Positions from current top-ranked symbols and backtesting results.
-sql_get_top_rank_position_candidates = """
+sql_get_top_rank_position_candidates = f"""
     SELECT
         br.Time_Frame AS Bot,
         mp.Symbol AS Symbol,
@@ -1474,21 +1641,25 @@ sql_get_top_rank_position_candidates = """
         br.Quality_Score,
         br.Quality_Grade
     FROM Symbols_By_Market_Phase mp
-    INNER JOIN Backtesting_Results br ON mp.Symbol = br.Symbol
+    INNER JOIN Backtesting_Results br ON mp.Symbol=br.Symbol AND mp.Exchange_Id=br.Exchange_Id
     LEFT JOIN Strategies st ON st.Id = br.Strategy_Id
     WHERE
         br.Return_Perc > 0
         AND br.Strategy_Id = ?
+        AND br.Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
         AND NOT EXISTS (
             SELECT 1
             FROM Positions
-            WHERE Bot = br.Time_Frame AND Symbol = mp.Symbol AND Strategy_Id = br.Strategy_Id
+            WHERE Bot=br.Time_Frame AND Symbol=mp.Symbol AND Strategy_Id=br.Strategy_Id
+              AND Exchange_Id=br.Exchange_Id
         );
 """
 
 sql_insert_top_rank_position = """
-    INSERT INTO Positions (Bot, Symbol, Position, Rank, Strategy_Id, Strategy_Name, Strategy_Params_JSON)
-    VALUES (?, ?, 0, ?, ?, ?, ?);
+    INSERT INTO Positions (
+        Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset, Quote_Asset,
+        Bot, Symbol, Position, Rank, Strategy_Id, Strategy_Name, Strategy_Params_JSON)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?);
 """
 
 
@@ -1508,10 +1679,12 @@ def add_top_rank_to_positions(strategy_id: str):
             continue
 
         strategy_id = str(row["Strategy_Id"])
+        symbol = str(row["Symbol"])
         to_insert.append(
             (
+                *_exchange_symbol_metadata(symbol),
                 timeframe,
-                str(row["Symbol"]),
+                symbol,
                 int(row["Rank"]),
                 strategy_id,
                 str(row.get("Strategy_Name") or strategy_id),
@@ -1526,12 +1699,13 @@ def add_top_rank_to_positions(strategy_id: str):
         connection.executemany(sql_insert_top_rank_position, to_insert)
 
 
-sql_set_rank_from_positions = """
+sql_set_rank_from_positions = f"""
     UPDATE Positions
     SET
         Rank = ?
     WHERE 
         Symbol = ?
+        AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
 """
 
 
@@ -1547,7 +1721,7 @@ def set_rank_from_positions(symbol: str, rank: int):
         )
 
 
-sql_set_rank_from_position = "UPDATE Positions SET Rank = ? WHERE Id = ?"
+sql_set_rank_from_position = f"UPDATE Positions SET Rank=? WHERE Id=? AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}"
 
 
 def set_rank_from_position(position_id: int, rank: int):
@@ -1556,10 +1730,10 @@ def set_rank_from_position(position_id: int, rank: int):
         connection.execute(sql_set_rank_from_position, (rank, position_id))
 
 
-sql_set_backtesting_results_from_position_strategy = """
+sql_set_backtesting_results_from_position_strategy = f"""
     UPDATE Positions
     SET Strategy_Params_JSON = ?
-    WHERE Symbol = ? AND Bot = ? AND Strategy_Id = ?
+    WHERE Symbol=? AND Bot=? AND Strategy_Id=? AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
 """
 
 
@@ -1577,7 +1751,7 @@ def set_backtesting_results_from_position_strategy(
         )
 
 
-sql_update_position_pnl = """
+sql_update_position_pnl = f"""
     UPDATE Positions
     SET 
         Curr_Price = ?,
@@ -1587,7 +1761,8 @@ sql_update_position_pnl = """
     WHERE
         Bot = ? 
         AND Symbol = ? 
-        AND Position = 1;        
+        AND Position = 1
+        AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};
 """
 
 
@@ -1638,6 +1813,7 @@ def update_position_pnl(
                 UPDATE Positions
                 SET Curr_Price = ?, PnL_Perc = ?, PnL_Value = ?, Duration = ?
                 WHERE Id = ? AND Position = 1
+                  AND Exchange_Id = (SELECT Id FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1)
                 """,
                 (curr_price, pnl_perc, pnl_value, duration, position_id),
             )
@@ -1648,7 +1824,7 @@ def update_position_pnl(
             )
 
 
-sql_set_position_buy = """
+sql_set_position_buy = f"""
     UPDATE Positions
     SET 
         Position = 1,
@@ -1666,7 +1842,8 @@ sql_set_position_buy = """
         Strategy_Params_JSON = COALESCE(NULLIF(?, ''), Strategy_Params_JSON)
     WHERE
         Bot = ? 
-        AND Symbol = ? ;        
+        AND Symbol = ?
+        AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};
 """
 
 
@@ -1699,6 +1876,7 @@ def set_position_buy(
                     Strategy_Name = COALESCE(NULLIF(?, ''), Strategy_Name),
                     Strategy_Params_JSON = COALESCE(NULLIF(?, ''), Strategy_Params_JSON)
                 WHERE Id = ?
+                  AND Exchange_Id = (SELECT Id FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1)
                 """,
                 (
                     qty,
@@ -1730,7 +1908,7 @@ def set_position_buy(
             )
 
 
-sql_set_position_sell = """
+sql_set_position_sell = f"""
     UPDATE Positions
     SET 
         Date = NULL,
@@ -1747,7 +1925,8 @@ sql_set_position_sell = """
         Trail_Stop_ATR = 0
     WHERE
         Bot = ? 
-        AND Symbol = ? ;        
+        AND Symbol = ?
+        AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};
 """
 
 
@@ -1763,6 +1942,7 @@ def set_position_sell(bot: str, symbol: str, position_id: int | None = None):
                     Buy_Order_Id = NULL, Take_Profits_JSON = '[]',
                     Highest_Price_Since_Entry = 0, Trail_Stop_ATR = 0
                 WHERE Id = ?
+                  AND Exchange_Id = (SELECT Id FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1)
                 """,
                 (position_id,),
             )
@@ -1770,14 +1950,15 @@ def set_position_sell(bot: str, symbol: str, position_id: int | None = None):
             connection.execute(sql_set_position_sell, (bot, symbol))
 
 
-sql_set_position_qty = """
+sql_set_position_qty = f"""
     UPDATE Positions
     SET 
         Qty = ?
     WHERE
         Bot = ? 
         AND Symbol = ? 
-        AND Position = 1;        
+        AND Position = 1
+        AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};
 """
 
 
@@ -1786,14 +1967,14 @@ def set_position_qty(bot: str, symbol: str, qty: float, position_id: int | None 
     with connection:
         if position_id is not None:
             connection.execute(
-                "UPDATE Positions SET Qty = ? WHERE Id = ? AND Position = 1",
+                f"UPDATE Positions SET Qty=? WHERE Id=? AND Position=1 AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}",
                 (qty, position_id),
             )
         else:
             connection.execute(sql_set_position_qty, (qty, bot, symbol))
 
 
-sql_update_position_risk = """
+sql_update_position_risk = f"""
     UPDATE Positions
     SET
         Highest_Price_Since_Entry = ?,
@@ -1801,7 +1982,8 @@ sql_update_position_risk = """
     WHERE
         Bot = ?
         AND Symbol = ?
-        AND Position = 1;
+        AND Position = 1
+        AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};
 """
 
 
@@ -1820,6 +2002,7 @@ def update_position_risk(
                 UPDATE Positions
                 SET Highest_Price_Since_Entry = ?, Trail_Stop_ATR = ?
                 WHERE Id = ? AND Position = 1
+                  AND Exchange_Id = (SELECT Id FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1)
                 """,
                 (float(highest_price_since_entry), float(trail_stop_atr), position_id),
             )
@@ -1860,7 +2043,7 @@ def set_position_take_profits_json(
     with connection:
         if position_id is not None:
             connection.execute(
-                "UPDATE Positions SET Take_Profits_JSON = ? WHERE Id = ? AND Position = 1",
+                f"UPDATE Positions SET Take_Profits_JSON=? WHERE Id=? AND Position=1 AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}",
                 (payload, position_id),
             )
         else:
@@ -1869,6 +2052,7 @@ def set_position_take_profits_json(
                 UPDATE Positions
                 SET Take_Profits_JSON = ?
                 WHERE Bot = ? AND Symbol = ? AND Position = 1
+                  AND Exchange_Id = (SELECT Id FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1)
                 """,
                 (payload, bot, symbol),
             )
@@ -1911,13 +2095,14 @@ def _delete_positions_and_released_locks(
     its parent position, so abort the whole transaction instead of silently
     orphaning it.
     """
+    scoped_where = f"({where_clause}) AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}"
     active_lock_count = connection.execute(
         f"""
         SELECT COUNT(*)
         FROM Locked_Values
         WHERE Released = 0
           AND Position_Id IN (
-              SELECT Id FROM Positions WHERE {where_clause}
+              SELECT Id FROM Positions WHERE {scoped_where}
           )
         """,
         params,
@@ -1933,12 +2118,12 @@ def _delete_positions_and_released_locks(
         DELETE FROM Locked_Values
         WHERE Released = 1
           AND Position_Id IN (
-              SELECT Id FROM Positions WHERE {where_clause}
+              SELECT Id FROM Positions WHERE {scoped_where}
           )
         """,
         params,
     )
-    connection.execute(f"DELETE FROM Positions WHERE {where_clause}", params)
+    connection.execute(f"DELETE FROM Positions WHERE {scoped_where}", params)
 
 
 def delete_all_positions():
@@ -2755,7 +2940,7 @@ sql_create_backtesting_results_table = """
     );
 """
 
-sql_get_all_backtesting_results = """
+sql_get_all_backtesting_results = f"""
     SELECT br.Symbol,
            br.Time_Frame,
            br.Return_Perc,
@@ -2783,6 +2968,7 @@ sql_get_all_backtesting_results = """
            st.Name as Strategy_Name
     FROM Backtesting_Results AS br
     JOIN Strategies AS st ON br.Strategy_Id = st.Id
+    WHERE br.Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
     ORDER BY br.Symbol, st.Name;
 """
 
@@ -2795,7 +2981,7 @@ def get_all_backtesting_results():
 
 def get_backtesting_results_for_ai():
     connection = _get_conn()
-    sql = """
+    sql = f"""
         SELECT
             br.Symbol,
             br.Time_Frame,
@@ -2812,18 +2998,20 @@ def get_backtesting_results_for_ai():
             st.Name AS Strategy_Name
         FROM Backtesting_Results br
         LEFT JOIN Strategies st ON br.Strategy_Id = st.Id
+        WHERE br.Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
     """
     return pd.read_sql(sql, connection)
 
 
-sql_get_backtesting_results_by_symbol_timeframe_strategy = """
+sql_get_backtesting_results_by_symbol_timeframe_strategy = f"""
     SELECT be.*, st.Name
     FROM Backtesting_Results as be
     JOIN Strategies as st on be.Strategy_Id = st.Id
     WHERE
         be.Symbol = ?
         AND be.Time_Frame = ?
-        AND be.Strategy_Id = ?;
+        AND be.Strategy_Id = ?
+        AND be.Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};
 """
 
 
@@ -2840,11 +3028,12 @@ def get_backtesting_results_by_symbol_timeframe_strategy(
 
 sql_add_backtesting_results = """
     INSERT OR REPLACE INTO Backtesting_Results (
+        Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset, Quote_Asset,
         Symbol, Time_Frame, Return_Perc, BuyHold_Return_Perc, Backtest_Start_Date, Backtest_End_Date,
         Max_Drawdown_Perc, Trades, Win_Rate_Perc, Best_Trade_Perc, Worst_Trade_Perc, Avg_Trade_Perc, Max_Trade_Duration, Avg_Trade_Duration,
         Profit_Factor, Expectancy_Perc, SQN, Kelly_Criterion, Trading_Approved, Trading_Rejection_Reasons, Quality_Score, Quality_Grade, Backtest_Config_JSON, Backtest_Work_Fingerprint, Backtest_Work_Candle, Backtest_Work_Executed_At, Strategy_Id
         ) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 """
 
 
@@ -2878,10 +3067,12 @@ def add_backtesting_results(
     backtest_work_executed_at: str = "",
 ):
     connection = _get_conn()
+    exchange_fields = _exchange_symbol_metadata(symbol)
     with connection:
         connection.execute(
             sql_add_backtesting_results,
             (
+                *exchange_fields,
                 str(symbol),
                 str(timeframe),
                 float(return_perc),
@@ -2917,7 +3108,7 @@ def add_backtesting_results(
         )
 
 
-sql_update_backtesting_work_metadata = """
+sql_update_backtesting_work_metadata = f"""
     UPDATE Backtesting_Results
     SET
         Backtest_Work_Fingerprint = ?,
@@ -2926,7 +3117,8 @@ sql_update_backtesting_work_metadata = """
     WHERE
         Symbol = ?
         AND Time_Frame = ?
-        AND Strategy_Id = ?;
+        AND Strategy_Id = ?
+        AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};
 """
 
 
@@ -2955,7 +3147,7 @@ def set_backtesting_work_metadata(
         )
 
 
-sql_update_backtesting_approval = """
+sql_update_backtesting_approval = f"""
     UPDATE Backtesting_Results
     SET
         Trading_Approved = ?,
@@ -2963,7 +3155,8 @@ sql_update_backtesting_approval = """
     WHERE
         Symbol = ?
         AND Time_Frame = ?
-        AND Strategy_Id = ?;
+        AND Strategy_Id = ?
+        AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};
 """
 
 
@@ -2988,7 +3181,7 @@ def set_backtesting_approval(
         )
 
 
-sql_delete_all_backtesting_results = "DELETE FROM Backtesting_Results;"
+sql_delete_all_backtesting_results = f"DELETE FROM Backtesting_Results WHERE Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};"
 
 
 def delete_all_backtesting_results():
@@ -3021,13 +3214,14 @@ sql_create_backtesting_trades_table = """
 );
 """
 
-sql_get_all_backtesting_trades = """
+sql_get_all_backtesting_trades = f"""
     SELECT bt.Symbol, bt.Time_Frame, bt.ReturnPct, 
     bt.Strategy_Id, st.Name as Strategy_Name, 
     bt.EntryTime, bt.ExitTime, bt.EntryPrice, bt.ExitPrice, bt.PnL, bt.Duration, bt.Exit_Reason,
     bt.Hard_Stop_Loss, bt.ATR_Stop_Loss, bt.Active_Stop_Loss
     FROM Backtesting_Trades AS bt
     JOIN Strategies AS st ON bt.Strategy_Id = st.Id
+    WHERE bt.Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
     ORDER BY bt.Symbol, st.Name;
 """
 
@@ -3039,10 +3233,11 @@ def get_all_backtesting_trades():
 
 sql_add_backtesting_trade = """
     INSERT OR REPLACE INTO Backtesting_Trades (
+        Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset, Quote_Asset,
         Symbol, Time_Frame, Strategy_Id, EntryBar, ExitBar, EntryPrice, ExitPrice, PnL, ReturnPct, EntryTime, ExitTime, Duration, Exit_Reason,
         Hard_Stop_Loss, ATR_Stop_Loss, Active_Stop_Loss
         ) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 """
 
 
@@ -3065,6 +3260,7 @@ def add_backtesting_trade(
     active_stop_loss=None,
 ):
     connection = _get_conn()
+    exchange_fields = _exchange_symbol_metadata(symbol)
 
     def _nullable_float(value):
         if value is None:
@@ -3087,6 +3283,7 @@ def add_backtesting_trade(
         connection.execute(
             sql_add_backtesting_trade,
             (
+                *exchange_fields,
                 str(symbol),
                 str(timeframe),
                 str(strategy_id),
@@ -3109,12 +3306,13 @@ def add_backtesting_trade(
 
 def delete_backtesting_trades_symbol_timeframe_strategy(symbol, timeframe, strategy_id):
     connection = _get_conn()
-    sql = """
+    sql = f"""
         DELETE FROM Backtesting_Trades 
         WHERE 
             Symbol = ?
             AND Time_Frame = ?
-            AND Strategy_Id = ?;
+            AND Strategy_Id = ?
+            AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};
     """
     with connection:
         connection.execute(
@@ -3139,7 +3337,7 @@ sql_create_symbols_to_calc_table = """
 """
 
 #
-sql_get_all_symbols_to_calc = "SELECT * FROM Symbols_To_Calc;"
+sql_get_all_symbols_to_calc = f"SELECT * FROM Symbols_To_Calc WHERE Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};"
 
 
 def get_all_symbols_to_calc():
@@ -3148,11 +3346,11 @@ def get_all_symbols_to_calc():
 
 
 #
-sql_get_symbols_to_calc_by_calc_completed = """
+sql_get_symbols_to_calc_by_calc_completed = f"""
     SELECT Symbol 
     FROM Symbols_To_Calc 
     WHERE
-        Calc_Completed = ?;
+        Calc_Completed = ? AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};
 """
 
 
@@ -3164,12 +3362,12 @@ def get_symbols_to_calc_by_calc_completed(completed: int):
 
 
 #
-sql_set_symbols_to_calc_completed = """
+sql_set_symbols_to_calc_completed = f"""
     UPDATE Symbols_To_Calc 
     SET Calc_Completed = 1,
         Date_Completed = datetime('now')
     WHERE
-        Symbol = ?;
+        Symbol = ? AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};
 """
 
 
@@ -3179,9 +3377,9 @@ def set_symbols_to_calc_completed(symbol: str):
         connection.execute(sql_set_symbols_to_calc_completed, (symbol,))
 
 
-sql_delete_symbols_to_calc_completed = """
+sql_delete_symbols_to_calc_completed = f"""
     DELETE FROM Symbols_To_Calc 
-    WHERE Calc_Completed = 1;
+    WHERE Calc_Completed=1 AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};
 """
 
 
@@ -3191,7 +3389,7 @@ def delete_symbols_to_calc_completed():
         connection.execute(sql_delete_symbols_to_calc_completed)
 
 
-sql_delete_all_symbols_to_calc = "DELETE FROM Symbols_To_Calc;"
+sql_delete_all_symbols_to_calc = f"DELETE FROM Symbols_To_Calc WHERE Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};"
 
 
 def delete_all_symbols_to_calc():
@@ -3201,12 +3399,12 @@ def delete_all_symbols_to_calc():
 
 
 # add to calc the symbols with open positions
-sql_add_symbols_with_open_positions_to_calc = """
-INSERT INTO Symbols_To_Calc (Symbol, Calc_Completed, Date_Added)
-SELECT DISTINCT Symbol, 0, datetime('now')
-FROM Positions 
-WHERE Position = 1
-    AND Symbol NOT IN (SELECT Symbol FROM Symbols_To_Calc WHERE Calc_Completed = 0)
+sql_add_symbols_with_open_positions_to_calc = f"""
+INSERT INTO Symbols_To_Calc (Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset, Quote_Asset, Symbol, Calc_Completed, Date_Added)
+SELECT DISTINCT Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset, Quote_Asset, Symbol, 0, datetime('now')
+FROM Positions
+WHERE Position=1 AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
+  AND Symbol NOT IN (SELECT Symbol FROM Symbols_To_Calc WHERE Calc_Completed=0 AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL})
 """
 
 
@@ -3217,11 +3415,12 @@ def add_symbols_with_open_positions_to_calc():
 
 
 # add to calc the symbols in top rank
-sql_add_symbols_top_rank_to_calc = """
-INSERT INTO Symbols_To_Calc (Symbol, Calc_Completed, Date_Added)
-SELECT DISTINCT Symbol, 0, datetime('now')
-FROM Symbols_By_Market_Phase 
-WHERE Symbol NOT IN (SELECT Symbol FROM Symbols_To_Calc WHERE Calc_Completed = 0)
+sql_add_symbols_top_rank_to_calc = f"""
+INSERT INTO Symbols_To_Calc (Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset, Quote_Asset, Symbol, Calc_Completed, Date_Added)
+SELECT DISTINCT Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset, Quote_Asset, Symbol, 0, datetime('now')
+FROM Symbols_By_Market_Phase
+WHERE Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
+  AND Symbol NOT IN (SELECT Symbol FROM Symbols_To_Calc WHERE Calc_Completed=0 AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL})
 """
 
 
@@ -3284,12 +3483,13 @@ def _ensure_symbols_by_market_phase_columns(connection):
                 )
 
 
-sql_symbols_by_market_phase_Historical_get_symbols_days_at_top = """
+sql_symbols_by_market_phase_Historical_get_symbols_days_at_top = f"""
     SELECT symbol, 
         COUNT(DISTINCT Date_Inserted) AS Days_at_TOP,
         MIN(Date_Inserted) AS First_Date, 
         MAX(Date_Inserted) AS Last_Date  
     FROM Symbols_By_Market_Phase_Historical
+    WHERE Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
     GROUP BY symbol
     ORDER BY Days_at_TOP DESC
 """
@@ -3302,7 +3502,7 @@ def symbols_by_market_phase_Historical_get_symbols_days_at_top():
     )
 
 
-sql_get_all_symbols_by_market_phase = """
+sql_get_all_symbols_by_market_phase = f"""
     SELECT
         Id,
         Rank,
@@ -3315,7 +3515,7 @@ sql_get_all_symbols_by_market_phase = """
         Perc_Above_DSMA200,
         ROC_30,
         ROC_60
-    FROM Symbols_By_Market_Phase;
+    FROM Symbols_By_Market_Phase WHERE Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};
 """
 
 
@@ -3324,7 +3524,7 @@ def get_all_symbols_by_market_phase():
     return pd.read_sql(sql_get_all_symbols_by_market_phase, connection, index_col="Id")
 
 
-sql_get_top_performers_trading_status = """
+sql_get_top_performers_trading_status = f"""
     SELECT
         mp.Rank,
         mp.Symbol,
@@ -3334,9 +3534,9 @@ sql_get_top_performers_trading_status = """
         br.Trading_Approved,
         br.Trading_Rejection_Reasons
     FROM Symbols_By_Market_Phase mp
-    JOIN Backtesting_Results br ON br.Symbol = mp.Symbol
+    JOIN Backtesting_Results br ON br.Symbol=mp.Symbol AND br.Exchange_Id=mp.Exchange_Id
     LEFT JOIN Strategies st ON st.Id = br.Strategy_Id
-    WHERE br.Strategy_Id = ?
+    WHERE br.Strategy_Id = ? AND br.Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
     ORDER BY
         mp.Rank ASC,
         CASE br.Time_Frame
@@ -3367,7 +3567,7 @@ def get_top_performers_trading_status(strategy_id: str):
 
 
 sql_get_symbols_from_symbols_by_market_phase = (
-    "SELECT Symbol FROM Symbols_By_Market_Phase;"
+    f"SELECT Symbol FROM Symbols_By_Market_Phase WHERE Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};"
 )
 
 
@@ -3376,10 +3576,10 @@ def get_symbols_from_symbols_by_market_phase():
     return pd.read_sql(sql_get_symbols_from_symbols_by_market_phase, connection)
 
 
-sql_get_rank_from_symbols_by_market_phase_by_symbol = """
+sql_get_rank_from_symbols_by_market_phase_by_symbol = f"""
     SELECT Rank 
     FROM Symbols_By_Market_Phase
-    WHERE Symbol = ?;
+    WHERE Symbol=? AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};
 """
 
 
@@ -3399,6 +3599,7 @@ def get_rank_from_symbols_by_market_phase_by_symbol(symbol: str):
 
 sql_insert_symbols_by_market_phase = """
     INSERT INTO Symbols_By_Market_Phase (
+        Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset, Quote_Asset,
         Symbol,
         Price,
         DSMA50,
@@ -3409,7 +3610,7 @@ sql_insert_symbols_by_market_phase = """
         ROC_30,
         ROC_60,
         Rank)
-    VALUES(?,?,?,?,?,?,?,?,?,?);
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);
 """
 
 
@@ -3426,10 +3627,12 @@ def insert_symbols_by_market_phase(
     rank: int,
 ):
     connection = _get_conn()
+    exchange_fields = _exchange_symbol_metadata(symbol)
     with connection:
         connection.execute(
             sql_insert_symbols_by_market_phase,
             (
+                *exchange_fields,
                 symbol,
                 price,
                 dsma50,
@@ -3444,11 +3647,11 @@ def insert_symbols_by_market_phase(
         )
 
 
-sql_insert_symbols_by_market_phase_historical = """
+sql_insert_symbols_by_market_phase_historical = f"""
     INSERT INTO Symbols_By_Market_Phase_Historical 
-        (Symbol, Price, DSMA50, DSMA200, Market_Phase, Perc_Above_DSMA50, Perc_Above_DSMA200, ROC_30, ROC_60, Rank, Date_Inserted)
-    SELECT Symbol, Price, DSMA50, DSMA200, Market_Phase, Perc_Above_DSMA50, Perc_Above_DSMA200, ROC_30, ROC_60, Rank, ?
-    FROM Symbols_By_Market_Phase;
+        (Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset, Quote_Asset, Symbol, Price, DSMA50, DSMA200, Market_Phase, Perc_Above_DSMA50, Perc_Above_DSMA200, ROC_30, ROC_60, Rank, Date_Inserted)
+    SELECT Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset, Quote_Asset, Symbol, Price, DSMA50, DSMA200, Market_Phase, Perc_Above_DSMA50, Perc_Above_DSMA200, ROC_30, ROC_60, Rank, ?
+    FROM Symbols_By_Market_Phase WHERE Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};
 """
 
 
@@ -3460,7 +3663,7 @@ def insert_symbols_by_market_phase_historical(date_inserted: str):
         )
 
 
-sql_delete_all_symbols_by_market_phase = "DELETE FROM Symbols_By_Market_Phase;"
+sql_delete_all_symbols_by_market_phase = f"DELETE FROM Symbols_By_Market_Phase WHERE Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};"
 
 
 def delete_all_symbols_by_market_phase():
@@ -3469,12 +3672,12 @@ def delete_all_symbols_by_market_phase():
         connection.execute(sql_delete_all_symbols_by_market_phase)
 
 
-sql_get_distinct_symbol_by_market_phase_and_positions = """  
+sql_get_distinct_symbol_by_market_phase_and_positions = f"""
     SELECT DISTINCT symbol 
     FROM (
-        SELECT symbol, Rank FROM Symbols_By_Market_Phase
+        SELECT symbol, Rank FROM Symbols_By_Market_Phase WHERE Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
         UNION
-        SELECT symbol, 100 as Rank FROM Positions WHERE Position=1
+        SELECT symbol, 100 as Rank FROM Positions WHERE Position=1 AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
     ) AS symbols
     ORDER BY Rank ASC;
 """
@@ -3616,8 +3819,9 @@ sql_create_balances_table = """
 );
 """
 
-sql_add_balances = """
-    INSERT OR REPLACE INTO Balances (Date, Asset, Balance, USD_Price, BTC_Price, Balance_USD, Balance_BTC, Total_Balance_Of_BTC) VALUES (?, ?, ?, ?, ?,?, ?, ?);
+sql_add_balances = f"""
+    INSERT OR REPLACE INTO Balances (Date, Asset, Balance, USD_Price, BTC_Price, Balance_USD, Balance_BTC, Total_Balance_Of_BTC, Exchange_Id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, {ACTIVE_EXCHANGE_ID_SQL});
 """
 
 
@@ -3661,18 +3865,20 @@ def add_balances(balances: pd.DataFrame):
     dates = sorted({str(row[0]) for row in data})
     with connection:
         connection.executemany(
-            "DELETE FROM Balances WHERE Date = ?", [(date,) for date in dates]
+            f"DELETE FROM Balances WHERE Date=? AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}",
+            [(date,) for date in dates],
         )
         connection.executemany(sql_add_balances, data)
 
 
 def get_asset_balances_last_n_days(n_days):
     connection = _get_conn()
-    sql_get_balances_last_n_days = """  
+    sql_get_balances_last_n_days = f"""
         SELECT Date, Asset, ROUND(Balance_USD, 2) as Balance_USD
         FROM Balances
         WHERE Date >= date('now', ? || ' days')
-        AND Balance_USD > 1;
+        AND Balance_USD > 1
+        AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};
     """
     params = (str(-n_days),)  # Convert n_days to a negative string for date subtraction
     return pd.read_sql(sql_get_balances_last_n_days, connection, params=params)
@@ -3680,21 +3886,22 @@ def get_asset_balances_last_n_days(n_days):
 
 def get_asset_balances_ytd():
     connection = _get_conn()
-    sql_get_balances_ytd = """  
+    sql_get_balances_ytd = f"""
         SELECT Date, Asset, ROUND(Balance_USD, 2) as Balance_USD
         FROM Balances
         WHERE strftime('%Y', Date) = strftime('%Y', 'now')
-        AND Balance_USD > 1;
+        AND Balance_USD > 1
+        AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};
     """
     return pd.read_sql(sql_get_balances_ytd, connection)
 
 
 def get_asset_balances_all_time():
     connection = _get_conn()
-    sql_get_balances_all_time = """  
+    sql_get_balances_all_time = f"""
         SELECT Date, Asset, ROUND(Balance_USD, 2) as Balance_USD
         FROM Balances
-        WHERE Balance_USD > 1;
+        WHERE Balance_USD > 1 AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};
     """
     return pd.read_sql(sql_get_balances_all_time, connection)
 
@@ -3712,6 +3919,7 @@ def get_total_balance_last_n_days(n_days, asset):
             SELECT Date, ROUND(SUM(Balance_{asset}), {num_decimals}) as Total_Balance_{asset}
             FROM Balances
             WHERE Date >= date('now', ? || ' days')
+              AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
             GROUP BY Date
         """
     elif asset == "BTC":
@@ -3719,6 +3927,7 @@ def get_total_balance_last_n_days(n_days, asset):
             SELECT Date, Total_Balance_Of_BTC as Total_Balance_{asset}
             FROM Balances
             WHERE Date >= date('now', ? || ' days')
+              AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
             GROUP BY Date
         """
 
@@ -3741,6 +3950,7 @@ def get_total_balance_ytd(asset):
         SELECT Date, ROUND(SUM(Balance_{asset}), {num_decimals}) as Total_Balance_{asset}
         FROM Balances
         WHERE strftime('%Y', Date) = strftime('%Y', 'now')
+          AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
         GROUP BY Date
     """
     return pd.read_sql(sql_get_total_balance_last_n_days, connection)
@@ -3759,14 +3969,14 @@ def get_total_balance_all_time(asset):
 
     sql_get_total_balance_all_time = f"""
         SELECT Date, ROUND(SUM(Balance_{asset}), {num_decimals}) as Total_Balance_{asset}
-        FROM Balances
+        FROM Balances WHERE Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
         GROUP BY Date
     """
     return pd.read_sql(sql_get_total_balance_all_time, connection)
 
 
-sql_get_last_date_from_balances = """
-    SELECT Date FROM Balances ORDER BY Date DESC LIMIT 1;
+sql_get_last_date_from_balances = f"""
+    SELECT Date FROM Balances WHERE Exchange_Id={ACTIVE_EXCHANGE_ID_SQL} ORDER BY Date DESC LIMIT 1;
 """
 
 
@@ -3790,9 +4000,10 @@ sql_create_signals_log_table = """
     Notes TEXT
 );
 """
-sql_get_all_signals_log = """
+sql_get_all_signals_log = f"""
     SELECT *
     FROM Signals_Log
+    WHERE Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
     ORDER BY Date DESC LIMIT ?;
 """
 
@@ -3803,7 +4014,10 @@ def get_all_signals_log(num_rows):
 
 
 sql_add_signal_log = """
-    INSERT INTO Signals_Log (Date, Signal, Signal_Message, Symbol, Notes) VALUES (?, ?, ?, ?, ?);
+    INSERT INTO Signals_Log (
+        Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset, Quote_Asset,
+        Date, Signal, Signal_Message, Symbol, Notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 """
 
 
@@ -3811,11 +4025,13 @@ def add_signal_log(
     date: datetime, signal: str, signal_message: str, symbol: str, notes: str
 ):
     connection = _get_conn()
+    exchange_fields = _exchange_symbol_metadata(symbol)
     # format the current date and time
     date_formatted = date.strftime("%Y-%m-%d %H:%M:%S")
     with connection:
         connection.execute(
-            sql_add_signal_log, (date_formatted, signal, signal_message, symbol, notes)
+            sql_add_signal_log,
+            (*exchange_fields, date_formatted, signal, signal_message, symbol, notes),
         )
 
 
@@ -3942,7 +4158,7 @@ def get_onchain_btc_supply_profit_loss() -> pd.DataFrame:
     connection.execute(sql_create_onchain_btc_supply_profit_loss_table)
     _ensure_onchain_btc_supply_profit_loss_columns(connection)
     return pd.read_sql(
-        """
+        f"""
         SELECT
             Date AS date,
             Btc_Price AS btc_price,
@@ -4028,7 +4244,8 @@ def lock_value(position_id, buy_order_id, amount):
     connection = _get_conn()
     with connection:
         connection.execute(
-            "INSERT INTO Locked_Values (Position_Id, Buy_Order_Id, Locked_Amount) VALUES (?, ?, ?)",
+            f"INSERT INTO Locked_Values (Position_Id, Buy_Order_Id, Locked_Amount, Exchange_Id) "
+            f"VALUES (?, ?, ?, {ACTIVE_EXCHANGE_ID_SQL})",
             (str(position_id), buy_order_id, amount),
         )
 
@@ -4036,7 +4253,7 @@ def lock_value(position_id, buy_order_id, amount):
 # Function to release a value when the position is fully closed
 def release_value(position_id):
     connection = _get_conn()
-    sql = "UPDATE Locked_Values SET Released_At = CURRENT_TIMESTAMP, Released = 1 WHERE Position_Id = ?"
+    sql = f"UPDATE Locked_Values SET Released_At=CURRENT_TIMESTAMP, Released=1 WHERE Position_Id=? AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}"
     with connection:
         connection.execute(sql, (str(position_id),))
 
@@ -4044,7 +4261,7 @@ def release_value(position_id):
 # Function to release all locked values
 def release_all_values():
     connection = _get_conn()
-    sql = "UPDATE Locked_Values SET Released_At = CURRENT_TIMESTAMP, Released = 1 WHERE Released = 0"
+    sql = f"UPDATE Locked_Values SET Released_At=CURRENT_TIMESTAMP, Released=1 WHERE Released=0 AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}"
     with connection:
         connection.execute(sql)
 
@@ -4052,17 +4269,17 @@ def release_all_values():
 # Function to release a value when the position is fully closed
 def release_locked_value_by_id(id):
     connection = _get_conn()
-    sql = "UPDATE Locked_Values SET Released_At = CURRENT_TIMESTAMP, Released = 1 WHERE Id = ?"
+    sql = f"UPDATE Locked_Values SET Released_At=CURRENT_TIMESTAMP, Released=1 WHERE Id=? AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}"
     with connection:
         connection.execute(sql, (str(id),))
 
 
 def get_total_locked_values():
     connection = _get_conn()
-    sql = """
+    sql = f"""
         SELECT COALESCE(SUM(Locked_Amount), 0) AS Total_Locked
         FROM Locked_Values
-        WHERE Released = 0;
+        WHERE Released=0 AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};
     """
 
     df = pd.read_sql(sql, connection)
@@ -4075,12 +4292,12 @@ def get_total_locked_values():
 
 def get_all_locked_values():
     connection = _get_conn()
-    sql = """
+    sql = f"""
         WITH cte AS (
             SELECT lv.Id, po.Bot, po.Symbol, lv.Locked_Amount, lv.Locked_At
             FROM Locked_Values lv
-            JOIN Positions po ON po.Id = lv.Position_Id
-            WHERE Released = 0
+            JOIN Positions po ON po.Id=lv.Position_Id AND po.Exchange_Id=lv.Exchange_Id
+            WHERE Released=0 AND lv.Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
             ORDER BY Bot, Symbol
             )
         SELECT *
@@ -4393,7 +4610,7 @@ def auto_switch_signal_processed(
 ) -> bool:
     connection = _get_conn()
     row = connection.execute(
-        """
+        f"""
         SELECT 1
         FROM Auto_Switch_Signals
         WHERE strategy_id = ?
@@ -4401,6 +4618,7 @@ def auto_switch_signal_processed(
           AND signal = ?
           AND signal_timeframe = ?
           AND candle_id = ?
+          AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
         LIMIT 1
         """,
         (
@@ -4422,10 +4640,12 @@ def record_auto_switch_signal(
     candle_id: str,
 ) -> None:
     connection = _get_conn()
+    exchange_fields = _exchange_symbol_metadata(symbol)
     with connection:
         connection.execute(
             """
             INSERT OR IGNORE INTO Auto_Switch_Signals (
+                Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset, Quote_Asset,
                 strategy_id,
                 symbol,
                 signal,
@@ -4433,9 +4653,10 @@ def record_auto_switch_signal(
                 candle_id,
                 processed_at
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                *exchange_fields,
                 str(strategy_id),
                 str(symbol),
                 str(signal),
@@ -4694,12 +4915,21 @@ def create_tables(*, new_database: bool = False):
             "CREATE INDEX IF NOT EXISTS idx_auto_switch_signals_target ON Auto_Switch_Signals(strategy_id, symbol, signal_timeframe, candle_id)"
         )
 
-        from bec.db.exchange_schema import apply_exchange_aware_schema
+        from bec.db.exchange_schema import prepare_exchange_schema_for_startup
 
-        apply_exchange_aware_schema(
+        prepare_exchange_schema_for_startup(
             connection,
-            upgraded_install=not new_database,
+            new_database=new_database,
         )
+        for statement in (
+            "CREATE INDEX IF NOT EXISTS idx_orders_active_exchange ON Orders(Exchange_Id, Side, Date)",
+            "CREATE INDEX IF NOT EXISTS idx_positions_active_exchange ON Positions(Exchange_Id, Position, Bot, Symbol)",
+            "CREATE INDEX IF NOT EXISTS idx_backtesting_results_active_exchange ON Backtesting_Results(Exchange_Id, Symbol, Time_Frame, Strategy_Id)",
+            "CREATE INDEX IF NOT EXISTS idx_balances_active_exchange ON Balances(Exchange_Id, Date, Asset)",
+            "CREATE INDEX IF NOT EXISTS idx_backtesting_jobs_active_exchange ON Backtesting_Jobs(Exchange_Id, status, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_monte_carlo_jobs_active_exchange ON Monte_Carlo_Jobs(Exchange_Id, status, created_at)",
+        ):
+            connection.execute(statement)
 
         # Versioned migrations are handled by ``bec.db.migrations`` before this
         # compatibility initializer runs. Legacy dated SQL scripts remain in the
@@ -5285,6 +5515,7 @@ def enqueue_backtesting_jobs(jobs, batch_id: str = ""):
             symbol = str(job["symbol"]).strip().upper()
             timeframe = str(job["timeframe"]).strip()
             optimize = 1 if bool(job.get("optimize")) else 0
+            exchange_fields = _exchange_symbol_metadata(symbol)
             cursor = connection.execute(
                 """
                 SELECT id
@@ -5293,9 +5524,10 @@ def enqueue_backtesting_jobs(jobs, batch_id: str = ""):
                   AND symbol = ?
                   AND timeframe = ?
                   AND status IN ('queued', 'running')
+                  AND Exchange_Id = ?
                 LIMIT 1
                 """,
-                (strategy_id, symbol, timeframe),
+                (strategy_id, symbol, timeframe, exchange_fields[0]),
             )
             existing = cursor.fetchone()
             if existing:
@@ -5312,10 +5544,11 @@ def enqueue_backtesting_jobs(jobs, batch_id: str = ""):
             cursor = connection.execute(
                 """
                 INSERT INTO Backtesting_Jobs (
+                    Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset, Quote_Asset,
                     batch_id, strategy_id, symbol, timeframe, optimize, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, 'queued', ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)
                 """,
-                (batch_id, strategy_id, symbol, timeframe, optimize, created_at),
+                (*exchange_fields, batch_id, strategy_id, symbol, timeframe, optimize, created_at),
             )
             queued.append(
                 {
@@ -5349,6 +5582,7 @@ def get_backtesting_jobs(limit: int = 50):
             log_path,
             error_message
         FROM Backtesting_Jobs
+        WHERE Exchange_Id=(SELECT Id FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1)
         ORDER BY
             CASE status
                 WHEN 'running' THEN 0
@@ -5374,6 +5608,7 @@ def get_backtesting_job_counts():
         """
         SELECT status, COUNT(*) AS count
         FROM Backtesting_Jobs
+        WHERE Exchange_Id=(SELECT Id FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1)
         GROUP BY status
         """,
         connection,
@@ -5387,7 +5622,7 @@ def get_backtesting_job_counts_by_batch(batch_id: str):
         """
         SELECT status, COUNT(*) AS count
         FROM Backtesting_Jobs
-        WHERE batch_id = ?
+        WHERE batch_id = ? AND Exchange_Id=(SELECT Id FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1)
         GROUP BY status
         """,
         connection,
@@ -5403,7 +5638,7 @@ def claim_next_backtesting_job():
         cursor = connection.execute("""
             SELECT id, batch_id, strategy_id, symbol, timeframe, optimize
             FROM Backtesting_Jobs
-            WHERE status = 'queued'
+            WHERE status='queued' AND Exchange_Id=(SELECT Id FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1)
             ORDER BY created_at ASC, id ASC
             LIMIT 1
             """)
@@ -5419,7 +5654,7 @@ def claim_next_backtesting_job():
                 started_at = ?,
                 error_message = NULL,
                 return_code = NULL
-            WHERE id = ? AND status = 'queued'
+            WHERE id=? AND status='queued' AND Exchange_Id=(SELECT Id FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1)
             """,
             (started_at, job_id),
         )
@@ -5438,7 +5673,7 @@ def set_backtesting_job_log_path(job_id: int, log_path: str):
     connection = _get_conn()
     with connection:
         connection.execute(
-            "UPDATE Backtesting_Jobs SET log_path = ? WHERE id = ?",
+            f"UPDATE Backtesting_Jobs SET log_path=? WHERE id=? AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}",
             (str(log_path), int(job_id)),
         )
 
@@ -5455,7 +5690,7 @@ def complete_backtesting_job(job_id: int, return_code: int, error_message: str =
                 finished_at = ?,
                 return_code = ?,
                 error_message = ?
-            WHERE id = ?
+            WHERE id=? AND Exchange_Id=(SELECT Id FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1)
             """,
             (
                 status,
@@ -5480,7 +5715,7 @@ def reset_running_backtesting_jobs(
             SET status = 'failed',
                 finished_at = ?,
                 error_message = ?
-            WHERE status = 'running'
+            WHERE status='running' AND Exchange_Id=(SELECT Id FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1)
             """,
             (finished_at, error_message),
         )
@@ -5504,6 +5739,7 @@ def enqueue_monte_carlo_jobs(jobs, batch_id: str = ""):
             method = str(job["method"]).strip()
             scenarios = int(job["scenarios"])
             seed = int(job.get("seed", 42))
+            exchange_fields = _exchange_symbol_metadata(symbol)
             cursor = connection.execute(
                 """
                 SELECT id
@@ -5513,9 +5749,10 @@ def enqueue_monte_carlo_jobs(jobs, batch_id: str = ""):
                   AND timeframe = ?
                   AND method = ?
                   AND status IN ('queued', 'running')
+                  AND Exchange_Id = ?
                 LIMIT 1
                 """,
-                (strategy_id, symbol, timeframe, method),
+                (strategy_id, symbol, timeframe, method, exchange_fields[0]),
             )
             existing = cursor.fetchone()
             if existing:
@@ -5533,10 +5770,12 @@ def enqueue_monte_carlo_jobs(jobs, batch_id: str = ""):
             cursor = connection.execute(
                 """
                 INSERT INTO Monte_Carlo_Jobs (
+                    Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset, Quote_Asset,
                     batch_id, strategy_id, symbol, timeframe, method, scenarios, seed, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)
                 """,
                 (
+                    *exchange_fields,
                     batch_id,
                     strategy_id,
                     symbol,
@@ -5568,6 +5807,7 @@ def get_monte_carlo_jobs(limit: int = 50):
         SELECT id, batch_id, strategy_id, symbol, timeframe, method, scenarios, seed,
                status, created_at, started_at, finished_at, return_code, log_path, error_message
         FROM Monte_Carlo_Jobs
+        WHERE Exchange_Id=(SELECT Id FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1)
         ORDER BY COALESCE(started_at, created_at) DESC, id DESC
         LIMIT ?
         """,
@@ -5580,7 +5820,7 @@ def get_monte_carlo_job_counts():
     connection = _get_conn()
     connection.execute(sql_create_monte_carlo_jobs_table)
     return pd.read_sql(
-        "SELECT status, COUNT(*) AS count FROM Monte_Carlo_Jobs GROUP BY status",
+        f"SELECT status, COUNT(*) AS count FROM Monte_Carlo_Jobs WHERE Exchange_Id={ACTIVE_EXCHANGE_ID_SQL} GROUP BY status",
         connection,
     )
 
@@ -5592,7 +5832,7 @@ def get_monte_carlo_job_counts_by_batch(batch_id: str):
         """
         SELECT status, COUNT(*) AS count
         FROM Monte_Carlo_Jobs
-        WHERE batch_id = ?
+        WHERE batch_id=? AND Exchange_Id=(SELECT Id FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1)
         GROUP BY status
         """,
         connection,
@@ -5608,7 +5848,7 @@ def claim_next_monte_carlo_job():
         cursor = connection.execute("""
             SELECT id, batch_id, strategy_id, symbol, timeframe, method, scenarios, seed
             FROM Monte_Carlo_Jobs
-            WHERE status = 'queued'
+            WHERE status='queued' AND Exchange_Id=(SELECT Id FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1)
             ORDER BY created_at ASC, id ASC
             LIMIT 1
             """)
@@ -5623,7 +5863,7 @@ def claim_next_monte_carlo_job():
                 started_at = ?,
                 error_message = NULL,
                 return_code = NULL
-            WHERE id = ? AND status = 'queued'
+            WHERE id=? AND status='queued' AND Exchange_Id=(SELECT Id FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1)
             """,
             (started_at, row[0]),
         )
@@ -5644,7 +5884,7 @@ def set_monte_carlo_job_log_path(job_id: int, log_path: str):
     connection = _get_conn()
     with connection:
         connection.execute(
-            "UPDATE Monte_Carlo_Jobs SET log_path = ? WHERE id = ?",
+            f"UPDATE Monte_Carlo_Jobs SET log_path=? WHERE id=? AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}",
             (str(log_path), int(job_id)),
         )
 
@@ -5661,7 +5901,7 @@ def complete_monte_carlo_job(job_id: int, return_code: int, error_message: str =
                 finished_at = ?,
                 return_code = ?,
                 error_message = ?
-            WHERE id = ?
+            WHERE id=? AND Exchange_Id=(SELECT Id FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1)
             """,
             (
                 status,
@@ -5686,7 +5926,7 @@ def reset_running_monte_carlo_jobs(
             SET status = 'failed',
                 finished_at = ?,
                 error_message = ?
-            WHERE status = 'running'
+            WHERE status='running' AND Exchange_Id=(SELECT Id FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1)
             """,
             (finished_at, error_message),
         )
@@ -5698,12 +5938,13 @@ def get_backtesting_trades_by_symbol_timeframe_strategy(
     connection = _get_conn()
     connection.execute(sql_create_backtesting_trades_table)
     return pd.read_sql(
-        """
+        f"""
         SELECT *
         FROM Backtesting_Trades
         WHERE Symbol = ?
           AND Time_Frame = ?
           AND Strategy_Id = ?
+          AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
         ORDER BY EntryTime, ExitTime, Id
         """,
         connection,
@@ -5716,6 +5957,7 @@ def upsert_monte_carlo_result(result: dict):
     created_at = datetime.utcnow().isoformat(timespec="seconds")
     summary = result.get("summary", {}) if isinstance(result, dict) else {}
     metrics = result.get("metrics", {}) if isinstance(result, dict) else {}
+    exchange_fields = _exchange_symbol_metadata(str(result.get("symbol")))
 
     def _metric(metric_name, column_name):
         try:
@@ -5729,14 +5971,16 @@ def upsert_monte_carlo_result(result: dict):
         connection.execute(
             """
             INSERT OR REPLACE INTO Monte_Carlo_Results (
+                Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset, Quote_Asset,
                 Symbol, Time_Frame, Strategy_Id, Method, Scenarios, Valid_Scenarios, Seed,
                 Robustness_Score, Interpretation,
                 Net_Profit_Original, Net_Profit_Worst_5, Net_Profit_Median, Net_Profit_Best_5,
                 Max_Drawdown_Original, Max_Drawdown_Worst_5, Max_Drawdown_Median, Max_Drawdown_Best_5,
                 Html_Path, Csv_Path, Json_Path, Result_JSON, Created_At
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                *exchange_fields,
                 str(result.get("symbol")),
                 str(result.get("timeframe")),
                 str(result.get("strategy_id")),
@@ -5771,13 +6015,14 @@ def get_all_monte_carlo_results():
     connection = _get_conn()
     connection.execute(sql_create_monte_carlo_results_table)
     return pd.read_sql(
-        """
+        f"""
         SELECT id, Symbol, Time_Frame, Strategy_Id, Method, Scenarios, Valid_Scenarios,
                Seed, Robustness_Score, Interpretation,
                Net_Profit_Original, Net_Profit_Worst_5, Net_Profit_Median, Net_Profit_Best_5,
                Max_Drawdown_Original, Max_Drawdown_Worst_5, Max_Drawdown_Median, Max_Drawdown_Best_5,
                Html_Path, Csv_Path, Json_Path, Created_At
         FROM Monte_Carlo_Results
+        WHERE Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
         ORDER BY Created_At DESC
         """,
         connection,
@@ -5788,13 +6033,14 @@ def get_monte_carlo_result(symbol: str, timeframe: str, strategy_id: str, method
     connection = _get_conn()
     connection.execute(sql_create_monte_carlo_results_table)
     return pd.read_sql(
-        """
+        f"""
         SELECT *
         FROM Monte_Carlo_Results
         WHERE Symbol = ?
           AND Time_Frame = ?
           AND Strategy_Id = ?
           AND Method = ?
+          AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
         LIMIT 1
         """,
         connection,
@@ -5880,7 +6126,7 @@ def get_monte_carlo_cleanup_candidates(
 ):
     connection = _get_conn()
     connection.execute(sql_create_monte_carlo_results_table)
-    clauses = []
+    clauses = [f"Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}"]
     params = []
     if method:
         clauses.append("Method = ?")
@@ -5928,7 +6174,8 @@ def delete_monte_carlo_results(result_ids):
     placeholders = ",".join(["?"] * len(ids))
     with connection:
         cursor = connection.execute(
-            f"DELETE FROM Monte_Carlo_Results WHERE id IN ({placeholders})",
+            f"DELETE FROM Monte_Carlo_Results WHERE id IN ({placeholders}) "
+            f"AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}",
             tuple(ids),
         )
     file_summary = _delete_monte_carlo_files(paths)

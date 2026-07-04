@@ -12,8 +12,16 @@ load_env_file(override=True)
 
 # log file to store error messages
 log_filename = "main.log"
+class _ExchangeLogFilter(logging.Filter):
+    def filter(self, record):
+        record.exchange_id = database.get_active_exchange_log_identity()
+        return True
+
+
 logging.basicConfig(filename=log_filename, level=logging.INFO,
-                    format='%(asctime)s %(message)s', datefmt='%Y-%m-%d %I:%M:%S %p -')
+                    format='%(asctime)s [exchange_id=%(exchange_id)s] %(message)s', datefmt='%Y-%m-%d %I:%M:%S %p -')
+for _handler in logging.getLogger().handlers:
+    _handler.addFilter(_ExchangeLogFilter())
 
 # get settings
 # get trade_against to know which telegram bots to use (USDT/USDC or BTC)
@@ -297,6 +305,9 @@ def send_telegram_message(
         - Prefix and sanitization can be disabled for sensitive content like passwords.
     """
 
+    if include_prefix:
+        msg = f"[exchange_id={database.get_active_exchange_log_identity()}] {msg}"
+
     if sanitize:
         msg = remove_chars_exceptions(msg, parse_mode=parse_mode)
 
@@ -368,7 +379,7 @@ def send_telegram_message(
         try:            
             # Warnings are considered operational issues and are mirrored to Errors.
             # Routine status/debug messages must not use EMOJI_WARNING.
-            if emoji == EMOJI_WARNING:
+            if emoji == EMOJI_WARNING and telegram_token != telegram_token_errors:
                 resp = requests.post(
                     # "https://api.telegram.org/bot{}/sendMessage".format(telegram_token_errors), 
                     f"https://api.telegram.org/bot{telegram_token_errors}/sendMessage",

@@ -672,6 +672,34 @@ def test_warning_messages_are_mirrored_to_errors(monkeypatch):
     assert any("botmain-token/sendMessage" in url for url in urls)
 
 
+def test_warning_sent_to_errors_token_is_not_duplicated(monkeypatch):
+    posts = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+    monkeypatch.setattr(
+        telegram.requests,
+        "post",
+        lambda url, params=None, timeout=None: (
+            posts.append((url, params, timeout)) or FakeResponse()
+        ),
+    )
+    monkeypatch.setattr(telegram, "telegram_chat_id", "chat")
+    monkeypatch.setattr(telegram, "telegram_token_errors", "errors-token")
+    monkeypatch.setattr(telegram, "bot_prefix", "BEC")
+
+    telegram.send_telegram_message(
+        telegram.telegram_token_errors,
+        telegram.EMOJI_WARNING,
+        "broken",
+    )
+
+    assert len(posts) == 1
+    assert "boterrors-token/sendMessage" in posts[0][0]
+
+
 def test_closed_position_alert_is_copied_to_closed_position_bot(monkeypatch):
     posts = []
 

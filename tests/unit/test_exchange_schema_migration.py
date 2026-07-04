@@ -1,8 +1,13 @@
+import multiprocessing
 import sqlite3
 
 import pytest
 
-from bec.db.exchange_schema import apply_exchange_aware_schema
+from bec.db.exchange_schema import (
+    apply_exchange_aware_schema,
+    prepare_exchange_schema_for_startup,
+    validate_exchange_aware_schema,
+)
 from bec.db.migrations import (
     MIGRATIONS,
     PendingManualMigrationError,
@@ -11,6 +16,13 @@ from bec.db.migrations import (
     prepare_startup_migrations,
     run_dry_run,
 )
+
+
+def _validate_schema_in_process(database, ready, release):
+    with sqlite3.connect(database, timeout=0) as connection:
+        validate_exchange_aware_schema(connection)
+        ready.set()
+        release.wait(5)
 
 
 def _create_legacy_database(path):
@@ -141,6 +153,98 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
     repeated = apply_database_migrations(database, MIGRATIONS, backup=False)
     assert repeated.pending == []
     assert repeated.applied == []
+
+
+def test_existing_database_startup_only_reads_exchange_schema(tmp_path):
+    database = tmp_path / "existing.db"
+    _create_legacy_database(database)
+    apply_database_migrations(database, MIGRATIONS, backup=True)
+
+    with sqlite3.connect(database) as connection:
+        before = connection.total_changes
+        statements = []
+        connection.set_trace_callback(statements.append)
+
+        prepare_exchange_schema_for_startup(connection, new_database=False)
+        prepare_exchange_schema_for_startup(connection, new_database=False)
+
+        assert connection.total_changes == before
+        mutating = (
+            "ALTER TABLE",
+            "CREATE TABLE",
+            "DELETE FROM",
+            "DROP TABLE",
+            "INSERT INTO",
+            "REPLACE INTO",
+            "UPDATE ",
+        )
+        assert not [
+            statement
+            for statement in statements
+            if statement.lstrip().upper().startswith(mutating)
+        ]
+
+
+def test_exchange_schema_migration_is_data_idempotent(tmp_path):
+    database = tmp_path / "idempotent.db"
+    _create_legacy_database(database)
+    apply_database_migrations(database, MIGRATIONS, backup=True)
+
+    with sqlite3.connect(database) as connection:
+        before = connection.total_changes
+        apply_exchange_aware_schema(connection, upgraded_install=True)
+        connection.commit()
+        assert connection.total_changes == before
+
+
+def test_existing_database_startup_rejects_incomplete_exchange_schema(tmp_path):
+    database = tmp_path / "incomplete.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE Orders (Id INTEGER PRIMARY KEY, Symbol TEXT)")
+        with pytest.raises(RuntimeError, match="Exchange-aware schema validation failed"):
+            validate_exchange_aware_schema(connection)
+
+
+def test_read_only_startup_validation_does_not_block_job_claim(tmp_path):
+    database = tmp_path / "concurrent.db"
+    _create_legacy_database(database)
+    apply_database_migrations(database, MIGRATIONS, backup=True)
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE Test_Jobs (Id INTEGER PRIMARY KEY, Status TEXT NOT NULL)"
+        )
+        connection.execute("INSERT INTO Test_Jobs VALUES (1, 'queued')")
+
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    release = context.Event()
+    process = context.Process(
+        target=_validate_schema_in_process,
+        args=(str(database), ready, release),
+    )
+    process.start()
+    try:
+        assert ready.wait(5)
+        with sqlite3.connect(database, timeout=0) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            job = connection.execute(
+                "SELECT Id FROM Test_Jobs WHERE Status='queued'"
+            ).fetchone()
+            connection.execute(
+                "UPDATE Test_Jobs SET Status='running' WHERE Id=? AND Status='queued'",
+                (job[0],),
+            )
+            connection.commit()
+            assert connection.execute(
+                "SELECT Status FROM Test_Jobs WHERE Id=1"
+            ).fetchone() == ("running",)
+    finally:
+        release.set()
+        process.join(5)
+        if process.is_alive():
+            process.terminate()
+            process.join(5)
+    assert process.exitcode == 0
 
 
 def test_new_install_exchange_metadata_has_no_active_default(tmp_path):

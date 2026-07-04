@@ -117,6 +117,8 @@ def create_exchange_metadata(connection: sqlite3.Connection, *, upgraded_install
         ON CONFLICT(Code) DO UPDATE SET
             Name = excluded.Name,
             Trading_Mode = excluded.Trading_Mode
+        WHERE Exchanges.Name IS NOT excluded.Name
+           OR Exchanges.Trading_Mode IS NOT excluded.Trading_Mode
         """,
         (BINANCE_ID, int(upgraded_install), int(upgraded_install), quote_asset),
     )
@@ -231,7 +233,9 @@ def _backfill_symbols(connection: sqlite3.Connection) -> None:
         if not _table_exists(connection, table):
             continue
         for row_id, symbol in connection.execute(
-            f'SELECT rowid, "{symbol_column}" FROM "{table}"'
+            f'SELECT rowid, "{symbol_column}" FROM "{table}" '
+            "WHERE Exchange_Id IS NULL OR Symbol_Normalized IS NULL "
+            "OR Exchange_Symbol IS NULL OR Base_Asset IS NULL OR Quote_Asset IS NULL"
         ).fetchall():
             normalized, base, quote, resolved = normalize_legacy_binance_symbol(symbol)
             exchange_symbol = str(symbol or "").strip().upper()
@@ -256,6 +260,11 @@ def _backfill_symbols(connection: sqlite3.Connection) -> None:
                 Symbol_Normalized=excluded.Symbol_Normalized,
                 Base_Asset=excluded.Base_Asset, Quote_Asset=excluded.Quote_Asset,
                 Is_Tradable=excluded.Is_Tradable, Resolution_Status=excluded.Resolution_Status
+            WHERE Exchange_Symbols.Symbol_Normalized IS NOT excluded.Symbol_Normalized
+               OR Exchange_Symbols.Base_Asset IS NOT excluded.Base_Asset
+               OR Exchange_Symbols.Quote_Asset IS NOT excluded.Quote_Asset
+               OR Exchange_Symbols.Is_Tradable IS NOT excluded.Is_Tradable
+               OR Exchange_Symbols.Resolution_Status IS NOT excluded.Resolution_Status
             """,
             (
                 BINANCE_ID, normalized, exchange_symbol, base, quote,
@@ -267,6 +276,12 @@ def _backfill_symbols(connection: sqlite3.Connection) -> None:
 def apply_exchange_aware_schema(
     connection: sqlite3.Connection, *, upgraded_install: bool
 ) -> None:
+    """Apply the exchange-aware schema during migration or new DB initialization.
+
+    This function may alter and rebuild tables. Normal application startup for
+    an existing database must call :func:`validate_exchange_aware_schema`
+    instead.
+    """
     create_exchange_metadata(connection, upgraded_install=upgraded_install)
     for table in SYMBOL_TABLES:
         _add_columns(connection, table, COMMON_SYMBOL_COLUMNS)
@@ -295,7 +310,8 @@ def apply_exchange_aware_schema(
     if _table_exists(connection, "Orders"):
         connection.execute(
             "UPDATE Orders SET Executed_Qty=COALESCE(Executed_Qty, Qty), "
-            "Average_Price=COALESCE(Average_Price, Price), Net_Qty=COALESCE(Net_Qty, Qty)"
+            "Average_Price=COALESCE(Average_Price, Price), Net_Qty=COALESCE(Net_Qty, Qty) "
+            "WHERE Executed_Qty IS NULL OR Average_Price IS NULL OR Net_Qty IS NULL"
         )
     if _table_exists(connection, "Balances"):
         connection.execute("UPDATE Balances SET Exchange_Id=? WHERE Exchange_Id IS NULL", (BINANCE_ID,))
@@ -313,6 +329,80 @@ def apply_exchange_aware_schema(
                 f'CREATE INDEX IF NOT EXISTS "{index_name}" '
                 f'ON "{table}"(Exchange_Id, Symbol_Normalized)'
             )
+
+
+def validate_exchange_aware_schema(connection: sqlite3.Connection) -> None:
+    """Validate the migrated schema without changing database state."""
+    required_tables = ("Exchanges", "Exchange_Symbols")
+    missing_tables = [
+        table for table in required_tables if not _table_exists(connection, table)
+    ]
+
+    required_columns: dict[str, set[str]] = {
+        table: set(COMMON_SYMBOL_COLUMNS)
+        for table in SYMBOL_TABLES
+        if _table_exists(connection, table)
+    }
+    required_columns.update(
+        {
+            "Balances": {"Exchange_Id"},
+            "Locked_Values": {"Exchange_Id"},
+            "Orders": {
+                *COMMON_SYMBOL_COLUMNS,
+                "Order_Status",
+                "Executed_Qty",
+                "Average_Price",
+                "Fee_Asset",
+                "Fee_Amount",
+                "Net_Qty",
+            },
+        }
+    )
+    missing_columns: list[str] = []
+    for table, expected in required_columns.items():
+        if not _table_exists(connection, table):
+            continue
+        for column in sorted(expected - _columns(connection, table)):
+            missing_columns.append(f"{table}.{column}")
+
+    binance = None
+    if not missing_tables:
+        binance = connection.execute(
+            "SELECT Trading_Mode FROM Exchanges WHERE Code='binance'"
+        ).fetchone()
+
+    problems = []
+    if missing_tables:
+        problems.append("missing tables: " + ", ".join(missing_tables))
+    if missing_columns:
+        problems.append("missing columns: " + ", ".join(missing_columns))
+    if not missing_tables and binance != ("spot",):
+        problems.append("Binance spot metadata is missing")
+    if problems:
+        database_path = next(
+            (
+                str(row[2])
+                for row in connection.execute("PRAGMA database_list")
+                if row[1] == "main"
+            ),
+            "data.db",
+        )
+        raise RuntimeError(
+            "Exchange-aware schema validation failed ("
+            + "; ".join(problems)
+            + "). Do not start BEC with an incomplete schema. Validate a backup with: "
+            + f"python -m bec.db.migrations --database {database_path} --dry-run"
+        )
+
+
+def prepare_exchange_schema_for_startup(
+    connection: sqlite3.Connection, *, new_database: bool
+) -> None:
+    """Initialize a new database or read-only validate an existing one."""
+    if new_database:
+        apply_exchange_aware_schema(connection, upgraded_install=False)
+        return
+    validate_exchange_aware_schema(connection)
 
 
 def unresolved_legacy_symbols(connection: sqlite3.Connection) -> list[str]:
