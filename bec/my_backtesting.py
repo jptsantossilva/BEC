@@ -3771,6 +3771,7 @@ def save_backtesting_to_html(
 
 
 def run_backtest(symbol, timeframe, strategy, optimize):
+    database.require_backtesting_execution_available()
 
     # vars initialization
     n1 = 0

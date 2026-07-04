@@ -130,9 +130,24 @@ def get_ohlcv(symbol: str, interval: str, *args: Any, **kwargs: Any):
 
 
 def get_close_df(symbol: str, interval: str, *args: Any, **kwargs: Any):
-    # Preserve the established dataframe shape while callers depend only on the
-    # neutral service boundary.
-    return _legacy_binance.get_close_df(symbol, interval, *args, **kwargs)
+    price_col = str(kwargs.pop("price_col", "Close"))
+    include_symbol = bool(kwargs.get("include_symbol", False))
+    keep_time_col = bool(kwargs.get("keep_time_col", False))
+    kwargs.setdefault("drop_incomplete", True)
+    kwargs.setdefault("keep_time_col", False)
+    frame = get_ohlcv(symbol, interval, *args, **kwargs)
+    if frame.empty:
+        return frame
+    columns = []
+    if keep_time_col and "Time" in frame.columns:
+        columns.append("Time")
+    if include_symbol and "Symbol" in frame.columns:
+        columns.append("Symbol")
+    columns.append("Close")
+    result = frame[columns].copy()
+    if price_col != "Close":
+        result = result.rename(columns={"Close": price_col})
+    return result
 
 
 def get_exchange_info():
@@ -144,22 +159,35 @@ def get_exchange_info():
     return getter()
 
 
+def _require_native_private_trading(operation: str) -> None:
+    if exchange_code() != "binance":
+        from bec.exchanges.ccxt_adapter import PrivateExchangeOperationDisabled
+
+        raise PrivateExchangeOperationDisabled(
+            f"{exchange_code().title()} {operation} is disabled in public-data mode"
+        )
+
+
 def get_symbol_balance(symbol: str):
+    _require_native_private_trading("balances")
     return _legacy_binance.get_symbol_balance(symbol)
 
 
 def calc_stake_amount(symbol: str, bot: str):
+    _require_native_private_trading("position sizing")
     return _legacy_binance.calc_stake_amount(symbol, bot)
 
 
 def create_buy_order(*args: Any, **kwargs: Any):
+    _require_native_private_trading("buy orders")
     return _legacy_binance.create_buy_order(*args, **kwargs)
 
 
 def create_sell_order(*args: Any, **kwargs: Any):
+    _require_native_private_trading("sell orders")
     return _legacy_binance.create_sell_order(*args, **kwargs)
 
 
 def create_balance_snapshot(*args: Any, **kwargs: Any):
+    _require_native_private_trading("balance snapshots")
     return _legacy_binance.create_balance_snapshot(*args, **kwargs)
-

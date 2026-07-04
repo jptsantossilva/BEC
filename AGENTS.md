@@ -77,6 +77,8 @@ pins unless the dependency workflow is being updated deliberately.
   migrations, especially migrations that rebuild tables.
 - Use `agent-docs/exchange-runtime.md` for active-exchange selection, switching
   safety and exchange-scoped runtime behavior.
+- Use `agent-docs/kraken-public-data.md` for the CCXT/Kraken public-data
+  boundary and the prohibition on private Kraken operations through PR 6.
 - Use `agent-docs/plans.md` for large tasks, multi-step refactors, and
   architecture-impacting changes.
 - Use `agent-docs/add-tests.md` when adding tests or improving coverage for

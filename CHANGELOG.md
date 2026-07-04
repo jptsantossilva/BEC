@@ -15,6 +15,8 @@ All notable changes to this project will be documented in this file.
 - Telegram - Prevented operational warnings sent directly to the errors bot from being delivered twice.
 - Multi-Exchange Runtime - Scoped orders, positions, rankings, PnL, balances, backtests, locks, signals, and job queues to the app-wide active exchange.
 - Trading Dashboard - Added active exchange selection, no-exchange warnings, job activation, and switching protection for open positions and unsettled orders; logs and Telegram messages now include exchange identity.
+- Exchanges - Added the pinned CCXT backend and a Kraken public-data adapter for spot markets, aliases, precision, limits, OHLCV, ticker, order book, health checks, and cached metadata.
+- Kraken Safety - Added Kraken as an explicitly public-data-only selection; private balances and orders remain disabled and selecting Kraken does not enable scheduled trading jobs.
 
 ## [2026-06-12]
 - Market Analysis - Added a generic Market Indicators dashboard for bull and bear market signals, with separate Top Signals and Bottom Signals tables.

@@ -555,16 +555,21 @@ def main(timeframe):
     logging.basicConfig(filename=log_filename, level=logging.INFO,
                         format='%(asctime)s %(message)s', datefmt='%Y-%m-%d %I:%M:%S %p -')
 
-    # create daily balance snapshot
-    binance.create_balance_snapshot(telegram_prefix="", notify=False)
-
-    _run_btc_auto_switch_backtest_if_needed(settings, timeframe)
-    
-    # Automatically switch trade against
-    settings = trade_against_auto_switch(settings=settings, warning_stats=warning_stats)
+    active_exchange = database.get_active_exchange(required=True)
+    if active_exchange["code"] == "binance":
+        # Private account actions remain native-Binance-only through PR 6.
+        binance.create_balance_snapshot(telegram_prefix="", notify=False)
+        _run_btc_auto_switch_backtest_if_needed(settings, timeframe)
+        settings = trade_against_auto_switch(
+            settings=settings, warning_stats=warning_stats
+        )
 
     settings = config.load_settings(refresh=True)
-    trade_against = settings.trade_against
+    trade_against = (
+        settings.trade_against
+        if active_exchange["code"] == "binance"
+        else active_exchange["quote_asset"]
+    )
 
     symbols = get_symbols(trade_against=trade_against, settings=settings)
     msg = str(len(symbols)) + " symbols found. Calculating market phases..."
@@ -629,7 +634,7 @@ def main(timeframe):
     print(f"Top {str(settings.trade_top_performance)} performance symbols:")
     print(df_top_print.to_string(index=True))
 
-    if not df_top.empty:
+    if not df_top.empty and active_exchange["code"] == "binance":
         # Remove symbols from positions table that are not top performers in accumulation or bullish phase
         database.delete_positions_not_top_rank()
         database.delete_inactive_position_candidates(settings.main_strategies)
@@ -650,7 +655,7 @@ def main(timeframe):
         for strategy_id in settings.main_strategies:
             database.add_top_rank_to_positions(strategy_id=strategy_id)
 
-    else:
+    elif active_exchange["code"] == "binance":
         # if there are no symbols in accumulation or bullish phase remove all not open from positions
         database.delete_all_positions_not_open()
 

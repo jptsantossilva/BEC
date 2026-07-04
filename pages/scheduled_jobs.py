@@ -32,7 +32,10 @@ else:
             if "enabled" not in changes:
                 continue
             name = editable.iloc[int(row_idx)]["name"]
-            database.set_job_schedule_enabled(name, bool(changes["enabled"]))
+            try:
+                database.set_job_schedule_enabled(name, bool(changes["enabled"]))
+            except ValueError as exc:
+                st.error(str(exc))
 
     edited = st.data_editor(
         editable,

@@ -50,8 +50,9 @@ as Binance, adds normalized symbol and execution fields, and replaces legacy
 symbol-only uniqueness with exchange-aware constraints.
 
 For an upgraded database, Binance remains enabled and default so existing
-behavior is preserved. A fresh database contains Binance metadata only; it has
-no enabled/default exchange and exchange-dependent schedules are disabled.
+behavior is preserved. A fresh database contains Binance and Kraken metadata;
+it has no enabled/default exchange and exchange-dependent schedules are
+disabled.
 
 The migration report lists symbols that could not be normalized in
 `unresolved_legacy_symbols`. Their `Exchange_Symbols` records have
@@ -61,6 +62,13 @@ Do not deploy this application build over an unmigrated production database.
 Startup intentionally blocks on this rebuild. Validate a current production
 copy and review its unresolved symbols and row counts before applying during a
 write-free maintenance window.
+
+## Kraken Public Metadata (Version 3)
+
+Migration `3:kraken_public_exchange` is additive and may run automatically at
+startup after version 2 is present. It registers Kraken as disabled and
+non-default with `EUR` metadata. It does not add credentials, enable jobs,
+change the active Binance selection, or permit private Kraken operations.
 
 ## Rollback
 

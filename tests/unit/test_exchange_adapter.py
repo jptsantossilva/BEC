@@ -9,6 +9,7 @@ from bec.exchanges import registry
 from bec.exchanges import service
 from bec.exchanges.base import ExchangeAdapter, MarketInfo, OrderRequest, OrderStatus
 from bec.exchanges.binance_adapter import BinanceAdapter
+from bec.exchanges.ccxt_adapter import PrivateExchangeOperationDisabled
 
 
 EXCHANGE_INFO = {
@@ -116,13 +117,45 @@ def test_registry_rejects_an_active_exchange_without_an_adapter(monkeypatch):
     monkeypatch.setattr(
         database,
         "get_active_exchange",
-        lambda required=False: {"code": "kraken"},
+        lambda required=False: {"code": "coinbase"},
     )
 
-    with pytest.raises(RuntimeError, match="No adapter is available.*kraken"):
+    with pytest.raises(RuntimeError, match="No adapter is available.*coinbase"):
         registry.get_default_adapter()
 
     registry.set_default_adapter(None)
+
+
+def test_registry_selects_kraken_public_adapter(monkeypatch):
+    from bec.exchanges.kraken_adapter import KrakenAdapter
+    from bec.utils import database
+
+    registry.set_default_adapter(None)
+    monkeypatch.setattr(
+        database,
+        "get_active_exchange",
+        lambda required=False: {"code": "kraken"},
+    )
+
+    assert isinstance(registry.get_default_adapter(), KrakenAdapter)
+    registry.set_default_adapter(None)
+
+
+def test_legacy_private_service_paths_are_blocked_for_kraken(monkeypatch):
+    class PublicAdapter:
+        code = "kraken"
+
+    monkeypatch.setattr(service, "get_adapter", lambda: PublicAdapter())
+    monkeypatch.setattr(
+        service._legacy_binance,
+        "create_buy_order",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("Binance order path must not be called")
+        ),
+    )
+
+    with pytest.raises(PrivateExchangeOperationDisabled):
+        service.create_buy_order(symbol="XBTEUR", bot="1h")
 
 
 def test_binance_adapter_normalizes_markets_amounts_prices_and_limits():

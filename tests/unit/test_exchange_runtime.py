@@ -3,6 +3,7 @@ import sqlite3
 import pytest
 
 import bec.utils.database as database
+from bec.exchanges.base import MarketInfo
 from bec.db.exchange_schema import apply_exchange_aware_schema
 
 
@@ -28,7 +29,7 @@ def _runtime_database(tmp_path):
     connection.execute(
         """
         INSERT INTO Exchanges (Id, Code, Name, Enabled, Is_Default, Trading_Mode)
-        VALUES (2, 'second', 'Second', 0, 0, 'spot')
+        VALUES (2, 'kraken', 'Kraken', 0, 0, 'spot')
         """
     )
     for name in database.EXCHANGE_DEPENDENT_JOBS:
@@ -72,6 +73,121 @@ def test_new_install_activation_enables_jobs_and_candidates_do_not_block(tmp_pat
         assert connection.execute(
             "SELECT COUNT(*) FROM Job_Schedules WHERE enabled=1"
         ).fetchone()[0] == len(database.EXCHANGE_DEPENDENT_JOBS)
+    finally:
+        connection.close()
+        _restore_connection(original)
+
+
+def test_new_install_kraken_activation_keeps_scheduled_jobs_disabled(tmp_path):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        selected = database.set_active_exchange(2)
+
+        assert selected["code"] == "kraken"
+        assert connection.execute(
+            "SELECT COUNT(*) FROM Job_Schedules WHERE enabled=1"
+        ).fetchone()[0] == 0
+    finally:
+        connection.close()
+        _restore_connection(original)
+
+
+def test_switching_to_kraken_disables_live_trading_jobs(tmp_path):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        database.set_active_exchange(1)
+        database.set_active_exchange(2)
+
+        placeholders = ",".join("?" for _ in database.LIVE_TRADING_JOBS)
+        enabled_live_jobs = connection.execute(
+            f"SELECT COUNT(*) FROM Job_Schedules "
+            f"WHERE enabled=1 AND name IN ({placeholders})",
+            database.LIVE_TRADING_JOBS,
+        ).fetchone()[0]
+        assert enabled_live_jobs == 0
+    finally:
+        connection.close()
+        _restore_connection(original)
+
+
+def test_live_trading_job_cannot_be_enabled_for_public_only_kraken(tmp_path):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        database.set_active_exchange(2)
+
+        with pytest.raises(ValueError, match="public-data-only"):
+            database.set_job_schedule_enabled("main_1h", True)
+
+        assert database.get_job_schedule_enabled("main_1h") is False
+    finally:
+        connection.close()
+        _restore_connection(original)
+
+
+def test_kraken_backtesting_and_monte_carlo_queues_remain_disabled_until_pr6(
+    tmp_path,
+):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        database.set_active_exchange(2)
+
+        with pytest.raises(RuntimeError, match="PR 6"):
+            database.enqueue_backtesting_jobs(
+                [{"strategy_id": "ema", "symbol": "BTC/EUR", "timeframe": "1h"}]
+            )
+        with pytest.raises(RuntimeError, match="PR 6"):
+            database.enqueue_monte_carlo_jobs(
+                [
+                    {
+                        "strategy_id": "ema",
+                        "symbol": "BTC/EUR",
+                        "timeframe": "1h",
+                        "method": "trade_shuffle",
+                        "scenarios": 10,
+                    }
+                ]
+            )
+    finally:
+        connection.close()
+        _restore_connection(original)
+
+
+def test_kraken_persistence_uses_canonical_and_native_symbols(tmp_path, monkeypatch):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+
+    class PublicKrakenAdapter:
+        @staticmethod
+        def normalize_symbol(symbol):
+            assert symbol == "XBT/EUR"
+            return "BTC/EUR"
+
+        @staticmethod
+        def load_markets():
+            return {
+                "BTC/EUR": MarketInfo(
+                    "BTC/EUR", "XXBTZEUR", "BTC", "EUR", True
+                )
+            }
+
+    try:
+        database.set_active_exchange(2)
+        monkeypatch.setattr(
+            "bec.exchanges.registry.get_default_adapter",
+            lambda: PublicKrakenAdapter(),
+        )
+
+        assert database._exchange_symbol_metadata("XBT/EUR") == (
+            2,
+            "BTC/EUR",
+            "XXBTZEUR",
+            "BTC",
+            "EUR",
+        )
     finally:
         connection.close()
         _restore_connection(original)

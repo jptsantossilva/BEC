@@ -48,6 +48,7 @@ EXCHANGE_DEPENDENT_JOBS = (
     "symbol_by_market_phase_1d",
     "super_rsi_15m",
 )
+LIVE_TRADING_JOBS = ("main_1h", "main_4h", "main_1d")
 UNSETTLED_ORDER_STATUSES = ("pending", "open", "partially_filled", "unknown")
 
 
@@ -97,6 +98,15 @@ def exchange_log_prefix() -> str:
     return f"[exchange_id={get_active_exchange_log_identity()}]"
 
 
+def require_backtesting_execution_available() -> None:
+    exchange = get_active_exchange(required=True)
+    if exchange["code"] != "binance":
+        raise RuntimeError(
+            f"Backtesting execution for {exchange['name']} is disabled until the "
+            "exchange-specific PR 6 workflow is implemented"
+        )
+
+
 def get_exchange_switch_blockers(connection=None) -> dict[str, int]:
     connection = connection or _get_conn()
     open_positions = int(
@@ -141,10 +151,22 @@ def set_active_exchange(exchange_id: int) -> dict:
             (int(exchange_id),),
         )
         if current is None:
-            placeholders = ",".join("?" for _ in EXCHANGE_DEPENDENT_JOBS)
+            jobs_to_enable = (
+                EXCHANGE_DEPENDENT_JOBS
+                if str(target[1]) == "binance"
+                else ()
+            )
+            if jobs_to_enable:
+                placeholders = ",".join("?" for _ in jobs_to_enable)
+                connection.execute(
+                    f"UPDATE Job_Schedules SET enabled=1 WHERE name IN ({placeholders})",
+                    jobs_to_enable,
+                )
+        if str(target[1]) != "binance":
+            placeholders = ",".join("?" for _ in LIVE_TRADING_JOBS)
             connection.execute(
-                f"UPDATE Job_Schedules SET enabled=1 WHERE name IN ({placeholders})",
-                EXCHANGE_DEPENDENT_JOBS,
+                f"UPDATE Job_Schedules SET enabled=0 WHERE name IN ({placeholders})",
+                LIVE_TRADING_JOBS,
             )
         if started_transaction:
             connection.commit()
@@ -161,8 +183,22 @@ def set_active_exchange(exchange_id: int) -> dict:
 def _exchange_symbol_metadata(symbol: str) -> tuple[int, str, str, str, str]:
     from bec.db.exchange_schema import normalize_legacy_binance_symbol
 
-    exchange_id = get_active_exchange_id(required=True)
+    exchange = get_active_exchange(required=True)
+    exchange_id = int(exchange["id"])
     exchange_symbol = str(symbol or "").strip().upper()
+    if exchange["code"] == "kraken":
+        from bec.exchanges.registry import get_default_adapter
+
+        adapter = get_default_adapter()
+        normalized = adapter.normalize_symbol(exchange_symbol)
+        market = adapter.load_markets()[normalized]
+        return (
+            exchange_id,
+            normalized,
+            market.exchange_symbol,
+            market.base_asset,
+            market.quote_asset,
+        )
     normalized, base, quote, _ = normalize_legacy_binance_symbol(exchange_symbol)
     return exchange_id, normalized, exchange_symbol, base, quote
 
@@ -5511,6 +5547,7 @@ def ensure_monte_carlo_tables():
 def enqueue_backtesting_jobs(jobs, batch_id: str = ""):
     import uuid
 
+    require_backtesting_execution_available()
     connection = _get_conn()
     batch_id = batch_id or uuid.uuid4().hex
     created_at = datetime.utcnow().isoformat(timespec="seconds")
@@ -5733,6 +5770,7 @@ def reset_running_backtesting_jobs(
 def enqueue_monte_carlo_jobs(jobs, batch_id: str = ""):
     import uuid
 
+    require_backtesting_execution_available()
     connection = _get_conn()
     batch_id = batch_id or uuid.uuid4().hex
     created_at = datetime.utcnow().isoformat(timespec="seconds")
@@ -6222,6 +6260,17 @@ def get_job_schedules():
 
 def set_job_schedule_enabled(name: str, enabled: bool):
     connection = _get_conn()
+    active_exchange = get_active_exchange(required=False)
+    if (
+        bool(enabled)
+        and str(name) in LIVE_TRADING_JOBS
+        and active_exchange is not None
+        and active_exchange["code"] != "binance"
+    ):
+        raise ValueError(
+            f"{name} cannot be enabled while {active_exchange['name']} is "
+            "public-data-only"
+        )
     with connection:
         connection.execute(
             "UPDATE Job_Schedules SET enabled = ? WHERE name = ?",

@@ -15,15 +15,19 @@ def get_default_adapter() -> ExchangeAdapter:
     from bec.utils import database
 
     exchange = database.get_active_exchange(required=True)
-    if exchange["code"] != "binance":
-        raise RuntimeError(
-            f"No adapter is available for active exchange: {exchange['code']}"
-        )
+    code = str(exchange["code"])
     # Keep adapter imports lazy. Resetting the registry during exchange
-    # selection must not initialize Binance, Telegram, or database settings.
-    from bec.exchanges.binance_adapter import BinanceAdapter
+    # selection must not initialize an exchange client or database settings.
+    if code == "binance":
+        from bec.exchanges.binance_adapter import BinanceAdapter
 
-    _default_adapter = BinanceAdapter()
+        _default_adapter = BinanceAdapter()
+    elif code == "kraken":
+        from bec.exchanges.kraken_adapter import KrakenAdapter
+
+        _default_adapter = KrakenAdapter()
+    else:
+        raise RuntimeError(f"No adapter is available for active exchange: {code}")
     return _default_adapter
 
 

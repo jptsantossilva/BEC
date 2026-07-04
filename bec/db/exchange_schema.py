@@ -6,6 +6,7 @@ import sqlite3
 
 
 BINANCE_ID = 1
+KRAKEN_ID = 2
 KNOWN_QUOTES = ("FDUSD", "BUSD", "USDT", "USDC", "TUSD", "EUR", "GBP", "BTC", "ETH", "BNB")
 
 SYMBOL_TABLES = {
@@ -121,6 +122,23 @@ def create_exchange_metadata(connection: sqlite3.Connection, *, upgraded_install
            OR Exchanges.Trading_Mode IS NOT excluded.Trading_Mode
         """,
         (BINANCE_ID, int(upgraded_install), int(upgraded_install), quote_asset),
+    )
+
+
+def register_kraken_public_exchange(connection: sqlite3.Connection) -> None:
+    """Register Kraken as selectable public-data-only infrastructure."""
+    connection.execute(
+        """
+        INSERT INTO Exchanges
+            (Id, Code, Name, Enabled, Is_Default, Quote_Asset, Trading_Mode)
+        VALUES (?, 'kraken', 'Kraken', 0, 0, 'EUR', 'spot')
+        ON CONFLICT(Code) DO UPDATE SET
+            Name=excluded.Name,
+            Trading_Mode=excluded.Trading_Mode
+        WHERE Exchanges.Name IS NOT excluded.Name
+           OR Exchanges.Trading_Mode IS NOT excluded.Trading_Mode
+        """,
+        (KRAKEN_ID,),
     )
 
 
@@ -401,6 +419,7 @@ def prepare_exchange_schema_for_startup(
     """Initialize a new database or read-only validate an existing one."""
     if new_database:
         apply_exchange_aware_schema(connection, upgraded_install=False)
+        register_kraken_public_exchange(connection)
         return
     validate_exchange_aware_schema(connection)
 

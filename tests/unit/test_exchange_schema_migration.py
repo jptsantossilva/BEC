@@ -13,6 +13,8 @@ from bec.db.migrations import (
     PendingManualMigrationError,
     apply_database_migrations,
     apply_pending_migrations,
+    mark_new_database_current,
+    pending_migrations,
     prepare_startup_migrations,
     run_dry_run,
 )
@@ -96,17 +98,26 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
             prepare_startup_migrations(connection, MIGRATIONS, new_database=False)
 
     report = run_dry_run(database, MIGRATIONS)
-    assert report.applied == ["2:exchange_aware_schema"]
+    assert report.applied == [
+        "2:exchange_aware_schema",
+        "3:kraken_public_exchange",
+    ]
     assert report.unresolved_legacy_symbols == ["UNKNOWNPAIR"]
 
     applied = apply_database_migrations(database, MIGRATIONS, backup=True)
-    assert applied.applied == ["2:exchange_aware_schema"]
+    assert applied.applied == [
+        "2:exchange_aware_schema",
+        "3:kraken_public_exchange",
+    ]
     assert applied.unresolved_legacy_symbols == ["UNKNOWNPAIR"]
 
     with sqlite3.connect(database) as connection:
         assert connection.execute(
             "SELECT Code, Enabled, Is_Default, Quote_Asset FROM Exchanges"
-        ).fetchall() == [("binance", 1, 1, "USDT")]
+        ).fetchall() == [
+            ("binance", 1, 1, "USDT"),
+            ("kraken", 0, 0, "EUR"),
+        ]
         assert connection.execute(
             "SELECT Exchange_Id, Symbol, Symbol_Normalized, Exchange_Symbol, "
             "Base_Asset, Quote_Asset, Order_Status, Executed_Qty, Average_Price, Net_Qty "
@@ -133,16 +144,16 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
         ).fetchone()[0] == 1
         connection.execute(
             """
-            INSERT INTO Exchanges
-                (Id, Code, Name, Enabled, Is_Default, Trading_Mode)
-            VALUES (2, 'test-exchange', 'Test Exchange', 0, 0, 'spot')
+                INSERT INTO Exchanges
+                    (Id, Code, Name, Enabled, Is_Default, Trading_Mode)
+                VALUES (3, 'test-exchange', 'Test Exchange', 0, 0, 'spot')
             """
         )
         connection.execute(
             """
-            INSERT INTO Backtesting_Results
-                (Symbol, Time_Frame, Strategy_Id, Exchange_Id)
-            VALUES ('BTCUSDC', '1h', 'ema', 2)
+                INSERT INTO Backtesting_Results
+                    (Symbol, Time_Frame, Strategy_Id, Exchange_Id)
+                VALUES ('BTCUSDC', '1h', 'ema', 3)
             """
         )
         assert connection.execute(
@@ -265,12 +276,12 @@ def test_new_install_exchange_metadata_has_no_active_default(tmp_path):
             """
         )
         connection.execute("BEGIN IMMEDIATE")
-        apply_exchange_aware_schema(connection, upgraded_install=False)
+        prepare_exchange_schema_for_startup(connection, new_database=True)
         connection.commit()
 
         assert connection.execute(
-            "SELECT Code, Enabled, Is_Default FROM Exchanges"
-        ).fetchone() == ("binance", 0, 0)
+            "SELECT Code, Enabled, Is_Default FROM Exchanges ORDER BY Id"
+        ).fetchall() == [("binance", 0, 0), ("kraken", 0, 0)]
 
         connection.execute("BEGIN IMMEDIATE")
         apply_exchange_aware_schema(connection, upgraded_install=True)
@@ -278,3 +289,36 @@ def test_new_install_exchange_metadata_has_no_active_default(tmp_path):
         assert connection.execute(
             "SELECT Code, Enabled, Is_Default FROM Exchanges"
         ).fetchone() == ("binance", 0, 0)
+
+
+def test_kraken_metadata_migration_applies_automatically_after_version_two(tmp_path):
+    database = tmp_path / "version-two.db"
+    _create_legacy_database(database)
+    with sqlite3.connect(database) as connection:
+        apply_pending_migrations(connection, MIGRATIONS[:2], allow_rebuild=True)
+
+        applied = prepare_startup_migrations(
+            connection,
+            MIGRATIONS,
+            new_database=False,
+        )
+
+        assert [migration.name for migration in applied] == [
+            "kraken_public_exchange"
+        ]
+        assert connection.execute(
+            "SELECT Enabled, Is_Default FROM Exchanges WHERE Code='kraken'"
+        ).fetchone() == (0, 0)
+
+
+def test_new_database_is_marked_current_with_kraken_public_metadata(tmp_path):
+    database = tmp_path / "new-current.db"
+    with sqlite3.connect(database) as connection:
+        prepare_startup_migrations(connection, MIGRATIONS, new_database=True)
+        prepare_exchange_schema_for_startup(connection, new_database=True)
+        mark_new_database_current(connection, MIGRATIONS)
+
+        assert pending_migrations(connection, MIGRATIONS) == ()
+        assert connection.execute(
+            "SELECT Code, Enabled, Is_Default FROM Exchanges ORDER BY Id"
+        ).fetchall() == [("binance", 0, 0), ("kraken", 0, 0)]

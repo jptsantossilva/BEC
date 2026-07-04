@@ -810,6 +810,11 @@ def estimate_backtest_report_height(html_content):
 
 
 def run_backtest_for_selection(strategy_id, symbol, timeframe):
+    try:
+        database.require_backtesting_execution_available()
+    except RuntimeError as exc:
+        st.warning(str(exc))
+        return False
     strategy_id = str(strategy_id).strip()
     symbol = str(symbol).strip().upper()
     timeframe = str(timeframe).strip()

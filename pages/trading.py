@@ -988,7 +988,7 @@ def settings():
     with tab_settings:
         st.markdown("### Exchange")
         exchanges = database.get_exchanges()
-        exchanges = exchanges[exchanges["Code"] == "binance"]
+        exchanges = exchanges[exchanges["Code"].isin(("binance", "kraken"))]
         active_exchange = database.get_active_exchange(required=False)
         if exchanges.empty:
             st.error("No exchange adapters are configured.")
@@ -1034,6 +1034,20 @@ def settings():
             f"Active exchange: {active_exchange['name']} · "
             f"Mode: {active_exchange['trading_mode']}"
         )
+        if active_exchange["code"] == "kraken":
+            st.warning(
+                "Kraken is available for public market data only. Private balances "
+                "and order execution are disabled, and live trading jobs remain off."
+            )
+            try:
+                health = binance.health_check()
+                if health.available:
+                    st.success(f"Kraken public API: {health.message}")
+                else:
+                    st.error(f"Kraken public API: {health.message}")
+            except Exception as exc:
+                st.error(f"Kraken public API check failed: {exc}")
+            return
         st.divider()
         st.markdown("### Overview")
         # Compact header card
