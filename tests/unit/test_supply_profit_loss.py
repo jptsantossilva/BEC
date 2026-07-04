@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 import bec.utils.database as database
+from bec.db.exchange_schema import apply_exchange_aware_schema
 from bec.market_indicators import supply_profit_loss as spl
 
 
@@ -14,6 +15,9 @@ def _use_memory_db(monkeypatch):
     conn.execute(database.sql_create_onchain_btc_supply_profit_loss_table)
     conn.execute(database.sql_create_onchain_signal_alerts_sent_table)
     conn.execute(database.sql_create_signals_log_table)
+    conn.execute("BEGIN IMMEDIATE")
+    apply_exchange_aware_schema(conn, upgraded_install=True)
+    conn.commit()
     monkeypatch.setattr(database._thread_local, "conn", conn, raising=False)
     return conn
 

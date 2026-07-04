@@ -4,7 +4,7 @@ import pytest
 
 import bec.utils.config as config
 import bec.utils.database as database
-from bec.db.exchange_schema import create_exchange_metadata
+from bec.db.exchange_schema import apply_exchange_aware_schema, create_exchange_metadata
 from bec.strategy_builder.templates import get_builtin_template
 
 
@@ -126,6 +126,36 @@ def test_new_install_disables_exchange_dependent_jobs(tmp_path):
         assert test_conn.execute(
             "SELECT COUNT(*) FROM Exchanges WHERE Enabled=1 OR Is_Default=1"
         ).fetchone()[0] == 0
+    finally:
+        test_conn.close()
+        if original_conn is None:
+            try:
+                delattr(database._thread_local, "conn")
+            except AttributeError:
+                pass
+        else:
+            database._thread_local.conn = original_conn
+
+
+def test_upgraded_install_keeps_binance_active_and_jobs_enabled(tmp_path):
+    original_conn = getattr(database._thread_local, "conn", None)
+    test_conn = sqlite3.connect(tmp_path / "data.db", check_same_thread=False)
+    test_conn.execute(database.sql_create_job_schedules_table)
+    create_exchange_metadata(test_conn, upgraded_install=True)
+    test_conn.commit()
+
+    database._thread_local.conn = test_conn
+    try:
+        database.ensure_job_schedules()
+
+        assert database.get_active_exchange(required=True)["code"] == "binance"
+        placeholders = ",".join("?" for _ in database.EXCHANGE_DEPENDENT_JOBS)
+        enabled = test_conn.execute(
+            f"SELECT COUNT(*) FROM Job_Schedules "
+            f"WHERE enabled=1 AND name IN ({placeholders})",
+            database.EXCHANGE_DEPENDENT_JOBS,
+        ).fetchone()[0]
+        assert enabled == len(database.EXCHANGE_DEPENDENT_JOBS)
     finally:
         test_conn.close()
         if original_conn is None:
@@ -336,6 +366,9 @@ def test_symbols_by_market_phase_persists_roc_columns_to_history(tmp_path):
     test_conn = sqlite3.connect(tmp_path / "data.db", check_same_thread=False)
     test_conn.execute(database.sql_create_symbols_by_market_phase_table)
     test_conn.execute(database.sql_create_symbols_by_market_phase_historical_table)
+    test_conn.execute("BEGIN IMMEDIATE")
+    apply_exchange_aware_schema(test_conn, upgraded_install=True)
+    test_conn.commit()
     database._thread_local.conn = test_conn
 
     try:
@@ -496,6 +529,9 @@ def test_delete_inactive_position_candidates_preserves_only_active_pending_rows(
     test_conn = sqlite3.connect(tmp_path / "data.db", check_same_thread=False)
     test_conn.execute(database.sql_create_positions_table)
     test_conn.execute(database.sql_create_locked_values_table)
+    test_conn.execute("BEGIN IMMEDIATE")
+    apply_exchange_aware_schema(test_conn, upgraded_install=True)
+    test_conn.commit()
     test_conn.executemany(
         """
         INSERT INTO Positions (Bot, Symbol, Position, Strategy_Id, Strategy_Name)
@@ -552,6 +588,9 @@ def test_position_cleanup_refuses_to_orphan_active_locked_values(tmp_path):
     test_conn = sqlite3.connect(tmp_path / "data.db", check_same_thread=False)
     test_conn.execute(database.sql_create_positions_table)
     test_conn.execute(database.sql_create_locked_values_table)
+    test_conn.execute("BEGIN IMMEDIATE")
+    apply_exchange_aware_schema(test_conn, upgraded_install=True)
+    test_conn.commit()
     position_id = test_conn.execute(
         """
         INSERT INTO Positions (Bot, Symbol, Position, Strategy_Id)

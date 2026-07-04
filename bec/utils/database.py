@@ -2132,7 +2132,15 @@ def delete_all_positions():
         _delete_positions_and_released_locks(connection)
 
 
-sql_delete_positions_not_top_rank = "DELETE FROM Positions where Position = 0 and Symbol not in (select Symbol from Symbols_By_Market_Phase);"
+sql_delete_positions_not_top_rank = f"""
+    DELETE FROM Positions
+    WHERE Position=0
+      AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
+      AND Symbol NOT IN (
+          SELECT Symbol FROM Symbols_By_Market_Phase
+          WHERE Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
+      );
+"""
 
 
 def delete_positions_not_top_rank():
@@ -2141,7 +2149,8 @@ def delete_positions_not_top_rank():
         _delete_positions_and_released_locks(
             connection,
             "Position = 0 AND Symbol NOT IN "
-            "(SELECT Symbol FROM Symbols_By_Market_Phase)",
+            f"(SELECT Symbol FROM Symbols_By_Market_Phase "
+            f"WHERE Exchange_Id={ACTIVE_EXCHANGE_ID_SQL})",
         )
 
 

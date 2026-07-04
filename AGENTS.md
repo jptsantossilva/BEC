@@ -75,6 +75,8 @@ pins unless the dependency workflow is being updated deliberately.
   gated multi-exchange migration sequence and PR completion criteria.
 - Use `agent-docs/database-migrations.md` before adding or applying SQLite
   migrations, especially migrations that rebuild tables.
+- Use `agent-docs/exchange-runtime.md` for active-exchange selection, switching
+  safety and exchange-scoped runtime behavior.
 - Use `agent-docs/plans.md` for large tasks, multi-step refactors, and
   architecture-impacting changes.
 - Use `agent-docs/add-tests.md` when adding tests or improving coverage for

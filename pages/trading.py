@@ -986,6 +986,55 @@ def blacklist():
 
 def settings():
     with tab_settings:
+        st.markdown("### Exchange")
+        exchanges = database.get_exchanges()
+        exchanges = exchanges[exchanges["Code"] == "binance"]
+        active_exchange = database.get_active_exchange(required=False)
+        if exchanges.empty:
+            st.error("No exchange adapters are configured.")
+            return
+        exchange_options = exchanges["Id"].astype(int).tolist()
+        labels = {
+            int(row["Id"]): f"{row['Name']} ({row['Code']})"
+            for _, row in exchanges.iterrows()
+        }
+        selected_exchange = st.selectbox(
+            "Active exchange",
+            exchange_options,
+            index=(
+                exchange_options.index(int(active_exchange["id"]))
+                if active_exchange and int(active_exchange["id"]) in exchange_options
+                else None
+            ),
+            format_func=lambda value: labels[int(value)],
+            placeholder="Select an exchange",
+            key="active_exchange_selector",
+        )
+        blockers = database.get_exchange_switch_blockers()
+        if blockers["open_positions"] or blockers["unsettled_orders"]:
+            st.warning(
+                "Exchange switching is blocked while open positions or unsettled "
+                f"orders exist ({blockers['open_positions']} positions, "
+                f"{blockers['unsettled_orders']} orders)."
+            )
+        if st.button("Apply exchange", disabled=selected_exchange is None):
+            try:
+                database.set_active_exchange(int(selected_exchange))
+                st.success("Active exchange updated.")
+                st.rerun()
+            except ValueError as exc:
+                st.error(str(exc))
+        if active_exchange is None:
+            st.warning(
+                "No active exchange is selected. Exchange-dependent jobs and trading "
+                "remain disabled."
+            )
+            return
+        st.caption(
+            f"Active exchange: {active_exchange['name']} · "
+            f"Mode: {active_exchange['trading_mode']}"
+        )
+        st.divider()
         st.markdown("### Overview")
         # Compact header card
         ta = config.read_setting("trade_against")
@@ -1348,6 +1397,11 @@ def show_main_page():
 
     global num_decimals
     num_decimals = 8 if trade_against == "BTC" else 2
+    active_exchange = database.get_active_exchange(required=False)
+    if active_exchange:
+        st.caption(f"Exchange: {active_exchange['name']} ({active_exchange['code']})")
+    else:
+        st.warning("No active exchange selected. Open Trading → Settings to select one.")
 
     global tab_upnl, tab_rpnl, tab_top_perf, tab_signals, tab_blacklist, tab_settings
     if st.session_state.get(TRADING_ACTIVE_TAB_KEY) not in TRADING_TAB_OPTIONS:

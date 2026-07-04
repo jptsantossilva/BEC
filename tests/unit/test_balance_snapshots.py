@@ -3,11 +3,15 @@ import sqlite3
 import pandas as pd
 
 import bec.utils.database as database
+from bec.db.exchange_schema import apply_exchange_aware_schema
 
 
 def _use_temp_balances_db(monkeypatch):
     conn = sqlite3.connect(":memory:")
     conn.execute(database.sql_create_balances_table)
+    conn.execute("BEGIN IMMEDIATE")
+    apply_exchange_aware_schema(conn, upgraded_install=True)
+    conn.commit()
     database._ensure_balances_unique_index(conn)
     monkeypatch.setattr(database._thread_local, "conn", conn, raising=False)
     return conn

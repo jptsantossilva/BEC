@@ -39,6 +39,21 @@ def test_run_loop_exits_when_runner_lock_unavailable(monkeypatch, capsys):
     assert "jobs_runner already running" in capsys.readouterr().out
 
 
+def test_runner_console_and_job_logs_include_exchange_identity(monkeypatch, capsys):
+    monkeypatch.setattr(
+        jobs_runner.database,
+        "exchange_log_prefix",
+        lambda: "[exchange_id=1:binance]",
+    )
+
+    jobs_runner._print_log("runner message")
+    log_file = io.StringIO()
+    jobs_runner._write_backtesting_job_log(log_file, "job message")
+
+    assert capsys.readouterr().out == "[exchange_id=1:binance] runner message\n"
+    assert log_file.getvalue() == "[exchange_id=1:binance] job message\n"
+
+
 def _backtesting_job():
     return {
         "id": 42,

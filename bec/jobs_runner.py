@@ -18,6 +18,14 @@ RUNNER_LOCK_PATH = os.path.join(ROOT_DIR, "static", "backtest_results", "jobs_ru
 _RUNNER_LOCK_FILE = None
 
 
+def _exchange_log_message(message: str) -> str:
+    return f"{database.exchange_log_prefix()} {message}"
+
+
+def _print_log(message: str) -> None:
+    print(_exchange_log_message(message))
+
+
 def _acquire_runner_lock() -> bool:
     global _RUNNER_LOCK_FILE
     if _RUNNER_LOCK_FILE is not None:
@@ -136,12 +144,15 @@ def _start_next_backtesting_job():
 
     started_at = datetime.now(timezone.utc).isoformat()
     log_file.write(
-        f"[{started_at}] Running backtest job {job['id']}: "
-        f"{job['strategy_id']} - {job['symbol']} - {job['timeframe']} "
-        f"(optimize={job['optimize']})\n"
+        _exchange_log_message(
+            f"[{started_at}] Running backtest job {job['id']}: "
+            f"{job['strategy_id']} - {job['symbol']} - {job['timeframe']} "
+            f"(optimize={job['optimize']})"
+        )
+        + "\n"
     )
     log_file.flush()
-    print(
+    _print_log(
         f"[{started_at}] Running backtest job {job['id']} "
         f"({job['strategy_id']} - {job['symbol']} - {job['timeframe']})"
     )
@@ -159,7 +170,7 @@ def _start_next_backtesting_job():
 def _write_backtesting_job_log(log_file, message: str):
     if log_file is None:
         return
-    log_file.write(f"{message}\n")
+    log_file.write(f"{_exchange_log_message(message)}\n")
     log_file.flush()
 
 
@@ -225,14 +236,22 @@ def _finish_backtesting_job(running_job):
         return False
 
     finished_at = datetime.now(timezone.utc).isoformat()
-    log_file.write(f"\n[{finished_at}] Backtest job finished with return code {return_code}.\n")
+    log_file.write(
+        "\n"
+        + _exchange_log_message(
+            f"[{finished_at}] Backtest job finished with return code {return_code}."
+        )
+        + "\n"
+    )
     log_file.flush()
     if return_code == 0:
         _sync_backtesting_result_to_existing_position(job, log_file=log_file)
     error_message = "" if return_code == 0 else "Backtest subprocess failed. Check the job log."
     database.complete_backtesting_job(job["id"], return_code, error_message)
     log_file.close()
-    print(f"[{finished_at}] Backtest job {job['id']} finished with return code {return_code}")
+    _print_log(
+        f"[{finished_at}] Backtest job {job['id']} finished with return code {return_code}"
+    )
     return True
 
 def _start_next_monte_carlo_job():
@@ -264,12 +283,15 @@ def _start_next_monte_carlo_job():
 
     started_at = datetime.now(timezone.utc).isoformat()
     log_file.write(
-        f"[{started_at}] Running Monte Carlo job {job['id']}: "
-        f"{job['method']} - {job['strategy_id']} - {job['symbol']} - {job['timeframe']} "
-        f"(scenarios={job['scenarios']}, seed={job['seed']})\n"
+        _exchange_log_message(
+            f"[{started_at}] Running Monte Carlo job {job['id']}: "
+            f"{job['method']} - {job['strategy_id']} - {job['symbol']} - {job['timeframe']} "
+            f"(scenarios={job['scenarios']}, seed={job['seed']})"
+        )
+        + "\n"
     )
     log_file.flush()
-    print(
+    _print_log(
         f"[{started_at}] Running Monte Carlo job {job['id']} "
         f"({job['method']} - {job['strategy_id']} - {job['symbol']} - {job['timeframe']})"
     )
@@ -292,20 +314,28 @@ def _finish_monte_carlo_job(running_job):
         return False
 
     finished_at = datetime.now(timezone.utc).isoformat()
-    log_file.write(f"\n[{finished_at}] Monte Carlo job finished with return code {return_code}.\n")
+    log_file.write(
+        "\n"
+        + _exchange_log_message(
+            f"[{finished_at}] Monte Carlo job finished with return code {return_code}."
+        )
+        + "\n"
+    )
     log_file.flush()
     log_file.close()
     error_message = "" if return_code == 0 else "Monte Carlo subprocess failed. Check the job log."
     database.complete_monte_carlo_job(job["id"], return_code, error_message)
-    print(f"[{finished_at}] Monte Carlo job {job['id']} finished with return code {return_code}")
+    _print_log(
+        f"[{finished_at}] Monte Carlo job {job['id']} finished with return code {return_code}"
+    )
     return True
 
 def run_loop():
     if not _acquire_runner_lock():
-        print("jobs_runner already running; exiting duplicate process.")
+        _print_log("jobs_runner already running; exiting duplicate process.")
         return
 
-    print("jobs_runner started (UTC).")
+    _print_log("jobs_runner started (UTC).")
     database.reset_running_backtesting_jobs("jobs_runner restarted before this job completed.")
     database.reset_running_monte_carlo_jobs("jobs_runner restarted before this job completed.")
     running = []
@@ -325,7 +355,7 @@ def run_loop():
                 running_backtesting_job = _start_next_backtesting_job()
             except Exception as e:
                 msg = f"[backtesting_runner] failed to start queued job: {repr(e)}"
-                print(msg)
+                _print_log(msg)
                 try:
                     telegram.send_telegram_message(telegram.telegram_token_errors,
                                                    telegram.EMOJI_WARNING,
@@ -338,7 +368,7 @@ def run_loop():
                 running_monte_carlo_job = _start_next_monte_carlo_job()
             except Exception as e:
                 msg = f"[monte_carlo_runner] failed to start queued job: {repr(e)}"
-                print(msg)
+                _print_log(msg)
                 try:
                     telegram.send_telegram_message(telegram.telegram_token_errors,
                                                    telegram.EMOJI_WARNING,
@@ -349,7 +379,7 @@ def run_loop():
         try:
             schedules = database.get_job_schedules()
         except Exception as e:
-            print(f"Failed to read schedules: {e}")
+            _print_log(f"Failed to read schedules: {e}")
             time.sleep(1)
             continue
 
@@ -384,7 +414,7 @@ def run_loop():
 
             try:
                 fired_at = datetime.now(timezone.utc)
-                print(f"[{fired_at.isoformat()}] Running {name} ({cadence})")
+                _print_log(f"[{fired_at.isoformat()}] Running {name} ({cadence})")
                 args = shlex.split(row.script_args or "")
                 script = _resolve_schedule_script(row.script)
                 proc = subprocess.Popen([PYTHON, script, *args], cwd=ROOT_DIR)
@@ -392,7 +422,7 @@ def run_loop():
                 database.update_job_last_run(name, slot.isoformat())
             except Exception as e:
                 msg = f"[signals_runner] {name} failed: {repr(e)}"
-                print(msg)
+                _print_log(msg)
                 try:
                     telegram.send_telegram_message(telegram.telegram_token_errors,
                                                    telegram.EMOJI_WARNING,

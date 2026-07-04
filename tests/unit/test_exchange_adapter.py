@@ -3,6 +3,9 @@ import inspect
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
+from bec.exchanges import registry
 from bec.exchanges import service
 from bec.exchanges.base import ExchangeAdapter, MarketInfo, OrderRequest, OrderStatus
 from bec.exchanges.binance_adapter import BinanceAdapter
@@ -104,6 +107,22 @@ class FakeBinanceClient:
 def test_binance_adapter_implements_complete_contract():
     assert issubclass(BinanceAdapter, ExchangeAdapter)
     assert not inspect.isabstract(BinanceAdapter)
+
+
+def test_registry_rejects_an_active_exchange_without_an_adapter(monkeypatch):
+    from bec.utils import database
+
+    registry.set_default_adapter(None)
+    monkeypatch.setattr(
+        database,
+        "get_active_exchange",
+        lambda required=False: {"code": "kraken"},
+    )
+
+    with pytest.raises(RuntimeError, match="No adapter is available.*kraken"):
+        registry.get_default_adapter()
+
+    registry.set_default_adapter(None)
 
 
 def test_binance_adapter_normalizes_markets_amounts_prices_and_limits():
