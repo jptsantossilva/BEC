@@ -7,6 +7,19 @@ from bec.exchanges.base import ExchangeAdapter
 _default_adapter: ExchangeAdapter | None = None
 
 
+def get_adapter_for_code(code: str) -> ExchangeAdapter:
+    code = str(code or "").strip().lower()
+    if code == "binance":
+        from bec.exchanges.binance_adapter import BinanceAdapter
+
+        return BinanceAdapter()
+    if code == "kraken":
+        from bec.exchanges.kraken_adapter import KrakenAdapter
+
+        return KrakenAdapter()
+    raise RuntimeError(f"No adapter is available for exchange: {code}")
+
+
 def get_default_adapter() -> ExchangeAdapter:
     global _default_adapter
     if _default_adapter is not None:
@@ -18,16 +31,7 @@ def get_default_adapter() -> ExchangeAdapter:
     code = str(exchange["code"])
     # Keep adapter imports lazy. Resetting the registry during exchange
     # selection must not initialize an exchange client or database settings.
-    if code == "binance":
-        from bec.exchanges.binance_adapter import BinanceAdapter
-
-        _default_adapter = BinanceAdapter()
-    elif code == "kraken":
-        from bec.exchanges.kraken_adapter import KrakenAdapter
-
-        _default_adapter = KrakenAdapter()
-    else:
-        raise RuntimeError(f"No adapter is available for active exchange: {code}")
+    _default_adapter = get_adapter_for_code(code)
     return _default_adapter
 
 

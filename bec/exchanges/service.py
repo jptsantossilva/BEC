@@ -42,6 +42,7 @@ def get_tradable_symbols(
 ) -> list[str]:
     quote = str(quote_asset).upper()
     excluded = {str(asset).upper() for asset in (excluded_base_assets or set())}
+    adapter = get_adapter()
     symbols = []
     for market in load_markets().values():
         if (
@@ -50,7 +51,9 @@ def get_tradable_symbols(
             and market.base_asset not in excluded
             and not market.base_asset.endswith(("UP", "DOWN"))
         ):
-            symbols.append(market.exchange_symbol)
+            symbols.append(
+                market.exchange_symbol if adapter.code == "binance" else market.symbol
+            )
     return sorted(set(symbols))
 
 

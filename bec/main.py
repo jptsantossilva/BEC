@@ -390,6 +390,31 @@ def _has_approved_backtest(strategy_id: str, symbol: str, timeframe: str) -> boo
     )
     if df.empty:
         return False
+    try:
+        settings = database.get_backtesting_settings()
+        if settings.get("Commission_Value") is None:
+            return False
+        strategy_df = database.get_strategy_by_id(strategy_id)
+        strategy_row = strategy_df.iloc[0] if not strategy_df.empty else None
+        optimize = bool(
+            int(strategy_row.get("Backtest_Optimize", 0))
+            if strategy_row is not None
+            else 0
+        )
+        work_fingerprint = database.build_backtesting_work_fingerprint(
+            strategy_id,
+            optimize,
+            settings,
+            strategy_row=strategy_row,
+        )
+    except (RuntimeError, TypeError, ValueError):
+        return False
+    if not database.backtesting_result_matches_context(
+        df.iloc[0],
+        work_fingerprint=work_fingerprint,
+        commission_value=float(settings["Commission_Value"]),
+    ):
+        return False
     approved, _ = database.is_backtest_approved(timeframe, df.iloc[0])
     return bool(approved)
 

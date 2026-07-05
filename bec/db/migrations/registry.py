@@ -8,6 +8,12 @@ from __future__ import annotations
 
 import sqlite3
 
+from bec.db.backtesting_schema import (
+    apply_exchange_backtesting_schema,
+    apply_kraken_backtesting_defaults,
+    validate_exchange_backtesting_schema,
+    validate_kraken_backtesting_defaults,
+)
 from bec.db.exchange_schema import (
     apply_exchange_aware_schema,
     register_kraken_public_exchange,
@@ -32,10 +38,18 @@ def _kraken_public_exchange(connection: sqlite3.Connection) -> None:
 
 def _validate_kraken_public_exchange(connection: sqlite3.Connection) -> None:
     row = connection.execute(
-        "SELECT Name, Is_Default, Trading_Mode FROM Exchanges WHERE Code='kraken'"
+        "SELECT Name, Trading_Mode FROM Exchanges WHERE Code='kraken'"
     ).fetchone()
-    if row != ("Kraken", 0, "spot"):
+    if row != ("Kraken", "spot"):
         raise ValueError("Kraken public exchange metadata is missing or unsafe")
+
+
+def _exchange_specific_backtesting(connection: sqlite3.Connection) -> None:
+    apply_exchange_backtesting_schema(connection)
+
+
+def _kraken_backtesting_defaults(connection: sqlite3.Connection) -> None:
+    apply_kraken_backtesting_defaults(connection)
 
 
 MIGRATIONS = (
@@ -61,5 +75,21 @@ MIGRATIONS = (
         apply=_kraken_public_exchange,
         validate=_validate_kraken_public_exchange,
         signature="bec-kraken-public-exchange-v1",
+    ),
+    Migration(
+        version=4,
+        name="exchange_specific_backtesting",
+        kind=MigrationKind.ADDITIVE,
+        apply=_exchange_specific_backtesting,
+        validate=validate_exchange_backtesting_schema,
+        signature="bec-exchange-specific-backtesting-v1",
+    ),
+    Migration(
+        version=5,
+        name="kraken_backtesting_defaults",
+        kind=MigrationKind.ADDITIVE,
+        apply=_kraken_backtesting_defaults,
+        validate=validate_kraken_backtesting_defaults,
+        signature="bec-kraken-backtesting-defaults-v1",
     ),
 )

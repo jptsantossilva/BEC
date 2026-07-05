@@ -157,7 +157,8 @@ def _rebuild_unique_tables(connection: sqlite3.Connection) -> None:
                 Trading_Approved INTEGER NOT NULL DEFAULT 0, Trading_Rejection_Reasons TEXT,
                 Quality_Score REAL, Quality_Grade TEXT, Backtest_Config_JSON TEXT,
                 Backtest_Work_Fingerprint TEXT, Backtest_Work_Candle TEXT,
-                Backtest_Work_Executed_At TEXT, Strategy_Id TEXT,
+                Backtest_Work_Executed_At TEXT, Backtest_Commission_Value REAL,
+                Strategy_Id TEXT,
                 Exchange_Id INTEGER NOT NULL DEFAULT 1 REFERENCES Exchanges(Id),
                 Symbol_Normalized TEXT, Exchange_Symbol TEXT, Base_Asset TEXT, Quote_Asset TEXT,
                 UNIQUE (Exchange_Id, Symbol, Time_Frame, Strategy_Id)
@@ -420,6 +421,11 @@ def prepare_exchange_schema_for_startup(
     if new_database:
         apply_exchange_aware_schema(connection, upgraded_install=False)
         register_kraken_public_exchange(connection)
+        from bec.db.backtesting_schema import apply_exchange_backtesting_schema
+        from bec.db.backtesting_schema import configure_new_install_kraken_default
+
+        apply_exchange_backtesting_schema(connection)
+        configure_new_install_kraken_default(connection)
         return
     validate_exchange_aware_schema(connection)
 

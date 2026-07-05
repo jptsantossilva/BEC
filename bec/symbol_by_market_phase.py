@@ -488,6 +488,9 @@ def _run_btc_auto_switch_backtest_if_needed(settings, timeframe):
 
     strategy_module = importlib.import_module("bec.my_backtesting")
     backtesting_settings = database.get_backtesting_settings()
+    configured_fee = backtesting_settings.get("Commission_Value")
+    if "Commission_Value" in backtesting_settings and configured_fee is None:
+        raise RuntimeError("Configure an explicit exchange fee before backtesting")
     refresh_days = int(backtesting_settings.get("Candidate_Backtest_Refresh_Days", 7))
 
     for _, row in df_strategies_btc.iterrows():
@@ -509,6 +512,9 @@ def _run_btc_auto_switch_backtest_if_needed(settings, timeframe):
             df_strategy_results,
             work_fingerprint,
             refresh_days,
+            commission_value=(
+                float(configured_fee) if configured_fee is not None else None
+            ),
         ):
             stats["skipped"] += 1
             print(
@@ -634,7 +640,7 @@ def main(timeframe):
     print(f"Top {str(settings.trade_top_performance)} performance symbols:")
     print(df_top_print.to_string(index=True))
 
-    if not df_top.empty and active_exchange["code"] == "binance":
+    if not df_top.empty:
         # Remove symbols from positions table that are not top performers in accumulation or bullish phase
         database.delete_positions_not_top_rank()
         database.delete_inactive_position_candidates(settings.main_strategies)
@@ -655,7 +661,7 @@ def main(timeframe):
         for strategy_id in settings.main_strategies:
             database.add_top_rank_to_positions(strategy_id=strategy_id)
 
-    elif active_exchange["code"] == "binance":
+    else:
         # if there are no symbols in accumulation or bullish phase remove all not open from positions
         database.delete_all_positions_not_open()
 

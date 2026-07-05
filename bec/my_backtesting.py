@@ -63,6 +63,17 @@ DEFAULT_OPTIMIZATION_MAX_COMBINATIONS = 300
 timeframe = ""
 
 
+def backtest_report_basename(
+    strategy_name: str,
+    timeframe: str,
+    symbol: str,
+    exchange_code: str | None = None,
+) -> str:
+    exchange_code = exchange_code or database.get_active_exchange_code()
+    safe_symbol = str(symbol).replace("/", "-").replace("\\", "-")
+    return f"{exchange_code} - {strategy_name} - {timeframe} - {safe_symbol}"
+
+
 def EMA(values, n):
     """
     Return exp moving average of `values`, at
@@ -2540,7 +2551,10 @@ def save_backtesting_to_html(
     quality_score = (backtest_config or {}).get("strategy_quality_score_result")
 
     strategy_name = report_strategy_name or get_base_strategy_name(strategy)
-    filename = f"{strategy_name} - {timeframe} - {symbol}"
+    exchange_code = database.get_active_exchange_code()
+    filename = backtest_report_basename(
+        strategy_name, timeframe, symbol, exchange_code
+    )
 
     # Create the folder if it doesn't exist
     if not os.path.exists(FOLDER_BACKTEST_RESULTS):
@@ -3770,8 +3784,22 @@ def save_backtesting_to_html(
     # ------
 
 
-def run_backtest(symbol, timeframe, strategy, optimize):
-    database.require_backtesting_execution_available()
+def run_backtest(
+    symbol,
+    timeframe,
+    strategy,
+    optimize,
+    *,
+    exchange_id=None,
+    exchange_code=None,
+    commission_value=None,
+    work_fingerprint=None,
+):
+    exchange = database.require_backtesting_execution_available()
+    if exchange_id is not None and int(exchange_id) != int(exchange["id"]):
+        raise RuntimeError("Queued backtest exchange no longer matches the active exchange")
+    if exchange_code is not None and str(exchange_code) != str(exchange["code"]):
+        raise RuntimeError("Queued backtest exchange code does not match the active exchange")
 
     # vars initialization
     n1 = 0
@@ -3794,7 +3822,7 @@ def run_backtest(symbol, timeframe, strategy, optimize):
     if df.empty:
         return  # exit function
 
-    bt_settings = database.get_backtesting_settings()
+    bt_settings = database.get_backtesting_settings(require_explicit_fee=True)
     if is_declarative_strategy:
         _, optimizable_names = build_declarative_optimize_params(
             strategy_definition,
@@ -3809,7 +3837,14 @@ def run_backtest(symbol, timeframe, strategy, optimize):
         strategy_row=strategy_row,
     )
     backtest_work_candle = str(df.index[-1])
-    commission_value = float(bt_settings["Commission_Value"])
+    configured_commission_value = float(bt_settings["Commission_Value"])
+    if commission_value is not None and abs(
+        float(commission_value) - configured_commission_value
+    ) > 1e-12:
+        raise RuntimeError("Queued backtest fee no longer matches the configured exchange fee")
+    if work_fingerprint and str(work_fingerprint) != backtest_work_fingerprint:
+        raise RuntimeError("Queued backtest fingerprint is stale; requeue the backtest")
+    commission_value = configured_commission_value
     cash_value = float(bt_settings["Cash_Value"])
 
     strategy_risk = database.get_strategy_risk(strategy_name)
@@ -3857,6 +3892,11 @@ def run_backtest(symbol, timeframe, strategy, optimize):
             )
 
     backtest_config = {
+        "exchange": {
+            "id": int(exchange["id"]),
+            "code": str(exchange["code"]),
+            "name": str(exchange["name"]),
+        },
         "backtesting": {
             "optimize_enabled": bool(optimize),
             "optimize_maximize": str(bt_settings["Maximize"]) if optimize else "",
@@ -4107,6 +4147,14 @@ def run_backtest(symbol, timeframe, strategy, optimize):
         backtest_work_fingerprint=backtest_work_fingerprint,
         backtest_work_candle=backtest_work_candle,
         backtest_work_executed_at=database._utc_now_str(),
+        backtest_commission_value=commission_value,
+    )
+    database.refresh_backtesting_approval_for_context(
+        symbol=symbol,
+        time_frame=timeframe,
+        strategy_id=strategy_name,
+        work_fingerprint=backtest_work_fingerprint,
+        commission_value=commission_value,
     )
     if is_custom_strategy:
         database.mark_strategy_backtested(strategy_name)
@@ -4182,7 +4230,17 @@ def get_backtesting_results(strategy_id, symbol, time_frame):
     return 0, 0
 
 
-def calc_backtesting(symbol, time_frame, strategy, optimize):
+def calc_backtesting(
+    symbol,
+    time_frame,
+    strategy,
+    optimize,
+    *,
+    exchange_id=None,
+    exchange_code=None,
+    commission_value=None,
+    work_fingerprint=None,
+):
 
     result = False
 
@@ -4195,7 +4253,16 @@ def calc_backtesting(symbol, time_frame, strategy, optimize):
         strategy_name = get_strategy_id(strategy)
         print(f"Backtest strategy {strategy_name} - {symbol} - {time_frame} - Start")
 
-        run_backtest(symbol, time_frame, strategy, optimize)
+        run_backtest(
+            symbol,
+            time_frame,
+            strategy,
+            optimize,
+            exchange_id=exchange_id,
+            exchange_code=exchange_code,
+            commission_value=commission_value,
+            work_fingerprint=work_fingerprint,
+        )
 
         print(f"Backtest strategy {strategy_name} - {symbol} - {time_frame} - End")
 
@@ -4227,6 +4294,10 @@ def main():
     parser.add_argument("--symbol", required=True)
     parser.add_argument("--timeframe", required=True, choices=["1w", "1d", "4h", "1h", "15m"])
     parser.add_argument("--strategy", required=True)
+    parser.add_argument("--exchange-id", type=int)
+    parser.add_argument("--exchange-code")
+    parser.add_argument("--commission", type=float)
+    parser.add_argument("--work-fingerprint")
     parser.add_argument("--optimize", action="store_true")
     args = parser.parse_args()
 
@@ -4239,6 +4310,10 @@ def main():
         time_frame=args.timeframe,
         strategy=strategy,
         optimize=args.optimize,
+        exchange_id=args.exchange_id,
+        exchange_code=args.exchange_code,
+        commission_value=args.commission,
+        work_fingerprint=args.work_fingerprint,
     )
     raise SystemExit(0 if result else 1)
 

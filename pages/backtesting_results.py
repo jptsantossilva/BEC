@@ -72,7 +72,15 @@ def get_backtest_filename(row, file_type):
     strategy_id = str(row["Strategy_Id"])
     time_frame = row["Time_Frame"]
     symbol = row["Symbol"]
-    return f"{strategy_id} - {time_frame} - {symbol}.{file_type}"
+    exchange_code = str(
+        row.get("Exchange_Code", "") or database.get_active_exchange_code()
+    )
+    return (
+        my_backtesting.backtest_report_basename(
+            strategy_id, time_frame, symbol, exchange_code
+        )
+        + f".{file_type}"
+    )
 
 
 def get_backtest_filename_candidates(row, file_type):
@@ -80,13 +88,22 @@ def get_backtest_filename_candidates(row, file_type):
     time_frame = row["Time_Frame"]
     symbol = row["Symbol"]
     strategy_ids = [strategy_id, strategy_id[:12], strategy_id[:11]]
-    candidates = []
+    candidates = [get_backtest_filename(row, file_type)]
     for candidate_strategy_id in strategy_ids:
         if not candidate_strategy_id:
             continue
-        filename = f"{candidate_strategy_id} - {time_frame} - {symbol}.{file_type}"
-        if filename not in candidates:
-            candidates.append(filename)
+        for filename in (
+            my_backtesting.backtest_report_basename(
+                candidate_strategy_id,
+                time_frame,
+                symbol,
+                str(row.get("Exchange_Code", "") or database.get_active_exchange_code()),
+            )
+            + f".{file_type}",
+            f"{candidate_strategy_id} - {time_frame} - {symbol}.{file_type}",
+        ):
+            if filename not in candidates:
+                candidates.append(filename)
     return candidates
 
 
@@ -811,7 +828,7 @@ def estimate_backtest_report_height(html_content):
 
 def run_backtest_for_selection(strategy_id, symbol, timeframe):
     try:
-        database.require_backtesting_execution_available()
+        exchange = database.require_backtesting_execution_available()
     except RuntimeError as exc:
         st.warning(str(exc))
         return False
@@ -819,6 +836,17 @@ def run_backtest_for_selection(strategy_id, symbol, timeframe):
     symbol = str(symbol).strip().upper()
     timeframe = str(timeframe).strip()
     optimize = get_strategy_backtest_optimize(strategy_id)
+    backtesting_settings = database.get_backtesting_settings(
+        require_explicit_fee=True
+    )
+    strategy_row_df = database.get_strategy_by_id(strategy_id)
+    strategy_row = strategy_row_df.iloc[0] if not strategy_row_df.empty else None
+    work_fingerprint = database.build_backtesting_work_fingerprint(
+        strategy_id,
+        optimize,
+        backtesting_settings,
+        strategy_row=strategy_row,
+    )
 
     strategy_module = importlib.import_module("bec.my_backtesting")
     strategy_impl = (
@@ -839,6 +867,14 @@ def run_backtest_for_selection(strategy_id, symbol, timeframe):
             sys.executable,
             "-m",
             "bec.my_backtesting",
+            "--exchange-id",
+            str(exchange["id"]),
+            "--exchange-code",
+            str(exchange["code"]),
+            "--commission",
+            str(backtesting_settings["Commission_Value"]),
+            "--work-fingerprint",
+            work_fingerprint,
             "--symbol",
             symbol,
             "--timeframe",
@@ -1167,7 +1203,9 @@ def render_backtesting_jobs_status():
 
         jobs_display = jobs.copy()
         jobs_display["Target"] = (
-            jobs_display["strategy_id"].astype(str)
+            jobs_display["exchange_code"].astype(str)
+            + " - "
+            + jobs_display["strategy_id"].astype(str)
             + " - "
             + jobs_display["symbol"].astype(str)
             + " - "
@@ -1811,6 +1849,7 @@ if "Trading_Approved" in df_bt_results.columns:
     )
 
 results_columns_order = [
+    "Exchange_Code",
     "Symbol",
     "Strategy_Name",
     "Time_Frame",
@@ -1837,6 +1876,7 @@ results_columns_order = [
     "Avg_Trade_Duration",
     "Backtest_Start_Date",
     "Backtest_End_Date",
+    "Backtest_Commission_Value",
     "Backtest_CSV",
     "Strategy_Id",
 ]
@@ -1889,7 +1929,7 @@ if "Quality_Grade" in df_bt_results_display.columns:
 
 grid_key_columns = [
     column
-    for column in ["Strategy_Id", "Symbol", "Time_Frame"]
+    for column in ["Exchange_Code", "Strategy_Id", "Symbol", "Time_Frame"]
     if column in df_bt_results_display.columns
 ]
 if grid_key_columns and not df_bt_results_display.empty:
@@ -1910,9 +1950,13 @@ dataframe_event = st.dataframe(
     selection_mode="multi-row",
     column_config={
         "Strategy_Id": None,
+        "Exchange_Code": st.column_config.TextColumn("Exchange", pinned=True),
         "Symbol": st.column_config.TextColumn("Symbol", pinned=True),
         "Strategy_Name": st.column_config.TextColumn("Strategy", pinned=True),
         "Time_Frame": st.column_config.TextColumn("TF"),
+        "Backtest_Commission_Value": st.column_config.NumberColumn(
+            "Fee", format="%.4f"
+        ),
         "Strategy_Params": st.column_config.TextColumn("Params"),
         "Quality_Score": st.column_config.NumberColumn(
             "Quality", format="%.1f", width="small"

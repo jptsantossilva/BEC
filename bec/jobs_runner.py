@@ -119,6 +119,30 @@ def _sleep_until_next_minute():
     if sleep_seconds > 0:
         time.sleep(sleep_seconds)
 
+def _backtesting_job_command(job):
+    command = [
+        PYTHON,
+        "my_backtesting.py",
+        "--exchange-id",
+        str(job["exchange_id"]),
+        "--exchange-code",
+        job["exchange_code"],
+        "--commission",
+        str(job["commission_value"]),
+        "--work-fingerprint",
+        job["work_fingerprint"],
+        "--symbol",
+        job["symbol"],
+        "--timeframe",
+        job["timeframe"],
+        "--strategy",
+        job["strategy_id"],
+    ]
+    if job["optimize"]:
+        command.append("--optimize")
+    return command
+
+
 def _start_next_backtesting_job():
     job = database.claim_next_backtesting_job()
     if job is None:
@@ -129,24 +153,13 @@ def _start_next_backtesting_job():
     database.set_backtesting_job_log_path(job["id"], log_path)
     log_abs_path = os.path.join(ROOT_DIR, log_path)
     log_file = open(log_abs_path, "w", encoding="utf-8")
-    command = [
-        PYTHON,
-        "my_backtesting.py",
-        "--symbol",
-        job["symbol"],
-        "--timeframe",
-        job["timeframe"],
-        "--strategy",
-        job["strategy_id"],
-    ]
-    if job["optimize"]:
-        command.append("--optimize")
-
+    command = _backtesting_job_command(job)
     started_at = datetime.now(timezone.utc).isoformat()
     log_file.write(
         _exchange_log_message(
             f"[{started_at}] Running backtest job {job['id']}: "
-            f"{job['strategy_id']} - {job['symbol']} - {job['timeframe']} "
+            f"{job['exchange_code']} - {job['strategy_id']} - "
+            f"{job['symbol']} - {job['timeframe']} "
             f"(optimize={job['optimize']})"
         )
         + "\n"
@@ -154,7 +167,8 @@ def _start_next_backtesting_job():
     log_file.flush()
     _print_log(
         f"[{started_at}] Running backtest job {job['id']} "
-        f"({job['strategy_id']} - {job['symbol']} - {job['timeframe']})"
+        f"({job['exchange_code']} - {job['strategy_id']} - "
+        f"{job['symbol']} - {job['timeframe']})"
     )
 
     process = subprocess.Popen(
@@ -254,19 +268,14 @@ def _finish_backtesting_job(running_job):
     )
     return True
 
-def _start_next_monte_carlo_job():
-    job = database.claim_next_monte_carlo_job()
-    if job is None:
-        return None
-
-    os.makedirs(os.path.join(ROOT_DIR, MONTE_CARLO_JOBS_DIR), exist_ok=True)
-    log_path = os.path.join(MONTE_CARLO_JOBS_DIR, f"{job['id']}.log")
-    database.set_monte_carlo_job_log_path(job["id"], log_path)
-    log_abs_path = os.path.join(ROOT_DIR, log_path)
-    log_file = open(log_abs_path, "w", encoding="utf-8")
-    command = [
+def _monte_carlo_job_command(job):
+    return [
         PYTHON,
         "monte_carlo.py",
+        "--exchange-id",
+        str(job["exchange_id"]),
+        "--exchange-code",
+        job["exchange_code"],
         "--symbol",
         job["symbol"],
         "--timeframe",
@@ -281,11 +290,24 @@ def _start_next_monte_carlo_job():
         str(job["seed"]),
     ]
 
+
+def _start_next_monte_carlo_job():
+    job = database.claim_next_monte_carlo_job()
+    if job is None:
+        return None
+
+    os.makedirs(os.path.join(ROOT_DIR, MONTE_CARLO_JOBS_DIR), exist_ok=True)
+    log_path = os.path.join(MONTE_CARLO_JOBS_DIR, f"{job['id']}.log")
+    database.set_monte_carlo_job_log_path(job["id"], log_path)
+    log_abs_path = os.path.join(ROOT_DIR, log_path)
+    log_file = open(log_abs_path, "w", encoding="utf-8")
+    command = _monte_carlo_job_command(job)
     started_at = datetime.now(timezone.utc).isoformat()
     log_file.write(
         _exchange_log_message(
             f"[{started_at}] Running Monte Carlo job {job['id']}: "
-            f"{job['method']} - {job['strategy_id']} - {job['symbol']} - {job['timeframe']} "
+            f"{job['exchange_code']} - {job['method']} - {job['strategy_id']} - "
+            f"{job['symbol']} - {job['timeframe']} "
             f"(scenarios={job['scenarios']}, seed={job['seed']})"
         )
         + "\n"

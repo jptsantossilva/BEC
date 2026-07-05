@@ -50,9 +50,9 @@ as Binance, adds normalized symbol and execution fields, and replaces legacy
 symbol-only uniqueness with exchange-aware constraints.
 
 For an upgraded database, Binance remains enabled and default so existing
-behavior is preserved. A fresh database contains Binance and Kraken metadata;
-it has no enabled/default exchange and exchange-dependent schedules are
-disabled.
+behavior is preserved. At the version 2 boundary, a fresh database has no
+enabled/default exchange; the latest-schema initialization described under
+version 5 subsequently selects Kraken for new installations.
 
 The migration report lists symbols that could not be normalized in
 `unresolved_legacy_symbols`. Their `Exchange_Symbols` records have
@@ -69,6 +69,30 @@ Migration `3:kraken_public_exchange` is additive and may run automatically at
 startup after version 2 is present. It registers Kraken as disabled and
 non-default with `EUR` metadata. It does not add credentials, enable jobs,
 change the active Binance selection, or permit private Kraken operations.
+
+## Exchange-Specific Backtesting (Version 4)
+
+Migration `4:exchange_specific_backtesting` is additive and may run at startup.
+It creates `Exchange_Backtesting_Settings`, preserves the existing Binance
+commission, and adds immutable commission/fingerprint context to backtesting
+results and queued jobs. Existing queued or running jobs without a PR 6
+fingerprint are failed with an instruction to requeue them; they are not
+executed with ambiguous exchange assumptions.
+
+Version 4 itself assigns no implicit Kraken commission. Version 5 supplies the
+approved Kraken default while leaving the captured version 4 job context
+unchanged.
+
+## Kraken Backtesting Defaults (Version 5)
+
+Migration `5:kraken_backtesting_defaults` is additive and may run at startup.
+It enables Kraken public workflows, changes its configured quote asset to
+`USDC`, and inserts a 0.4% spot taker fee only when no Kraken fee exists.
+
+On upgrades, the existing active/default exchange is preserved. On new
+installations initialized directly at the latest schema, Kraken is enabled and
+selected by default. Private Kraken balances and order methods remain disabled
+through PR 6, and only the public market-phase schedule may run for Kraken.
 
 ## Rollback
 

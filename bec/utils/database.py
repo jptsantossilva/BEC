@@ -49,6 +49,7 @@ EXCHANGE_DEPENDENT_JOBS = (
     "super_rsi_15m",
 )
 LIVE_TRADING_JOBS = ("main_1h", "main_4h", "main_1d")
+PUBLIC_ANALYSIS_JOBS = ("symbol_by_market_phase_1d",)
 UNSETTLED_ORDER_STATUSES = ("pending", "open", "partially_filled", "unknown")
 
 
@@ -57,6 +58,116 @@ def get_exchanges():
     return pd.read_sql(
         "SELECT * FROM Exchanges ORDER BY Is_Default DESC, Name", connection
     )
+
+
+def get_exchange_settings_table():
+    connection = _get_conn()
+    return pd.read_sql(
+        """
+        SELECT e.Id, e.Code, e.Name, e.Enabled, e.Is_Default,
+               e.Quote_Asset, e.Trading_Mode,
+               ebs.Commission_Value AS Taker_Fee
+        FROM Exchanges e
+        LEFT JOIN Exchange_Backtesting_Settings ebs ON ebs.Exchange_Id=e.Id
+        ORDER BY e.Name
+        """,
+        connection,
+    )
+
+
+def _disable_exchange_jobs(connection) -> None:
+    placeholders = ",".join("?" for _ in EXCHANGE_DEPENDENT_JOBS)
+    connection.execute(
+        f"UPDATE Job_Schedules SET enabled=0 WHERE name IN ({placeholders})",
+        EXCHANGE_DEPENDENT_JOBS,
+    )
+
+
+def clear_active_exchange() -> None:
+    connection = _get_conn()
+    blockers = get_exchange_switch_blockers(connection)
+    if blockers["open_positions"] or blockers["unsettled_orders"]:
+        raise ValueError(
+            "Cannot clear the active exchange while open positions or unsettled "
+            f"orders exist (open_positions={blockers['open_positions']}, "
+            f"unsettled_orders={blockers['unsettled_orders']})"
+        )
+    with connection:
+        connection.execute(
+            "UPDATE Exchanges SET Is_Default=0, Updated_At=CURRENT_TIMESTAMP "
+            "WHERE Is_Default=1"
+        )
+        _disable_exchange_jobs(connection)
+    from bec.exchanges.registry import set_default_adapter
+
+    set_default_adapter(None)
+
+
+def update_exchange_settings(rows) -> None:
+    connection = _get_conn()
+    current = get_active_exchange(required=False)
+    normalized = []
+    for row in rows:
+        exchange_id = int(row["Id"])
+        enabled = int(bool(row["Enabled"]))
+        quote_asset = str(row["Quote_Asset"] or "").strip().upper()
+        fee = float(row["Taker_Fee"])
+        if not quote_asset:
+            raise ValueError("Quote asset is required")
+        if not math.isfinite(fee) or fee < 0:
+            raise ValueError("Spot taker fee must be a finite non-negative number")
+        normalized.append((exchange_id, enabled, quote_asset, fee))
+
+    if current:
+        active_update = next(
+            (item for item in normalized if item[0] == int(current["id"])), None
+        )
+        if active_update and not active_update[1]:
+            blockers = get_exchange_switch_blockers(connection)
+            if blockers["open_positions"] or blockers["unsettled_orders"]:
+                raise ValueError(
+                    "Cannot disable the active exchange while open positions or "
+                    "unsettled orders exist"
+                )
+
+    with connection:
+        known_ids = {
+            int(row[0]) for row in connection.execute("SELECT Id FROM Exchanges")
+        }
+        if {item[0] for item in normalized} - known_ids:
+            raise ValueError("Unknown exchange in settings update")
+        for exchange_id, enabled, quote_asset, fee in normalized:
+            connection.execute(
+                """
+                UPDATE Exchanges
+                SET Enabled=?, Quote_Asset=?, Updated_At=CURRENT_TIMESTAMP
+                WHERE Id=?
+                """,
+                (enabled, quote_asset, exchange_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO Exchange_Backtesting_Settings
+                    (Exchange_Id, Commission_Value, Updated_At)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(Exchange_Id) DO UPDATE SET
+                    Commission_Value=excluded.Commission_Value,
+                    Updated_At=CURRENT_TIMESTAMP
+                """,
+                (exchange_id, fee),
+            )
+        connection.execute(
+            "UPDATE Exchanges SET Is_Default=0, Updated_At=CURRENT_TIMESTAMP "
+            "WHERE Is_Default=1 AND Enabled=0"
+        )
+        has_active = connection.execute(
+            "SELECT 1 FROM Exchanges WHERE Enabled=1 AND Is_Default=1"
+        ).fetchone()
+        if has_active is None:
+            _disable_exchange_jobs(connection)
+    from bec.exchanges.registry import set_default_adapter
+
+    set_default_adapter(None)
 
 
 def get_active_exchange(required: bool = False) -> dict | None:
@@ -98,13 +209,68 @@ def exchange_log_prefix() -> str:
     return f"[exchange_id={get_active_exchange_log_identity()}]"
 
 
-def require_backtesting_execution_available() -> None:
-    exchange = get_active_exchange(required=True)
-    if exchange["code"] != "binance":
-        raise RuntimeError(
-            f"Backtesting execution for {exchange['name']} is disabled until the "
-            "exchange-specific PR 6 workflow is implemented"
+def get_exchange_backtesting_fee(
+    exchange_id: int | None = None, *, required: bool = False
+) -> float | None:
+    connection = _get_conn()
+    has_settings_table = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='Exchange_Backtesting_Settings'"
+    ).fetchone()
+    if not has_settings_table:
+        if required:
+            raise RuntimeError("Exchange-specific backtesting settings are not initialized")
+        return None
+    resolved_exchange_id = exchange_id or get_active_exchange_id(required=required)
+    if resolved_exchange_id is None:
+        return None
+    exchange_id = int(resolved_exchange_id)
+    row = connection.execute(
+        "SELECT Commission_Value FROM Exchange_Backtesting_Settings WHERE Exchange_Id=?",
+        (exchange_id,),
+    ).fetchone()
+    if row is None:
+        if required:
+            exchange = connection.execute(
+                "SELECT Name FROM Exchanges WHERE Id=?", (exchange_id,)
+            ).fetchone()
+            name = str(exchange[0]) if exchange else f"exchange {exchange_id}"
+            raise RuntimeError(
+                f"Configure an explicit backtesting fee for {name} before running backtests."
+            )
+        return None
+    return float(row[0])
+
+
+def set_exchange_backtesting_fee(
+    commission_value: float, exchange_id: int | None = None
+) -> None:
+    exchange_id = int(exchange_id or get_active_exchange_id(required=True))
+    commission_value = float(commission_value)
+    if commission_value < 0:
+        raise ValueError("Backtesting commission cannot be negative")
+    connection = _get_conn()
+    with connection:
+        connection.execute(
+            """
+            INSERT INTO Exchange_Backtesting_Settings
+                (Exchange_Id, Commission_Value, Updated_At)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(Exchange_Id) DO UPDATE SET
+                Commission_Value=excluded.Commission_Value,
+                Updated_At=CURRENT_TIMESTAMP
+            """,
+            (exchange_id, commission_value),
         )
+
+
+def require_backtesting_execution_available() -> dict:
+    exchange = get_active_exchange(required=True)
+    if exchange["code"] not in {"binance", "kraken"}:
+        raise RuntimeError(
+            f"Backtesting execution is unavailable for {exchange['name']}"
+        )
+    get_exchange_backtesting_fee(int(exchange["id"]), required=True)
+    return exchange
 
 
 def get_exchange_switch_blockers(connection=None) -> dict[str, int]:
@@ -129,10 +295,12 @@ def set_active_exchange(exchange_id: int) -> dict:
         if started_transaction:
             connection.execute("BEGIN IMMEDIATE")
         target = connection.execute(
-            "SELECT Id, Code FROM Exchanges WHERE Id=?", (int(exchange_id),)
+            "SELECT Id, Code, Enabled FROM Exchanges WHERE Id=?", (int(exchange_id),)
         ).fetchone()
         if target is None:
             raise ValueError(f"Unknown exchange id: {exchange_id}")
+        if not bool(target[2]):
+            raise ValueError("Enable the exchange before selecting it")
         current = get_active_exchange(required=False)
         if current and int(current["id"]) == int(exchange_id):
             if started_transaction:
@@ -154,7 +322,7 @@ def set_active_exchange(exchange_id: int) -> dict:
             jobs_to_enable = (
                 EXCHANGE_DEPENDENT_JOBS
                 if str(target[1]) == "binance"
-                else ()
+                else PUBLIC_ANALYSIS_JOBS
             )
             if jobs_to_enable:
                 placeholders = ",".join("?" for _ in jobs_to_enable)
@@ -289,6 +457,7 @@ def build_backtesting_work_fingerprint(
     fingerprint_settings = dict(backtesting_settings or {})
     fingerprint_settings.pop("Candidate_Backtest_Refresh_Days", None)
     payload = {
+        "exchange": get_active_exchange(required=True),
         "strategy_id": strategy_id,
         "optimize": bool(optimize),
         "strategy_definition": strategy_definition,
@@ -304,6 +473,20 @@ def build_backtesting_work_fingerprint(
         default=_json_fingerprint_default,
     )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def backtesting_result_matches_context(
+    row, *, work_fingerprint: str, commission_value: float
+) -> bool:
+    if str(row.get("Backtest_Work_Fingerprint", "") or "") != str(
+        work_fingerprint or ""
+    ):
+        return False
+    try:
+        stored_commission = float(row.get("Backtest_Commission_Value"))
+    except (TypeError, ValueError):
+        return False
+    return abs(stored_commission - float(commission_value)) <= 1e-12
 
 
 def build_strategy_params_json(strategy_id: str, fast_value=0, slow_value=0) -> str:
@@ -2980,6 +3163,7 @@ sql_create_backtesting_results_table = """
         Backtest_Work_Fingerprint TEXT,
         Backtest_Work_Candle TEXT,
         Backtest_Work_Executed_At TEXT,
+        Backtest_Commission_Value REAL,
         Strategy_Id TEXT,
         CONSTRAINT symbol_time_frame_strategy_unique UNIQUE (Symbol, Time_Frame, Strategy_Id)
     );
@@ -3009,10 +3193,15 @@ sql_get_all_backtesting_results = f"""
            br.Trading_Approved,
            br.Trading_Rejection_Reasons,
            br.Backtest_Config_JSON,
+           br.Backtest_Commission_Value,
+           br.Backtest_Work_Fingerprint,
            br.Strategy_Id,
+           ex.Code AS Exchange_Code,
+           ex.Name AS Exchange_Name,
            st.Name as Strategy_Name
     FROM Backtesting_Results AS br
     JOIN Strategies AS st ON br.Strategy_Id = st.Id
+    JOIN Exchanges AS ex ON br.Exchange_Id = ex.Id
     WHERE br.Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
     ORDER BY br.Symbol, st.Name;
 """
@@ -3076,9 +3265,9 @@ sql_add_backtesting_results = """
         Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset, Quote_Asset,
         Symbol, Time_Frame, Return_Perc, BuyHold_Return_Perc, Backtest_Start_Date, Backtest_End_Date,
         Max_Drawdown_Perc, Trades, Win_Rate_Perc, Best_Trade_Perc, Worst_Trade_Perc, Avg_Trade_Perc, Max_Trade_Duration, Avg_Trade_Duration,
-        Profit_Factor, Expectancy_Perc, SQN, Kelly_Criterion, Trading_Approved, Trading_Rejection_Reasons, Quality_Score, Quality_Grade, Backtest_Config_JSON, Backtest_Work_Fingerprint, Backtest_Work_Candle, Backtest_Work_Executed_At, Strategy_Id
+        Profit_Factor, Expectancy_Perc, SQN, Kelly_Criterion, Trading_Approved, Trading_Rejection_Reasons, Quality_Score, Quality_Grade, Backtest_Config_JSON, Backtest_Work_Fingerprint, Backtest_Work_Candle, Backtest_Work_Executed_At, Backtest_Commission_Value, Strategy_Id
         ) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 """
 
 
@@ -3110,6 +3299,7 @@ def add_backtesting_results(
     backtest_work_fingerprint: str = "",
     backtest_work_candle: str = "",
     backtest_work_executed_at: str = "",
+    backtest_commission_value: float | None = None,
 ):
     connection = _get_conn()
     exchange_fields = _exchange_symbol_metadata(symbol)
@@ -3148,6 +3338,11 @@ def add_backtesting_results(
                 str(backtest_work_fingerprint) if backtest_work_fingerprint is not None else "",
                 str(backtest_work_candle) if backtest_work_candle is not None else "",
                 str(backtest_work_executed_at) if backtest_work_executed_at is not None else "",
+                (
+                    float(backtest_commission_value)
+                    if backtest_commission_value is not None
+                    else None
+                ),
                 str(strategy_Id),
             ),
         )
@@ -3224,6 +3419,39 @@ def set_backtesting_approval(
                 strategy_id,
             ),
         )
+
+
+def refresh_backtesting_approval_for_context(
+    *,
+    symbol: str,
+    time_frame: str,
+    strategy_id: str,
+    work_fingerprint: str,
+    commission_value: float,
+) -> tuple[bool, list[str]]:
+    results = get_backtesting_results_by_symbol_timeframe_strategy(
+        symbol=symbol,
+        time_frame=time_frame,
+        strategy_id=strategy_id,
+    )
+    if results.empty:
+        approved, reasons = False, ["Missing_Backtest"]
+    elif not backtesting_result_matches_context(
+        results.iloc[0],
+        work_fingerprint=work_fingerprint,
+        commission_value=commission_value,
+    ):
+        approved, reasons = False, ["Backtest_Context_Mismatch"]
+    else:
+        approved, reasons = is_backtest_approved(time_frame, results.iloc[0])
+    set_backtesting_approval(
+        symbol=symbol,
+        time_frame=time_frame,
+        strategy_id=strategy_id,
+        trading_approved=approved,
+        trading_rejection_reasons="" if approved else ";".join(reasons),
+    )
+    return bool(approved), list(reasons)
 
 
 sql_delete_all_backtesting_results = f"DELETE FROM Backtesting_Results WHERE Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};"
@@ -4574,6 +4802,8 @@ sql_create_backtesting_jobs_table = """
         return_code INTEGER,
         log_path TEXT,
         error_message TEXT
+        ,Backtest_Commission_Value REAL
+        ,Backtest_Work_Fingerprint TEXT
     );
 """
 
@@ -5495,7 +5725,7 @@ def ensure_job_schedules():
                     (script, description, name),
                 )
         has_active_exchange = connection.execute(
-            "SELECT 1 FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1"
+            "SELECT Code FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1"
         ).fetchone()
         if has_active_exchange is None:
             connection.execute(
@@ -5507,6 +5737,12 @@ def ensure_job_schedules():
                     'symbol_by_market_phase_1d', 'super_rsi_15m'
                 )
                 """
+            )
+        elif str(has_active_exchange[0]) != "binance":
+            placeholders = ",".join("?" for _ in LIVE_TRADING_JOBS)
+            connection.execute(
+                f"UPDATE Job_Schedules SET enabled=0 WHERE name IN ({placeholders})",
+                LIVE_TRADING_JOBS,
             )
 
 
@@ -5547,7 +5783,9 @@ def ensure_monte_carlo_tables():
 def enqueue_backtesting_jobs(jobs, batch_id: str = ""):
     import uuid
 
-    require_backtesting_execution_available()
+    exchange = require_backtesting_execution_available()
+    backtesting_settings = get_backtesting_settings(require_explicit_fee=True)
+    commission_value = float(backtesting_settings["Commission_Value"])
     connection = _get_conn()
     batch_id = batch_id or uuid.uuid4().hex
     created_at = datetime.utcnow().isoformat(timespec="seconds")
@@ -5561,6 +5799,19 @@ def enqueue_backtesting_jobs(jobs, batch_id: str = ""):
             symbol = str(job["symbol"]).strip().upper()
             timeframe = str(job["timeframe"]).strip()
             optimize = 1 if bool(job.get("optimize")) else 0
+            strategy_row_df = get_strategy_by_id(strategy_id)
+            strategy_row = (
+                strategy_row_df.iloc[0] if not strategy_row_df.empty else None
+            )
+            work_fingerprint = str(
+                job.get("work_fingerprint")
+                or build_backtesting_work_fingerprint(
+                    strategy_id,
+                    bool(optimize),
+                    backtesting_settings,
+                    strategy_row=strategy_row,
+                )
+            )
             exchange_fields = _exchange_symbol_metadata(symbol)
             cursor = connection.execute(
                 """
@@ -5591,10 +5842,21 @@ def enqueue_backtesting_jobs(jobs, batch_id: str = ""):
                 """
                 INSERT INTO Backtesting_Jobs (
                     Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset, Quote_Asset,
-                    batch_id, strategy_id, symbol, timeframe, optimize, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)
+                    batch_id, strategy_id, symbol, timeframe, optimize, status, created_at,
+                    Backtest_Commission_Value, Backtest_Work_Fingerprint
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)
                 """,
-                (*exchange_fields, batch_id, strategy_id, symbol, timeframe, optimize, created_at),
+                (
+                    *exchange_fields,
+                    batch_id,
+                    strategy_id,
+                    symbol,
+                    timeframe,
+                    optimize,
+                    created_at,
+                    commission_value,
+                    work_fingerprint,
+                ),
             )
             queued.append(
                 {
@@ -5602,6 +5864,10 @@ def enqueue_backtesting_jobs(jobs, batch_id: str = ""):
                     "strategy_id": strategy_id,
                     "symbol": symbol,
                     "timeframe": timeframe,
+                    "exchange_id": int(exchange["id"]),
+                    "exchange_code": str(exchange["code"]),
+                    "commission_value": commission_value,
+                    "work_fingerprint": work_fingerprint,
                 }
             )
 
@@ -5615,6 +5881,8 @@ def get_backtesting_jobs(limit: int = 50):
         """
         SELECT
             id,
+            Exchange_Id AS exchange_id,
+            (SELECT Code FROM Exchanges WHERE Id=Backtesting_Jobs.Exchange_Id) AS exchange_code,
             batch_id,
             strategy_id,
             symbol,
@@ -5627,6 +5895,8 @@ def get_backtesting_jobs(limit: int = 50):
             return_code,
             log_path,
             error_message
+            ,Backtest_Commission_Value AS commission_value
+            ,Backtest_Work_Fingerprint AS work_fingerprint
         FROM Backtesting_Jobs
         WHERE Exchange_Id=(SELECT Id FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1)
         ORDER BY
@@ -5682,7 +5952,10 @@ def claim_next_backtesting_job():
     with connection:
         connection.execute(sql_create_backtesting_jobs_table)
         cursor = connection.execute("""
-            SELECT id, batch_id, strategy_id, symbol, timeframe, optimize
+            SELECT id, Exchange_Id,
+                   (SELECT Code FROM Exchanges WHERE Id=Backtesting_Jobs.Exchange_Id),
+                   batch_id, strategy_id, symbol, timeframe, optimize,
+                   Backtest_Commission_Value, Backtest_Work_Fingerprint
             FROM Backtesting_Jobs
             WHERE status='queued' AND Exchange_Id=(SELECT Id FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1)
             ORDER BY created_at ASC, id ASC
@@ -5707,11 +5980,15 @@ def claim_next_backtesting_job():
 
     return {
         "id": row[0],
-        "batch_id": row[1],
-        "strategy_id": row[2],
-        "symbol": row[3],
-        "timeframe": row[4],
-        "optimize": bool(row[5]),
+        "exchange_id": int(row[1]),
+        "exchange_code": str(row[2]),
+        "batch_id": row[3],
+        "strategy_id": row[4],
+        "symbol": row[5],
+        "timeframe": row[6],
+        "optimize": bool(row[7]),
+        "commission_value": float(row[8]),
+        "work_fingerprint": str(row[9]),
     }
 
 
@@ -5719,7 +5996,7 @@ def set_backtesting_job_log_path(job_id: int, log_path: str):
     connection = _get_conn()
     with connection:
         connection.execute(
-            f"UPDATE Backtesting_Jobs SET log_path=? WHERE id=? AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}",
+            "UPDATE Backtesting_Jobs SET log_path=? WHERE id=?",
             (str(log_path), int(job_id)),
         )
 
@@ -5736,7 +6013,7 @@ def complete_backtesting_job(job_id: int, return_code: int, error_message: str =
                 finished_at = ?,
                 return_code = ?,
                 error_message = ?
-            WHERE id=? AND Exchange_Id=(SELECT Id FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1)
+            WHERE id=?
             """,
             (
                 status,
@@ -5770,7 +6047,7 @@ def reset_running_backtesting_jobs(
 def enqueue_monte_carlo_jobs(jobs, batch_id: str = ""):
     import uuid
 
-    require_backtesting_execution_available()
+    exchange = require_backtesting_execution_available()
     connection = _get_conn()
     batch_id = batch_id or uuid.uuid4().hex
     created_at = datetime.utcnow().isoformat(timespec="seconds")
@@ -5840,6 +6117,8 @@ def enqueue_monte_carlo_jobs(jobs, batch_id: str = ""):
                     "symbol": symbol,
                     "timeframe": timeframe,
                     "method": method,
+                    "exchange_id": int(exchange["id"]),
+                    "exchange_code": str(exchange["code"]),
                 }
             )
 
@@ -5893,7 +6172,9 @@ def claim_next_monte_carlo_job():
     with connection:
         connection.execute(sql_create_monte_carlo_jobs_table)
         cursor = connection.execute("""
-            SELECT id, batch_id, strategy_id, symbol, timeframe, method, scenarios, seed
+            SELECT id, Exchange_Id,
+                   (SELECT Code FROM Exchanges WHERE Id=Monte_Carlo_Jobs.Exchange_Id),
+                   batch_id, strategy_id, symbol, timeframe, method, scenarios, seed
             FROM Monte_Carlo_Jobs
             WHERE status='queued' AND Exchange_Id=(SELECT Id FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1)
             ORDER BY created_at ASC, id ASC
@@ -5917,13 +6198,15 @@ def claim_next_monte_carlo_job():
 
     return {
         "id": row[0],
-        "batch_id": row[1],
-        "strategy_id": row[2],
-        "symbol": row[3],
-        "timeframe": row[4],
-        "method": row[5],
-        "scenarios": int(row[6]),
-        "seed": int(row[7]),
+        "exchange_id": int(row[1]),
+        "exchange_code": str(row[2]),
+        "batch_id": row[3],
+        "strategy_id": row[4],
+        "symbol": row[5],
+        "timeframe": row[6],
+        "method": row[7],
+        "scenarios": int(row[8]),
+        "seed": int(row[9]),
     }
 
 
@@ -5931,7 +6214,7 @@ def set_monte_carlo_job_log_path(job_id: int, log_path: str):
     connection = _get_conn()
     with connection:
         connection.execute(
-            f"UPDATE Monte_Carlo_Jobs SET log_path=? WHERE id=? AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}",
+            "UPDATE Monte_Carlo_Jobs SET log_path=? WHERE id=?",
             (str(log_path), int(job_id)),
         )
 
@@ -6388,7 +6671,9 @@ def ensure_backtesting_settings():
             )
 
 
-def get_backtesting_settings():
+def get_backtesting_settings(
+    *, require_explicit_fee: bool = False, exchange_id: int | None = None
+):
     connection = _get_conn()
     _ensure_backtesting_settings_columns(connection)
     df = pd.read_sql(
@@ -6418,8 +6703,9 @@ def get_backtesting_settings():
         connection,
     )
     if df.empty:
-        return DEFAULT_BACKTESTING_SETTINGS.copy()
-    return {
+        settings = DEFAULT_BACKTESTING_SETTINGS.copy()
+    else:
+        settings = {
         "Commission_Value": float(df.iloc[0]["Commission_Value"]),
         "Cash_Value": float(df.iloc[0]["Cash_Value"]),
         "Maximize": str(df.iloc[0]["Maximize"]),
@@ -6466,7 +6752,16 @@ def get_backtesting_settings():
         "Monte_Carlo_Candle_Perturb_Max_Pct": float(
             df.iloc[0]["Monte_Carlo_Candle_Perturb_Max_Pct"]
         ),
-    }
+        }
+    has_exchanges = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='Exchanges'"
+    ).fetchone()
+    if has_exchanges:
+        exchange_fee = get_exchange_backtesting_fee(
+            exchange_id, required=require_explicit_fee
+        )
+        settings["Commission_Value"] = exchange_fee
+    return settings
 
 
 def update_backtesting_settings(
@@ -6488,6 +6783,7 @@ def update_backtesting_settings(
     strategy_quality_robustness_weight: float = 15.0,
     monte_carlo_candle_perturb_min_pct: float = 0.1,
     monte_carlo_candle_perturb_max_pct: float = 0.5,
+    update_exchange_fee: bool = True,
 ):
     connection = _get_conn()
     with connection:
@@ -6536,6 +6832,23 @@ def update_backtesting_settings(
                 float(monte_carlo_candle_perturb_max_pct),
             ),
         )
+        has_exchange_settings = connection.execute(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE type='table' AND name='Exchange_Backtesting_Settings'"
+        ).fetchone()
+        if has_exchange_settings and update_exchange_fee:
+            exchange_id = get_active_exchange_id(required=True)
+            connection.execute(
+                """
+                INSERT INTO Exchange_Backtesting_Settings
+                    (Exchange_Id, Commission_Value, Updated_At)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(Exchange_Id) DO UPDATE SET
+                    Commission_Value=excluded.Commission_Value,
+                    Updated_At=CURRENT_TIMESTAMP
+                """,
+                (int(exchange_id), float(commission_value)),
+            )
 
 
 # Approval rules

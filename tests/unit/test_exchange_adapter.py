@@ -2,6 +2,7 @@ import ast
 import inspect
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -232,10 +233,29 @@ def test_exchange_service_filters_tradable_symbols_without_raw_exchange_data(mon
         "BTC/EUR": MarketInfo("BTC/EUR", "BTCEUR", "BTC", "EUR", True),
     }
     monkeypatch.setattr(service, "load_markets", lambda **kwargs: markets)
+    monkeypatch.setattr(
+        service,
+        "get_adapter",
+        lambda: SimpleNamespace(code="binance"),
+    )
 
     assert service.get_tradable_symbols(
         "USDC", excluded_base_assets={"EUR"}
     ) == ["BTCUSDC"]
+
+
+def test_exchange_service_returns_normalized_symbols_for_kraken(monkeypatch):
+    markets = {
+        "BTC/USDC": MarketInfo("BTC/USDC", "XBTUSDC", "BTC", "USDC", True),
+    }
+    monkeypatch.setattr(service, "load_markets", lambda **kwargs: markets)
+    monkeypatch.setattr(
+        service,
+        "get_adapter",
+        lambda: SimpleNamespace(code="kraken"),
+    )
+
+    assert service.get_tradable_symbols("USDC") == ["BTC/USDC"]
 
 
 def test_binance_adapter_normalizes_order_results():

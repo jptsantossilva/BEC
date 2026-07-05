@@ -13,6 +13,7 @@ import altair as alt
 import bec.utils.config as config
 import bec.utils.database as database
 import bec.exchanges.service as binance
+from bec.exchanges.registry import get_adapter_for_code
 import bec.utils.trading_service as trading_service
 from bec.page_config import configure_page
 from bec.utils.take_profit import (
@@ -650,11 +651,12 @@ def unrealized_pnl():
         def _render_selected_position_actions(
             event_positions, positions_df, key_suffix: str
         ):
-            if len(event_positions.selection.rows) == 0:
+            selected_position = _resolve_selected_position(
+                event_positions, positions_df
+            )
+            if selected_position is None:
                 return
 
-            selected_row_index = event_positions.selection.rows[0]
-            selected_position = positions_df.iloc[selected_row_index]
             selected_symbol = selected_position["Symbol"]
             selected_bot = selected_position["Bot"]
             selected_position_id = int(selected_position["Id"])
@@ -984,6 +986,55 @@ def blacklist():
         st.rerun(scope="fragment")
 
 
+def _check_exchange_public_apis(exchanges: pd.DataFrame) -> tuple[dict, dict]:
+    statuses = {}
+    quote_assets = {}
+    for _, row in exchanges.iterrows():
+        code = str(row["Code"])
+        try:
+            adapter = get_adapter_for_code(code)
+            health = adapter.health_check()
+            markets = adapter.load_markets()
+            quote_assets[code] = sorted(
+                {
+                    market.quote_asset
+                    for market in markets.values()
+                    if market.active and market.quote_asset
+                }
+            )
+            statuses[code] = "Available" if health.available else health.message
+        except Exception as exc:
+            statuses[code] = f"Unavailable: {exc}"
+    return statuses, quote_assets
+
+
+def _save_exchange_editor(edited: pd.DataFrame, quote_assets: dict) -> None:
+    current = database.get_exchange_settings_table().set_index("Code")
+    records = []
+    for _, row in edited.iterrows():
+        code = str(row["Code"])
+        quote_asset = str(row["Quote Asset"] or "").strip().upper()
+        available_quotes = set(quote_assets.get(code, ()))
+        current_quote = str(current.loc[code, "Quote_Asset"] or "").upper()
+        if quote_asset != current_quote and not available_quotes:
+            raise ValueError(
+                f"Check {code} API health before changing its quote asset."
+            )
+        if available_quotes and quote_asset not in available_quotes:
+            raise ValueError(
+                f"{quote_asset} is not an active spot quote asset on {code}."
+            )
+        records.append(
+            {
+                "Id": int(row["Id"]),
+                "Enabled": bool(row["Enabled"]),
+                "Quote_Asset": quote_asset,
+                "Taker_Fee": float(row["Spot Taker Fee %"]) / 100.0,
+            }
+        )
+    database.update_exchange_settings(records)
+
+
 def settings():
     with tab_settings:
         st.markdown("### Exchange")
@@ -993,7 +1044,89 @@ def settings():
         if exchanges.empty:
             st.error("No exchange adapters are configured.")
             return
-        exchange_options = exchanges["Id"].astype(int).tolist()
+        st.markdown("#### Exchange Configuration")
+        st.caption(
+            "Configure availability, the active spot quote asset and the market-order "
+            "fee used by backtesting."
+        )
+        if st.button("Check API Health", icon=":material/health_and_safety:"):
+            with st.spinner("Loading public exchange markets..."):
+                statuses, quote_assets = _check_exchange_public_apis(exchanges)
+            st.session_state["exchange_api_statuses"] = statuses
+            st.session_state["exchange_quote_assets"] = quote_assets
+
+        statuses = st.session_state.get("exchange_api_statuses", {})
+        quote_assets = st.session_state.get("exchange_quote_assets", {})
+        editor = database.get_exchange_settings_table()
+        editor = editor[editor["Code"].isin(("binance", "kraken"))].copy()
+        editor["Enabled"] = editor["Enabled"].astype(bool)
+        editor["Active"] = editor["Is_Default"].astype(bool)
+        editor["Quote Asset"] = editor["Quote_Asset"].fillna("USDC")
+        editor["Spot Taker Fee %"] = editor["Taker_Fee"].fillna(0.0) * 100.0
+        editor["API Status"] = editor["Code"].map(statuses).fillna("Not checked")
+        quote_options = sorted(
+            {"USDC"}
+            | set(editor["Quote Asset"].astype(str))
+            | {
+                quote
+                for values in quote_assets.values()
+                for quote in values
+            }
+        )
+        edited = st.data_editor(
+            editor[
+                [
+                    "Id",
+                    "Code",
+                    "Name",
+                    "Enabled",
+                    "Active",
+                    "Quote Asset",
+                    "Spot Taker Fee %",
+                    "Trading_Mode",
+                    "API Status",
+                ]
+            ],
+            hide_index=True,
+            width="content",
+            disabled=["Id", "Code", "Name", "Active", "Trading_Mode", "API Status"],
+            column_config={
+                "Id": None,
+                "Code": st.column_config.TextColumn("Code"),
+                "Name": st.column_config.TextColumn("Name"),
+                "Enabled": st.column_config.CheckboxColumn("Enabled"),
+                "Active": st.column_config.CheckboxColumn("Active"),
+                "Quote Asset": st.column_config.SelectboxColumn(
+                    "Quote Asset", options=quote_options, required=True
+                ),
+                "Spot Taker Fee %": st.column_config.NumberColumn(
+                    "Spot Taker Fee %", min_value=0.0, max_value=10.0, format="%.4f"
+                ),
+                "Trading_Mode": st.column_config.TextColumn("Trading Mode"),
+                "API Status": st.column_config.TextColumn("API Status", width="large"),
+            },
+            key="exchange_settings_editor",
+        )
+        if (edited["Spot Taker Fee %"].astype(float) == 0).any():
+            st.warning(
+                "A zero spot taker fee is configured. Backtest results will not "
+                "include exchange trading costs for that exchange."
+            )
+        if st.button("Save Exchange Settings", icon=":material/save:"):
+            try:
+                _save_exchange_editor(edited, quote_assets)
+                st.success("Exchange settings updated.")
+                st.rerun()
+            except ValueError as exc:
+                st.error(str(exc))
+
+        exchanges = database.get_exchanges()
+        exchanges = exchanges[
+            exchanges["Code"].isin(("binance", "kraken"))
+            & (exchanges["Enabled"].astype(int) == 1)
+        ]
+        active_exchange = database.get_active_exchange(required=False)
+        exchange_options = [None, *exchanges["Id"].astype(int).tolist()]
         labels = {
             int(row["Id"]): f"{row['Name']} ({row['Code']})"
             for _, row in exchanges.iterrows()
@@ -1004,10 +1137,9 @@ def settings():
             index=(
                 exchange_options.index(int(active_exchange["id"]))
                 if active_exchange and int(active_exchange["id"]) in exchange_options
-                else None
+                else 0
             ),
-            format_func=lambda value: labels[int(value)],
-            placeholder="Select an exchange",
+            format_func=lambda value: "No active exchange" if value is None else labels[int(value)],
             key="active_exchange_selector",
         )
         blockers = database.get_exchange_switch_blockers()
@@ -1017,9 +1149,12 @@ def settings():
                 f"orders exist ({blockers['open_positions']} positions, "
                 f"{blockers['unsettled_orders']} orders)."
             )
-        if st.button("Apply exchange", disabled=selected_exchange is None):
+        if st.button("Apply exchange"):
             try:
-                database.set_active_exchange(int(selected_exchange))
+                if selected_exchange is None:
+                    database.clear_active_exchange()
+                else:
+                    database.set_active_exchange(int(selected_exchange))
                 st.success("Active exchange updated.")
                 st.rerun()
             except ValueError as exc:
@@ -1039,14 +1174,6 @@ def settings():
                 "Kraken is available for public market data only. Private balances "
                 "and order execution are disabled, and live trading jobs remain off."
             )
-            try:
-                health = binance.health_check()
-                if health.available:
-                    st.success(f"Kraken public API: {health.message}")
-                else:
-                    st.error(f"Kraken public API: {health.message}")
-            except Exception as exc:
-                st.error(f"Kraken public API check failed: {exc}")
             return
         st.divider()
         st.markdown("### Overview")
@@ -2589,6 +2716,29 @@ def _prepare_positions_display_grid(
     if show_trail_stop_atr:
         columns.append("Trail_Stop_ATR")
     return df[[column for column in columns if column in df.columns]].copy()
+
+
+def _resolve_selected_position(event_positions, positions_df: pd.DataFrame):
+    """Resolve a grid selection against the current positions snapshot.
+
+    Streamlit can retain a selected row index for one rerun after the underlying
+    position has been deleted. Treat that stale selection as no selection rather
+    than indexing beyond the refreshed DataFrame.
+    """
+    selection = getattr(event_positions, "selection", None)
+    selected_rows = getattr(selection, "rows", ())
+    if positions_df is None or positions_df.empty or not selected_rows:
+        return None
+
+    selected_row_index = selected_rows[0]
+    if (
+        not isinstance(selected_row_index, int)
+        or selected_row_index < 0
+        or selected_row_index >= len(positions_df)
+    ):
+        return None
+
+    return positions_df.iloc[selected_row_index]
 
 
 def _format_position_signal_setup(row):

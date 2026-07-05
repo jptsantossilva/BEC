@@ -1,10 +1,61 @@
 import json
 import importlib
+from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
 
 trading = importlib.import_module("pages.trading")
+
+
+def _selection_event(rows):
+    return SimpleNamespace(selection=SimpleNamespace(rows=rows))
+
+
+def _exchange_editor(quote="USDC", fee_pct=0.4):
+    return pd.DataFrame(
+        [
+            {
+                "Id": 2,
+                "Code": "kraken",
+                "Quote Asset": quote,
+                "Enabled": True,
+                "Spot Taker Fee %": fee_pct,
+            }
+        ]
+    )
+
+
+def test_exchange_quote_change_requires_loaded_public_markets(monkeypatch):
+    monkeypatch.setattr(
+        trading.database,
+        "get_exchange_settings_table",
+        lambda: pd.DataFrame([{"Code": "kraken", "Quote_Asset": "USDC"}]),
+    )
+
+    with pytest.raises(ValueError, match="Check kraken API health"):
+        trading._save_exchange_editor(_exchange_editor(quote="EUR"), {})
+
+
+def test_exchange_editor_persists_validated_fee_and_quote(monkeypatch):
+    saved = []
+    monkeypatch.setattr(
+        trading.database,
+        "get_exchange_settings_table",
+        lambda: pd.DataFrame([{"Code": "kraken", "Quote_Asset": "USDC"}]),
+    )
+    monkeypatch.setattr(
+        trading.database, "update_exchange_settings", lambda rows: saved.extend(rows)
+    )
+
+    trading._save_exchange_editor(
+        _exchange_editor(quote="EUR", fee_pct=0.4), {"kraken": ["EUR", "USDC"]}
+    )
+
+    assert saved == [
+        {"Id": 2, "Enabled": True, "Quote_Asset": "EUR", "Taker_Fee": 0.004}
+    ]
 
 
 def test_positions_display_grid_removes_internal_columns_without_mutating_source():
@@ -77,6 +128,29 @@ def test_positions_display_grid_includes_trail_stop_atr_only_when_enabled():
 
     assert "Trail_Stop_ATR" not in hidden.columns
     assert "Trail_Stop_ATR" in visible.columns
+
+
+def test_selected_position_is_resolved_from_current_positions_snapshot():
+    positions = pd.DataFrame([{"Id": 10}, {"Id": 20}])
+
+    selected = trading._resolve_selected_position(_selection_event([1]), positions)
+
+    assert selected["Id"] == 20
+
+
+def test_stale_selection_is_ignored_after_last_position_is_deleted():
+    positions = pd.DataFrame([{"Id": 10}])
+    stale_event = _selection_event([0])
+
+    assert trading._resolve_selected_position(stale_event, positions)["Id"] == 10
+    assert trading._resolve_selected_position(stale_event, positions.iloc[0:0]) is None
+
+
+def test_out_of_range_position_selection_is_ignored():
+    positions = pd.DataFrame([{"Id": 10}])
+
+    assert trading._resolve_selected_position(_selection_event([1]), positions) is None
+    assert trading._resolve_selected_position(_selection_event([-1]), positions) is None
 
 
 def test_take_profit_display_marks_positions_without_configured_levels():

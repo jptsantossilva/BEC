@@ -57,10 +57,43 @@ def test_runner_console_and_job_logs_include_exchange_identity(monkeypatch, caps
 def _backtesting_job():
     return {
         "id": 42,
+        "exchange_id": 2,
+        "exchange_code": "kraken",
         "strategy_id": "ema_cross",
         "symbol": "btcusdc",
         "timeframe": "4h",
+        "optimize": True,
+        "commission_value": 0.0026,
+        "work_fingerprint": "kraken-work",
     }
+
+
+def test_backtesting_subprocess_command_carries_exchange_fee_and_fingerprint():
+    command = jobs_runner._backtesting_job_command(_backtesting_job())
+
+    assert command[command.index("--exchange-id") + 1] == "2"
+    assert command[command.index("--exchange-code") + 1] == "kraken"
+    assert command[command.index("--commission") + 1] == "0.0026"
+    assert command[command.index("--work-fingerprint") + 1] == "kraken-work"
+    assert command[-1] == "--optimize"
+
+
+def test_monte_carlo_subprocess_command_carries_exchange_identity():
+    command = jobs_runner._monte_carlo_job_command(
+        {
+            "exchange_id": 2,
+            "exchange_code": "kraken",
+            "symbol": "BTC/EUR",
+            "timeframe": "1h",
+            "strategy_id": "ema_cross",
+            "method": "trade_shuffle",
+            "scenarios": 100,
+            "seed": 42,
+        }
+    )
+
+    assert command[command.index("--exchange-id") + 1] == "2"
+    assert command[command.index("--exchange-code") + 1] == "kraken"
 
 
 def test_sync_backtesting_result_updates_existing_position(monkeypatch):

@@ -70,6 +70,18 @@ pins unless the dependency workflow is being updated deliberately.
 - Backtesting and Monte Carlo logic can be deterministic only when seeds or
   fixtures are controlled.
 
+## Codex Usage Discipline
+- Do not load every file under `agent-docs/` by default.
+- For implementation tasks, first identify the smallest relevant scope.
+- Prefer focused edits and focused tests during development.
+- Run the full validation baseline only at PR completion or when explicitly
+  requested.
+- Do not implement multiple PRs from
+  `agent-docs/bec-multi-exchange-migration-plan.md` in one task.
+- For multi-exchange work, state the active PR number and exclusions before
+  editing.
+- Avoid broad repository scans unless necessary; prefer targeted `rg` searches.
+
 ## Task-Specific Docs
 - Use `agent-docs/bec-multi-exchange-migration-plan.md` for the approved,
   gated multi-exchange migration sequence and PR completion criteria.
@@ -85,3 +97,5 @@ pins unless the dependency workflow is being updated deliberately.
   touched files.
 - Use `agent-docs/trading-safety.md` for trading, Binance, database,
   credentials, and notification changes.
+- Use `agent-docs/kraken-backtesting.md` for exchange-specific backtesting,
+  commissions, fingerprints, approvals, and PR 6 rollout checks.

@@ -16,6 +16,8 @@ timeframe = ["1d", "4h", "1h"]
 
 
 def _backtest_timeframes_for_trading():
+    if database.get_active_exchange_code() == "kraken":
+        return list(timeframe)
     return [
         tf
         for tf in timeframe
@@ -57,6 +59,7 @@ def _backtest_result_current(
     work_fingerprint: str,
     refresh_days: int,
     *,
+    commission_value: float | None = None,
     now_utc=None,
 ) -> bool:
     if df_strategy_results.empty or not work_fingerprint:
@@ -66,6 +69,13 @@ def _backtest_result_current(
     row = df_strategy_results.iloc[0]
     if str(row.get("Backtest_Work_Fingerprint", "") or "") != str(work_fingerprint):
         return False
+    if commission_value is not None:
+        try:
+            stored_commission = float(row.get("Backtest_Commission_Value"))
+        except (TypeError, ValueError):
+            return False
+        if abs(stored_commission - float(commission_value)) > 1e-12:
+            return False
     executed_at = _parse_utc_timestamp(row.get("Backtest_Work_Executed_At", ""))
     if executed_at is None:
         return False
@@ -107,6 +117,12 @@ def run(settings=None):
     df_strategies = df_strategies.sort_values(["_Selected_Order", "Id"]).drop(columns=["_Selected_Order"])
     backtest_timeframes = _backtest_timeframes_for_trading()
     backtesting_settings = database.get_backtesting_settings()
+    configured_fee = backtesting_settings.get("Commission_Value")
+    if "Commission_Value" in backtesting_settings and configured_fee is None:
+        raise RuntimeError("Configure an explicit exchange fee before backtesting")
+    commission_value = (
+        float(configured_fee) if configured_fee is not None else None
+    )
     refresh_days = int(backtesting_settings.get("Candidate_Backtest_Refresh_Days", 7))
     candle_cache = {}
 
@@ -145,6 +161,7 @@ def run(settings=None):
                     df_strategy_results,
                     work_fingerprint,
                     refresh_days,
+                    commission_value=commission_value,
                 ):
                     # backtesting
                     stats["backtest_runs"] += 1

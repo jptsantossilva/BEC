@@ -749,3 +749,57 @@ def test_backtest_config_json_default_serializes_numpy_scalars():
     encoded = json.dumps(payload, default=my_backtesting._json_default)
 
     assert '"period": 80' in encoded
+
+
+def test_exchange_fee_has_deterministic_effect_on_backtest_equity():
+    class BuyAndHold(my_backtesting.Strategy):
+        def init(self):
+            pass
+
+        def next(self):
+            if not self.position and len(self.data) == 2:
+                self.buy(size=0.9)
+
+    index = pd.date_range("2026-01-01", periods=6, freq="h")
+    close = [100.0, 101.0, 103.0, 105.0, 107.0, 110.0]
+    frame = pd.DataFrame(
+        {
+            "Open": close,
+            "High": [value + 1 for value in close],
+            "Low": [value - 1 for value in close],
+            "Close": close,
+            "Volume": [100.0] * len(close),
+        },
+        index=index,
+    )
+
+    def final_equity(commission):
+        stats = my_backtesting.FractionalBacktest(
+            frame,
+            strategy=BuyAndHold,
+            cash=1000,
+            commission=commission,
+            finalize_trades=True,
+            exclusive_orders=True,
+            trade_on_close=True,
+        ).run()
+        return float(stats["Equity Final [$]"])
+
+    without_fee = final_equity(0.0)
+    kraken_fee = final_equity(0.004)
+
+    assert kraken_fee == final_equity(0.004)
+    assert kraken_fee < without_fee
+
+
+def test_report_basename_is_exchange_scoped_and_filesystem_safe():
+    kraken = my_backtesting.backtest_report_basename(
+        "ema", "1h", "BTC/USDC", "kraken"
+    )
+    binance = my_backtesting.backtest_report_basename(
+        "ema", "1h", "BTC/USDC", "binance"
+    )
+
+    assert kraken != binance
+    assert kraken == "kraken - ema - 1h - BTC-USDC"
+    assert "/" not in kraken

@@ -460,6 +460,8 @@ def test_cli_dry_run_and_backup_apply(tmp_path, capsys):
         "1:migration_framework_baseline",
         "2:exchange_aware_schema",
         "3:kraken_public_exchange",
+        "4:exchange_specific_backtesting",
+        "5:kraken_backtesting_defaults",
     ]
 
     assert migration_cli(["--database", str(database), "--apply"]) == 2

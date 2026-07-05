@@ -294,7 +294,7 @@ def test_auto_switch_sell_signal_uses_exit_alert(monkeypatch):
     )
 
 
-def test_auto_switch_signal_persistence_keys_by_strategy_and_candle():
+def test_auto_switch_signal_persistence_keys_by_strategy_and_candle(monkeypatch):
     suffix = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
     strategy_id = f"pytest_auto_switch_{suffix}"
     other_strategy_id = f"{strategy_id}_other"
@@ -305,6 +305,12 @@ def test_auto_switch_signal_persistence_keys_by_strategy_and_candle():
     other_candle_id = "2026-05-25T00:00:00Z"
 
     connection = market_phase.database._get_conn()
+    exchange_id = market_phase.database.get_active_exchange_id(required=True)
+    monkeypatch.setattr(
+        market_phase.database,
+        "_exchange_symbol_metadata",
+        lambda value: (exchange_id, "BTC/USDC", value, "BTC", "USDC"),
+    )
     with connection:
         connection.execute(market_phase.database.sql_create_auto_switch_signals_table)
         connection.execute(
@@ -356,6 +362,7 @@ def test_auto_switch_signal_persistence_keys_by_strategy_and_candle():
                 "DELETE FROM Auto_Switch_Signals WHERE strategy_id IN (?, ?)",
                 (strategy_id, other_strategy_id),
             )
+
 
 
 def test_trade_summary_replaces_condition_not_fulfilled_telegram_spam(monkeypatch):
@@ -503,6 +510,10 @@ def test_trade_calls_exchange_adapter_even_in_test_mode(monkeypatch):
         lambda **kwargs: pd.DataFrame([{"Backtest_Config_JSON": "{}"}]),
     )
     monkeypatch.setattr(main.database, "is_backtest_approved", lambda timeframe, row: (True, []))
+    monkeypatch.setattr(main.database, "get_backtesting_settings", lambda: {"Commission_Value": 0.001})
+    monkeypatch.setattr(main.database, "get_strategy_by_id", lambda strategy_id: pd.DataFrame([{"Backtest_Optimize": 0}]))
+    monkeypatch.setattr(main.database, "build_backtesting_work_fingerprint", lambda *args, **kwargs: "work")
+    monkeypatch.setattr(main.database, "backtesting_result_matches_context", lambda *args, **kwargs: True)
     monkeypatch.setattr(main, "get_current_pnl", lambda *args, **kwargs: 0.0)
     monkeypatch.setattr(main, "get_runtime_risk_settings", lambda *args, **kwargs: {"atr_trailing_enabled": False, "atr_period": 14, "atr_multiplier": 1.8, "atr_activation_pnl": 2.0, "stop_loss": 0.0, "take_profit_enabled": False, "take_profits": []})
     monkeypatch.setattr(main, "get_data", lambda symbol, timeframe: _market_data())
@@ -536,6 +547,10 @@ def test_trade_prod_mode_calls_exchange_orders(monkeypatch):
         lambda **kwargs: pd.DataFrame([{"Backtest_Config_JSON": "{}"}]),
     )
     monkeypatch.setattr(main.database, "is_backtest_approved", lambda timeframe, row: (True, []))
+    monkeypatch.setattr(main.database, "get_backtesting_settings", lambda: {"Commission_Value": 0.001})
+    monkeypatch.setattr(main.database, "get_strategy_by_id", lambda strategy_id: pd.DataFrame([{"Backtest_Optimize": 0}]))
+    monkeypatch.setattr(main.database, "build_backtesting_work_fingerprint", lambda *args, **kwargs: "work")
+    monkeypatch.setattr(main.database, "backtesting_result_matches_context", lambda *args, **kwargs: True)
     monkeypatch.setattr(main, "get_current_pnl", lambda *args, **kwargs: 0.0)
     monkeypatch.setattr(main, "get_runtime_risk_settings", lambda *args, **kwargs: {"atr_trailing_enabled": False, "atr_period": 14, "atr_multiplier": 1.8, "atr_activation_pnl": 2.0, "stop_loss": 0.0, "take_profit_enabled": False, "take_profits": []})
     monkeypatch.setattr(main, "get_data", lambda symbol, timeframe: _market_data())
@@ -1169,6 +1184,11 @@ def test_add_symbol_returns_stats_without_telegram_progress(monkeypatch):
     )
     result_row = pd.DataFrame([{"Backtest_Config_JSON": "{}"}])
     calc_calls = []
+    monkeypatch.setattr(
+        add_symbol.database,
+        "get_backtesting_settings",
+        lambda: {"Commission_Value": 0.001, "Candidate_Backtest_Refresh_Days": 7},
+    )
 
     monkeypatch.setattr(add_symbol.config, "load_settings", lambda refresh=True: settings)
     monkeypatch.setattr(add_symbol.database, "get_symbols_to_calc_by_calc_completed", lambda completed: pending)
@@ -1226,6 +1246,11 @@ def test_add_symbol_backtests_only_selected_main_strategies(monkeypatch):
     calc_calls = []
     selected_strategy = object()
     unselected_strategy = object()
+    monkeypatch.setattr(
+        add_symbol.database,
+        "get_backtesting_settings",
+        lambda: {"Commission_Value": 0.001, "Candidate_Backtest_Refresh_Days": 7},
+    )
 
     monkeypatch.setattr(add_symbol.database, "get_symbols_to_calc_by_calc_completed", lambda completed: pending)
     monkeypatch.setattr(add_symbol.database, "get_strategies_for_main", lambda: strategies)
@@ -1272,6 +1297,11 @@ def test_add_symbol_keeps_disabled_timeframes_with_open_positions(monkeypatch):
     result_row = pd.DataFrame([{"Backtest_Config_JSON": "{}"}])
     calc_calls = []
     selected_strategy = object()
+    monkeypatch.setattr(
+        add_symbol.database,
+        "get_backtesting_settings",
+        lambda: {"Commission_Value": 0.001, "Candidate_Backtest_Refresh_Days": 7},
+    )
 
     monkeypatch.setattr(add_symbol.database, "get_symbols_to_calc_by_calc_completed", lambda completed: pending)
     monkeypatch.setattr(add_symbol.database, "get_strategies_for_main", lambda: strategies)
@@ -1319,6 +1349,12 @@ def test_add_symbol_skips_disabled_timeframes_with_no_open_positions(monkeypatch
     result_row = pd.DataFrame([{"Backtest_Config_JSON": "{}"}])
     calc_calls = []
     selected_strategy = object()
+    monkeypatch.setattr(add_symbol.database, "get_active_exchange_code", lambda: "binance")
+    monkeypatch.setattr(
+        add_symbol.database,
+        "get_backtesting_settings",
+        lambda: {"Commission_Value": 0.001, "Candidate_Backtest_Refresh_Days": 7},
+    )
 
     monkeypatch.setattr(add_symbol.database, "get_symbols_to_calc_by_calc_completed", lambda completed: pending)
     monkeypatch.setattr(add_symbol.database, "get_strategies_for_main", lambda: strategies)
@@ -1373,6 +1409,7 @@ def test_add_symbol_skips_current_backtesting_result(monkeypatch):
     metadata_calls = []
     insert_calls = []
     selected_strategy = object()
+    monkeypatch.setattr(add_symbol.database, "get_active_exchange_code", lambda: "binance")
 
     monkeypatch.setattr(add_symbol.database, "get_symbols_to_calc_by_calc_completed", lambda completed: pending)
     monkeypatch.setattr(add_symbol.database, "get_strategies_for_main", lambda: strategies)
@@ -1437,6 +1474,7 @@ def test_add_symbol_refreshes_expired_backtesting_result(monkeypatch):
     calc_calls = []
     metadata_calls = []
     selected_strategy = object()
+    monkeypatch.setattr(add_symbol.database, "get_active_exchange_code", lambda: "binance")
 
     monkeypatch.setattr(add_symbol.database, "get_symbols_to_calc_by_calc_completed", lambda completed: pending)
     monkeypatch.setattr(add_symbol.database, "get_strategies_for_main", lambda: strategies)
@@ -1501,6 +1539,7 @@ def test_add_symbol_does_not_checkpoint_failed_backtest(monkeypatch):
     approval_calls = []
     insert_calls = []
     selected_strategy = object()
+    monkeypatch.setattr(add_symbol.database, "get_active_exchange_code", lambda: "binance")
 
     monkeypatch.setattr(add_symbol.database, "get_symbols_to_calc_by_calc_completed", lambda completed: pending)
     monkeypatch.setattr(add_symbol.database, "get_strategies_for_main", lambda: strategies)
@@ -1540,7 +1579,8 @@ def test_add_symbol_does_not_checkpoint_failed_backtest(monkeypatch):
     assert stats["rejected_candidates"] == 1
 
 
-def test_market_phase_removes_inactive_pending_position_strategies(monkeypatch):
+@pytest.mark.parametrize("exchange_code", ["binance", "kraken"])
+def test_market_phase_builds_candidates_for_public_exchanges(monkeypatch, exchange_code):
     settings = SimpleNamespace(
         main_strategies=["hma_rsi_linreg_copy", "ema_cross_with_market_phases_copy"],
         trade_against="USDC",
@@ -1564,9 +1604,24 @@ def test_market_phase_removes_inactive_pending_position_strategies(monkeypatch):
     )
     cleanup_calls = []
     added_strategies = []
+    backtesting_calls = []
+    balance_calls = []
 
     monkeypatch.setattr(market_phase.config, "load_settings", lambda refresh=True: settings)
-    monkeypatch.setattr(market_phase.binance, "create_balance_snapshot", lambda **kwargs: None)
+    monkeypatch.setattr(
+        market_phase.database,
+        "get_active_exchange",
+        lambda required=True: {
+            "id": 1 if exchange_code == "binance" else 2,
+            "code": exchange_code,
+            "quote_asset": "USDC",
+        },
+    )
+    monkeypatch.setattr(
+        market_phase.binance,
+        "create_balance_snapshot",
+        lambda **kwargs: balance_calls.append(kwargs),
+    )
     monkeypatch.setattr(market_phase, "_run_btc_auto_switch_backtest_if_needed", lambda *args, **kwargs: {})
     monkeypatch.setattr(market_phase, "trade_against_auto_switch", lambda settings, warning_stats: settings)
     monkeypatch.setattr(market_phase, "get_symbols", lambda trade_against, settings: ["AAAUSDC"])
@@ -1583,7 +1638,11 @@ def test_market_phase_removes_inactive_pending_position_strategies(monkeypatch):
     monkeypatch.setattr(market_phase.database, "delete_symbols_to_calc_completed", lambda: None)
     monkeypatch.setattr(market_phase.database, "add_symbols_with_open_positions_to_calc", lambda: None)
     monkeypatch.setattr(market_phase.database, "add_symbols_top_rank_to_calc", lambda: None)
-    monkeypatch.setattr(market_phase.add_symbol, "run", lambda settings: {})
+    monkeypatch.setattr(
+        market_phase.add_symbol,
+        "run",
+        lambda settings: backtesting_calls.append(settings) or {},
+    )
     monkeypatch.setattr(
         market_phase.database,
         "add_top_rank_to_positions",
@@ -1597,6 +1656,8 @@ def test_market_phase_removes_inactive_pending_position_strategies(monkeypatch):
 
     assert cleanup_calls == [["hma_rsi_linreg_copy", "ema_cross_with_market_phases_copy"]]
     assert added_strategies == ["hma_rsi_linreg_copy", "ema_cross_with_market_phases_copy"]
+    assert backtesting_calls == [settings]
+    assert len(balance_calls) == (1 if exchange_code == "binance" else 0)
 
 
 def test_market_phase_empty_data_is_skipped_without_error_notification(monkeypatch):

@@ -101,6 +101,8 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
     assert report.applied == [
         "2:exchange_aware_schema",
         "3:kraken_public_exchange",
+        "4:exchange_specific_backtesting",
+        "5:kraken_backtesting_defaults",
     ]
     assert report.unresolved_legacy_symbols == ["UNKNOWNPAIR"]
 
@@ -108,6 +110,8 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
     assert applied.applied == [
         "2:exchange_aware_schema",
         "3:kraken_public_exchange",
+        "4:exchange_specific_backtesting",
+        "5:kraken_backtesting_defaults",
     ]
     assert applied.unresolved_legacy_symbols == ["UNKNOWNPAIR"]
 
@@ -116,8 +120,12 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
             "SELECT Code, Enabled, Is_Default, Quote_Asset FROM Exchanges"
         ).fetchall() == [
             ("binance", 1, 1, "USDT"),
-            ("kraken", 0, 0, "EUR"),
+            ("kraken", 1, 0, "USDC"),
         ]
+        assert connection.execute(
+            "SELECT ebs.Commission_Value FROM Exchange_Backtesting_Settings ebs "
+            "JOIN Exchanges e ON e.Id=ebs.Exchange_Id WHERE e.Code='kraken'"
+        ).fetchone()[0] == pytest.approx(0.004)
         assert connection.execute(
             "SELECT Exchange_Id, Symbol, Symbol_Normalized, Exchange_Symbol, "
             "Base_Asset, Quote_Asset, Order_Status, Executed_Qty, Average_Price, Net_Qty "
@@ -258,7 +266,7 @@ def test_read_only_startup_validation_does_not_block_job_claim(tmp_path):
     assert process.exitcode == 0
 
 
-def test_new_install_exchange_metadata_has_no_active_default(tmp_path):
+def test_new_install_exchange_metadata_defaults_to_kraken(tmp_path):
     database = tmp_path / "new.db"
     with sqlite3.connect(database) as connection:
         connection.executescript(
@@ -281,7 +289,7 @@ def test_new_install_exchange_metadata_has_no_active_default(tmp_path):
 
         assert connection.execute(
             "SELECT Code, Enabled, Is_Default FROM Exchanges ORDER BY Id"
-        ).fetchall() == [("binance", 0, 0), ("kraken", 0, 0)]
+        ).fetchall() == [("binance", 0, 0), ("kraken", 1, 1)]
 
         connection.execute("BEGIN IMMEDIATE")
         apply_exchange_aware_schema(connection, upgraded_install=True)
@@ -304,11 +312,17 @@ def test_kraken_metadata_migration_applies_automatically_after_version_two(tmp_p
         )
 
         assert [migration.name for migration in applied] == [
-            "kraken_public_exchange"
+            "kraken_public_exchange",
+            "exchange_specific_backtesting",
+            "kraken_backtesting_defaults",
         ]
         assert connection.execute(
             "SELECT Enabled, Is_Default FROM Exchanges WHERE Code='kraken'"
-        ).fetchone() == (0, 0)
+        ).fetchone() == (1, 0)
+        assert connection.execute(
+            "SELECT ebs.Commission_Value FROM Exchange_Backtesting_Settings ebs "
+            "JOIN Exchanges e ON e.Id=ebs.Exchange_Id WHERE e.Code='kraken'"
+        ).fetchone()[0] == pytest.approx(0.004)
 
 
 def test_new_database_is_marked_current_with_kraken_public_metadata(tmp_path):
@@ -321,4 +335,31 @@ def test_new_database_is_marked_current_with_kraken_public_metadata(tmp_path):
         assert pending_migrations(connection, MIGRATIONS) == ()
         assert connection.execute(
             "SELECT Code, Enabled, Is_Default FROM Exchanges ORDER BY Id"
-        ).fetchall() == [("binance", 0, 0), ("kraken", 0, 0)]
+        ).fetchall() == [("binance", 0, 0), ("kraken", 1, 1)]
+
+
+def test_kraken_defaults_migration_preserves_existing_fee(tmp_path):
+    database = tmp_path / "kraken-fee.db"
+    _create_legacy_database(database)
+    with sqlite3.connect(database) as connection:
+        apply_pending_migrations(connection, MIGRATIONS[:4], allow_rebuild=True)
+        kraken_id = connection.execute(
+            "SELECT Id FROM Exchanges WHERE Code='kraken'"
+        ).fetchone()[0]
+        connection.execute(
+            "INSERT INTO Exchange_Backtesting_Settings "
+            "(Exchange_Id, Commission_Value) VALUES (?, ?)",
+            (kraken_id, 0.0026),
+        )
+        connection.commit()
+
+        applied = apply_pending_migrations(connection, MIGRATIONS, allow_rebuild=False)
+
+        assert [migration.name for migration in applied] == [
+            "kraken_backtesting_defaults"
+        ]
+        assert connection.execute(
+            "SELECT Commission_Value FROM Exchange_Backtesting_Settings "
+            "WHERE Exchange_Id=?",
+            (kraken_id,),
+        ).fetchone()[0] == pytest.approx(0.0026)

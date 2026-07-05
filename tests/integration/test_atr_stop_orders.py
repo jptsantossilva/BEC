@@ -24,7 +24,7 @@ def test_positions_has_minimum_atr_runtime_columns(db_path):
     assert "Atr_Activation_PnL" not in cols
 
 
-def test_add_order_sell_persists_atr_stop_metadata(db_path, test_ids):
+def test_add_order_sell_persists_atr_stop_metadata(db_path, test_ids, monkeypatch):
     cols = _orders_columns(db_path)
     required = {
         "Stop_Type",
@@ -34,6 +34,18 @@ def test_add_order_sell_persists_atr_stop_metadata(db_path, test_ids):
         "Atr_Params_At_Exit",
     }
     assert required.issubset(cols)
+    exchange_id = database.get_active_exchange_id(required=True)
+    monkeypatch.setattr(
+        database,
+        "_exchange_symbol_metadata",
+        lambda symbol: (
+            exchange_id,
+            symbol,
+            symbol,
+            symbol.removesuffix("USDC"),
+            "USDC",
+        ),
+    )
 
     database.add_order_buy(
         exchange_order_id=test_ids["buy_exchange_order_id"],

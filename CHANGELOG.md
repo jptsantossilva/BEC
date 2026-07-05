@@ -2,6 +2,14 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-07-05]
+- Backtesting - Added exchange-specific commissions, immutable queue context, exchange-aware fingerprints and context-matched trading approval for Binance and Kraken.
+- Kraken Backtesting - Enabled public-data backtests and Monte Carlo analysis with normalized Kraken symbols while keeping all private Kraken operations disabled.
+- Backtesting Reports - Included exchange identity in results, queues and generated report filenames to prevent Binance/Kraken collisions.
+- Database - Added additive versions 4 and 5 for exchange-specific backtesting, preserving the existing Binance commission and active exchange on upgrades while configuring Kraken at 0.4%/USDC.
+- Trading Settings - Added an exchange configuration table for enabled state, validated quote asset, spot taker fee and operator-triggered public API health checks.
+- Trading Dashboard - Prevented stale Streamlit row selections from crashing after deleting the final open position.
+
 ## [2026-07-03]
 - Exchanges - Added the canonical `ExchangeAdapter` contract, normalized market, balance, ticker, order book, order, fill, validation, and health types, and a native `BinanceAdapter` implementation.
 - Exchanges - Routed trading, signals, market-phase ranking, backtesting, market indicators, balances, and dashboard trading actions through an exchange-neutral compatibility service while preserving existing Binance behavior.

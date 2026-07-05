@@ -321,8 +321,8 @@ def _interpretation(score, valid_scenarios, total_scenarios, method, min_sample_
     return "Moderate robustness"
 
 
-def _target_slug(symbol, timeframe, strategy_id, method):
-    cleaned = f"{symbol}-{strategy_id}-{timeframe}-{method}"
+def _target_slug(exchange_code, symbol, timeframe, strategy_id, method):
+    cleaned = f"{exchange_code}-{symbol}-{strategy_id}-{timeframe}-{method}"
     return "".join(char if char.isalnum() or char in {"-", "_"} else "-" for char in cleaned)
 
 
@@ -715,7 +715,13 @@ def _monte_carlo_report_script():
 
 def _write_outputs(result):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    slug = _target_slug(result["symbol"], result["timeframe"], result["strategy_id"], result["method"])
+    slug = _target_slug(
+        result["exchange_code"],
+        result["symbol"],
+        result["timeframe"],
+        result["strategy_id"],
+        result["method"],
+    )
     timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
     base = f"{slug}-{timestamp}"
     html_path = os.path.join(OUTPUT_DIR, f"{base}.html")
@@ -835,6 +841,7 @@ def _build_result(
     valid = len(scenario_metrics)
     score = _robustness_score(metrics, valid, scenarios, min_sample_ok=min_sample_ok)
     result = {
+        "exchange_code": database.get_active_exchange_code(),
         "symbol": str(symbol).upper(),
         "timeframe": str(timeframe),
         "strategy_id": str(strategy_id),
@@ -861,6 +868,8 @@ def _build_result(
 
 def run_trade_order_shuffle(symbol, timeframe, strategy_id, scenarios=1000, seed=42):
     settings = database.get_backtesting_settings()
+    if settings.get("Commission_Value") is None:
+        raise RuntimeError("Configure an explicit exchange fee before Monte Carlo analysis")
     initial_cash = float(settings["Cash_Value"])
     trades = database.get_backtesting_trades_by_symbol_timeframe_strategy(symbol, timeframe, strategy_id)
     if trades.empty or "ReturnPct" not in trades.columns:
@@ -1098,6 +1107,8 @@ def _perturb_candles(
 
 def run_candles_based(symbol, timeframe, strategy_id, scenarios=200, seed=42):
     settings = database.get_backtesting_settings()
+    if settings.get("Commission_Value") is None:
+        raise RuntimeError("Configure an explicit exchange fee before Monte Carlo analysis")
     initial_cash = float(settings["Cash_Value"])
     commission = float(settings["Commission_Value"])
     perturb_min_pct = float(
@@ -1199,7 +1210,14 @@ def main():
     parser.add_argument("--method", required=True, choices=[METHOD_TRADE_SHUFFLE, METHOD_CANDLES])
     parser.add_argument("--scenarios", type=int, default=None)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--exchange-id", type=int)
+    parser.add_argument("--exchange-code")
     args = parser.parse_args()
+    exchange = database.require_backtesting_execution_available()
+    if args.exchange_id is not None and int(args.exchange_id) != int(exchange["id"]):
+        raise RuntimeError("Queued Monte Carlo exchange no longer matches the active exchange")
+    if args.exchange_code and str(args.exchange_code) != str(exchange["code"]):
+        raise RuntimeError("Queued Monte Carlo exchange code does not match the active exchange")
     result = run_monte_carlo(
         symbol=args.symbol,
         timeframe=args.timeframe,

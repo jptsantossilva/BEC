@@ -200,12 +200,23 @@ def render_backtest_settings():
     st.caption("Configure backtesting settings. These settings will be used when running strategy backtests.")
 
     settings = database.get_backtesting_settings()
+    active_exchange = database.get_active_exchange(required=False)
+    fee_configured = settings["Commission_Value"] is not None
 
     execution_tab, quality_score_tab = st.tabs(["Execution", "Quality Score"])
 
     with execution_tab:
         st.subheader("Execution")
         st.caption("Core assumptions used by every backtest run.")
+        if active_exchange:
+            st.caption(
+                f"Exchange-specific assumptions for {active_exchange['name']}."
+            )
+        if not fee_configured:
+            st.warning(
+                "An explicit exchange commission is required before backtests can run. "
+                "Configure it in Trading → Settings."
+            )
 
         with st.container(horizontal=True):
             cash_value = st.number_input(
@@ -222,9 +233,15 @@ def render_backtest_settings():
                 min_value=0.0,
                 max_value=10.0,
                 step=0.1,
-                value=float(settings["Commission_Value"]) * 100.0,
+                value=(
+                    float(settings["Commission_Value"]) * 100.0
+                    if fee_configured
+                    else 0.0
+                ),
                 format="%.2f",
                 width=220,
+                disabled=True,
+                help="Edit this exchange-specific fee in Trading → Settings.",
             )
 
         st.subheader("Optimization")
@@ -464,6 +481,7 @@ def render_backtest_settings():
             strategy_quality_robustness_weight=strategy_quality_robustness_weight,
             monte_carlo_candle_perturb_min_pct=monte_carlo_candle_perturb_min_pct,
             monte_carlo_candle_perturb_max_pct=monte_carlo_candle_perturb_max_pct,
+            update_exchange_fee=False,
         )
         st.success("Backtesting settings updated.")
         time.sleep(1.0)

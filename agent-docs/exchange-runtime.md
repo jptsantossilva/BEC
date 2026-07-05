@@ -11,10 +11,12 @@ Switching is rejected while any `Position=1` row or order in `pending`, `open`,
 `partially_filled` or `unknown` state exists. Candidate rows with `Position=0`
 do not block switching.
 
-Fresh installations have no active exchange. Exchange-dependent schedules stay
-disabled until selection. Selecting the first exchange enables the trading,
-ranking and signal schedules; individual schedule toggles can then be adjusted
-normally.
+Through PR 4, fresh installations had no active exchange. PR 6 latest-schema
+initialization enables and selects Kraken by default, with only public
+market-phase analysis enabled. Operators may disable all exchanges, returning
+the application to a no-active-exchange state with exchange-dependent
+schedules disabled. Selecting Binance enables its normal trading, ranking and
+signal schedules; selecting Kraken keeps live trading schedules disabled.
 
 ## Compatibility and Rollback
 
