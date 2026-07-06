@@ -3,6 +3,7 @@ import io
 import pandas as pd
 
 import bec.jobs_runner as jobs_runner
+import bec.exchanges.live_execution as live_execution
 
 
 def test_resolve_schedule_script_keeps_existing_root_wrapper():
@@ -37,6 +38,25 @@ def test_run_loop_exits_when_runner_lock_unavailable(monkeypatch, capsys):
     jobs_runner.run_loop()
 
     assert "jobs_runner already running" in capsys.readouterr().out
+
+
+def test_startup_reconciliation_runs_only_for_unsettled_intents(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        jobs_runner.database, "get_unsettled_order_intents", lambda: [{"Id": 1}]
+    )
+    monkeypatch.setattr(
+        live_execution,
+        "reconcile_unsettled_orders",
+        lambda: calls.append(True)
+        or {"checked": 1, "updated": 1, "unresolved": 0},
+    )
+    monkeypatch.setattr(jobs_runner, "_print_log", lambda message: None)
+
+    stats = jobs_runner._run_startup_reconciliation()
+
+    assert calls == [True]
+    assert stats["updated"] == 1
 
 
 def test_runner_console_and_job_logs_include_exchange_identity(monkeypatch, capsys):

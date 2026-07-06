@@ -122,6 +122,7 @@ def test_new_install_disables_exchange_dependent_jobs(tmp_path):
             "main_1d",
             "symbol_by_market_phase_1d",
             "super_rsi_15m",
+            "kraken_reconcile_15m",
         }
         assert test_conn.execute(
             "SELECT COUNT(*) FROM Exchanges WHERE Enabled=1 OR Is_Default=1"
@@ -149,13 +150,19 @@ def test_upgraded_install_keeps_binance_active_and_jobs_enabled(tmp_path):
         database.ensure_job_schedules()
 
         assert database.get_active_exchange(required=True)["code"] == "binance"
-        placeholders = ",".join("?" for _ in database.EXCHANGE_DEPENDENT_JOBS)
+        expected_enabled = tuple(
+            name
+            for name in database.EXCHANGE_DEPENDENT_JOBS
+            if name != database.RECONCILIATION_JOB
+        )
+        placeholders = ",".join("?" for _ in expected_enabled)
         enabled = test_conn.execute(
             f"SELECT COUNT(*) FROM Job_Schedules "
             f"WHERE enabled=1 AND name IN ({placeholders})",
-            database.EXCHANGE_DEPENDENT_JOBS,
+            expected_enabled,
         ).fetchone()[0]
-        assert enabled == len(database.EXCHANGE_DEPENDENT_JOBS)
+        assert enabled == len(expected_enabled)
+        assert database.get_job_schedule_enabled(database.RECONCILIATION_JOB) is False
     finally:
         test_conn.close()
         if original_conn is None:

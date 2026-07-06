@@ -47,9 +47,11 @@ EXCHANGE_DEPENDENT_JOBS = (
     "main_1d",
     "symbol_by_market_phase_1d",
     "super_rsi_15m",
+    "kraken_reconcile_15m",
 )
 LIVE_TRADING_JOBS = ("main_1h", "main_4h", "main_1d")
 PUBLIC_ANALYSIS_JOBS = ("symbol_by_market_phase_1d",)
+RECONCILIATION_JOB = "kraken_reconcile_15m"
 UNSETTLED_ORDER_STATUSES = ("pending", "open", "partially_filled", "unknown")
 
 
@@ -66,6 +68,8 @@ def get_exchange_settings_table():
         """
         SELECT e.Id, e.Code, e.Name, e.Enabled, e.Is_Default,
                e.Quote_Asset, e.Trading_Mode,
+               e.Buy_Enabled, e.Sell_Enabled, e.Partial_Sell_Policy,
+               e.Sizing_Buffer_Pct,
                ebs.Commission_Value AS Taker_Fee
         FROM Exchanges e
         LEFT JOIN Exchange_Backtesting_Settings ebs ON ebs.Exchange_Id=e.Id
@@ -106,17 +110,65 @@ def clear_active_exchange() -> None:
 def update_exchange_settings(rows) -> None:
     connection = _get_conn()
     current = get_active_exchange(required=False)
+    existing_settings = {
+        int(item[0]): {
+            "Buy_Enabled": bool(item[1]),
+            "Sell_Enabled": bool(item[2]),
+            "Partial_Sell_Policy": str(item[3] or "accumulate"),
+            "Sizing_Buffer_Pct": float(item[4] if item[4] is not None else 1.0),
+        }
+        for item in connection.execute(
+            """
+            SELECT Id, Buy_Enabled, Sell_Enabled, Partial_Sell_Policy,
+                   Sizing_Buffer_Pct FROM Exchanges
+            """
+        )
+    }
     normalized = []
     for row in rows:
         exchange_id = int(row["Id"])
+        existing = existing_settings.get(exchange_id, {})
         enabled = int(bool(row["Enabled"]))
         quote_asset = str(row["Quote_Asset"] or "").strip().upper()
         fee = float(row["Taker_Fee"])
+        buy_enabled = int(
+            bool(row.get("Buy_Enabled", existing.get("Buy_Enabled", False)))
+        )
+        sell_enabled = int(
+            bool(row.get("Sell_Enabled", existing.get("Sell_Enabled", False)))
+        )
+        partial_sell_policy = str(
+            row.get(
+                "Partial_Sell_Policy",
+                existing.get("Partial_Sell_Policy", "accumulate"),
+            )
+            or "accumulate"
+        ).strip().lower()
+        sizing_buffer_pct = float(
+            row.get("Sizing_Buffer_Pct", existing.get("Sizing_Buffer_Pct", 1.0))
+        )
         if not quote_asset:
             raise ValueError("Quote asset is required")
         if not math.isfinite(fee) or fee < 0:
             raise ValueError("Spot taker fee must be a finite non-negative number")
-        normalized.append((exchange_id, enabled, quote_asset, fee))
+        if partial_sell_policy not in {"accumulate", "sell_all", "skip"}:
+            raise ValueError("Invalid partial-sell policy")
+        if not math.isfinite(sizing_buffer_pct) or not 0 <= sizing_buffer_pct < 100:
+            raise ValueError("Sizing buffer must be between 0 and 100 percent")
+        if (buy_enabled or sell_enabled) and not enabled:
+            raise ValueError("Enable the exchange before enabling live operations")
+        normalized.append(
+            (
+                exchange_id,
+                enabled,
+                quote_asset,
+                fee,
+                buy_enabled,
+                sell_enabled,
+                partial_sell_policy,
+                sizing_buffer_pct,
+            )
+        )
 
     if current:
         active_update = next(
@@ -136,14 +188,33 @@ def update_exchange_settings(rows) -> None:
         }
         if {item[0] for item in normalized} - known_ids:
             raise ValueError("Unknown exchange in settings update")
-        for exchange_id, enabled, quote_asset, fee in normalized:
+        for (
+            exchange_id,
+            enabled,
+            quote_asset,
+            fee,
+            buy_enabled,
+            sell_enabled,
+            partial_sell_policy,
+            sizing_buffer_pct,
+        ) in normalized:
             connection.execute(
                 """
                 UPDATE Exchanges
-                SET Enabled=?, Quote_Asset=?, Updated_At=CURRENT_TIMESTAMP
+                SET Enabled=?, Quote_Asset=?, Buy_Enabled=?, Sell_Enabled=?,
+                    Partial_Sell_Policy=?, Sizing_Buffer_Pct=?,
+                    Updated_At=CURRENT_TIMESTAMP
                 WHERE Id=?
                 """,
-                (enabled, quote_asset, exchange_id),
+                (
+                    enabled,
+                    quote_asset,
+                    buy_enabled,
+                    sell_enabled,
+                    partial_sell_policy,
+                    sizing_buffer_pct,
+                    exchange_id,
+                ),
             )
             connection.execute(
                 """
@@ -165,6 +236,17 @@ def update_exchange_settings(rows) -> None:
         ).fetchone()
         if has_active is None:
             _disable_exchange_jobs(connection)
+        kraken_live = connection.execute(
+            """
+            SELECT 1 FROM Exchanges
+            WHERE Code='kraken' AND Enabled=1 AND (Buy_Enabled=1 OR Sell_Enabled=1)
+            """
+        ).fetchone()
+        if kraken_live:
+            connection.execute(
+                "UPDATE Job_Schedules SET enabled=1 WHERE name=?",
+                (RECONCILIATION_JOB,),
+            )
     from bec.exchanges.registry import set_default_adapter
 
     set_default_adapter(None)
@@ -172,9 +254,23 @@ def update_exchange_settings(rows) -> None:
 
 def get_active_exchange(required: bool = False) -> dict | None:
     connection = _get_conn()
+    exchange_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(Exchanges)")
+    }
+    buy_enabled = "Buy_Enabled" if "Buy_Enabled" in exchange_columns else "0"
+    sell_enabled = "Sell_Enabled" if "Sell_Enabled" in exchange_columns else "0"
+    partial_sell_policy = (
+        "Partial_Sell_Policy"
+        if "Partial_Sell_Policy" in exchange_columns
+        else "'accumulate'"
+    )
+    sizing_buffer = (
+        "Sizing_Buffer_Pct" if "Sizing_Buffer_Pct" in exchange_columns else "1.0"
+    )
     row = connection.execute(
-        """
-        SELECT Id, Code, Name, Enabled, Is_Default, Quote_Asset, Trading_Mode
+        f"""
+        SELECT Id, Code, Name, Enabled, Is_Default, Quote_Asset, Trading_Mode,
+               {buy_enabled}, {sell_enabled}, {partial_sell_policy}, {sizing_buffer}
         FROM Exchanges
         WHERE Enabled=1 AND Is_Default=1
         ORDER BY Id LIMIT 1
@@ -186,7 +282,11 @@ def get_active_exchange(required: bool = False) -> dict | None:
                 "No active exchange is selected. Select an exchange in Trading Settings."
             )
         return None
-    keys = ("id", "code", "name", "enabled", "is_default", "quote_asset", "trading_mode")
+    keys = (
+        "id", "code", "name", "enabled", "is_default", "quote_asset",
+        "trading_mode", "buy_enabled", "sell_enabled", "partial_sell_policy",
+        "sizing_buffer_pct",
+    )
     return dict(zip(keys, row))
 
 
@@ -1254,6 +1354,319 @@ def add_order_sell(
             ),
         )
         return float(pnl_value), float(pnl_perc)
+
+
+def create_order_intent(
+    *,
+    side: str,
+    symbol: str,
+    bot: str,
+    position_id: int | None = None,
+    requested_qty: float | None = None,
+    requested_quote_qty: float | None = None,
+    strategy_id: str = "",
+    strategy_params_json: str = "",
+    exit_reason: str = "",
+    sell_percentage: float = 100,
+    take_profit_num: int = 0,
+    client_order_id: str = "",
+) -> dict:
+    """Persist an immutable order intent before any private API submission."""
+    connection = _get_conn()
+    exchange = get_active_exchange(required=True)
+    side = str(side).strip().upper()
+    if side not in {"BUY", "SELL"}:
+        raise ValueError("Order intent side must be BUY or SELL")
+    if has_unsettled_order_intent(position_id=position_id, side=side, symbol=symbol):
+        raise RuntimeError("An unsettled order intent already exists for this action")
+    client_order_id = client_order_id or (
+        f"bec-{exchange['code']}-{secrets.token_hex(12)}"
+    )
+    exchange_fields = _exchange_symbol_metadata(symbol)
+    if not strategy_params_json:
+        strategy_params_json = build_strategy_params_json(strategy_id)
+    created_at = _utc_now_str()
+    with connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO Orders (
+                Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset,
+                Quote_Asset, Client_Order_Id, Position_Id, Date, Bot, Symbol,
+                Side, Price, Qty, Strategy_Id, Strategy_Params_JSON,
+                Exit_Reason, Sell_Perc, Take_Profit_Num, Order_Status,
+                Intent_State, Requested_Qty, Requested_Quote_Qty,
+                Executed_Qty, Average_Price, Fee_Amount, Net_Qty,
+                Applied_Executed_Qty, Applied_Net_Qty, Submission_Attempts
+            ) VALUES (
+                ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0
+            )
+            """,
+            (
+                *exchange_fields,
+                client_order_id,
+                position_id,
+                created_at,
+                bot,
+                symbol,
+                side,
+                0.0,
+                0.0,
+                strategy_id,
+                strategy_params_json,
+                exit_reason,
+                float(sell_percentage),
+                int(take_profit_num),
+                "pending",
+                "created",
+                requested_qty,
+                requested_quote_qty,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            ),
+        )
+    return get_order_intent(int(cursor.lastrowid))
+
+
+def get_order_intent(intent_id: int) -> dict:
+    connection = _get_conn()
+    row = connection.execute(
+        "SELECT * FROM Orders WHERE Id=?", (int(intent_id),)
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"Unknown order intent: {intent_id}")
+    return dict(
+        zip((item[1] for item in connection.execute("PRAGMA table_info(Orders)")), row)
+    )
+
+
+def has_unsettled_order_intent(
+    *, position_id: int | None, side: str, symbol: str
+) -> bool:
+    connection = _get_conn()
+    row = connection.execute(
+        """
+        SELECT 1 FROM Orders
+        WHERE Exchange_Id=? AND Side=? AND Symbol=?
+          AND ((Position_Id IS NULL AND ? IS NULL) OR Position_Id=?)
+          AND lower(COALESCE(Order_Status, 'unknown'))
+              IN ('pending','open','partially_filled','unknown')
+        LIMIT 1
+        """,
+        (
+            get_active_exchange_id(required=True),
+            str(side).upper(),
+            str(symbol),
+            position_id,
+            position_id,
+        ),
+    ).fetchone()
+    return row is not None
+
+
+def mark_order_intent_submitting(intent_id: int) -> None:
+    connection = _get_conn()
+    with connection:
+        cursor = connection.execute(
+            """
+            UPDATE Orders
+            SET Intent_State='submitting', Submission_Attempts=Submission_Attempts+1,
+                Error_Message=NULL
+            WHERE Id=? AND Intent_State='created' AND Submission_Attempts=0
+            """,
+            (int(intent_id),),
+        )
+    if cursor.rowcount != 1:
+        raise RuntimeError("Order intent has already been submitted")
+
+
+def mark_order_intent_unknown(intent_id: int, error: str) -> None:
+    connection = _get_conn()
+    with connection:
+        connection.execute(
+            """
+            UPDATE Orders
+            SET Order_Status='unknown', Intent_State='reconcile_required',
+                Error_Message=?, Last_Reconciled_At=CURRENT_TIMESTAMP
+            WHERE Id=?
+            """,
+            (str(error), int(intent_id)),
+        )
+
+
+def get_unsettled_order_intents(exchange_id: int | None = None) -> list[dict]:
+    connection = _get_conn()
+    exchange_id = int(exchange_id or get_active_exchange_id(required=True))
+    cursor = connection.execute(
+        """
+        SELECT * FROM Orders
+        WHERE Exchange_Id=?
+          AND lower(COALESCE(Order_Status, 'unknown'))
+              IN ('pending','open','partially_filled','unknown')
+        ORDER BY Id
+        """,
+        (exchange_id,),
+    )
+    columns = [item[0] for item in cursor.description]
+    return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+
+def apply_order_result(intent_id: int, result) -> dict:
+    """Persist one canonical result and idempotently apply its fill delta."""
+    from bec.exchanges.base import OrderStatus
+
+    connection = _get_conn()
+    intent = get_order_intent(intent_id)
+    executed = float(result.executed_quantity)
+    average = float(result.average_price or 0)
+    fee_totals = {}
+    for fill in result.fills:
+        if fill.fee_asset:
+            fee_totals[fill.fee_asset] = fee_totals.get(fill.fee_asset, 0.0) + float(
+                fill.fee_amount
+            )
+    fee_asset = next(iter(fee_totals)) if len(fee_totals) == 1 else ""
+    fee_amount = fee_totals.get(fee_asset, 0.0) if fee_asset else 0.0
+    base_asset = str(intent.get("Base_Asset") or "")
+    net_qty = executed
+    if str(intent["Side"]).upper() == "BUY" and fee_asset == base_asset:
+        net_qty = max(0.0, executed - fee_amount)
+    old_applied_executed = float(intent.get("Applied_Executed_Qty") or 0)
+    old_applied_net = float(intent.get("Applied_Net_Qty") or 0)
+    delta_executed = max(0.0, executed - old_applied_executed)
+    delta_net = max(0.0, net_qty - old_applied_net)
+    terminal = result.status in {
+        OrderStatus.FILLED,
+        OrderStatus.CANCELED,
+        OrderStatus.REJECTED,
+        OrderStatus.EXPIRED,
+    }
+    intent_state = "settled" if terminal else "reconcile_required"
+    raw_json = json.dumps(dict(result.raw), ensure_ascii=True, default=str)
+    remaining_qty = None
+    closed_position = False
+
+    with connection:
+        if intent.get("Position_Id") is not None and (delta_executed > 0 or delta_net > 0):
+            position = connection.execute(
+                "SELECT Qty, Buy_Price, Buy_Order_Id FROM Positions WHERE Id=?",
+                (int(intent["Position_Id"]),),
+            ).fetchone()
+            if position is None:
+                raise RuntimeError("Order intent position no longer exists")
+            if str(intent["Side"]).upper() == "BUY":
+                position_date = (
+                    result.timestamp.astimezone(timezone.utc)
+                    .replace(tzinfo=None)
+                    .strftime("%Y-%m-%d %H:%M:%S.%f")
+                    if result.timestamp is not None
+                    else datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+                )
+                connection.execute(
+                    """
+                    UPDATE Positions
+                    SET Position=1, Qty=?, Buy_Price=?, Curr_Price=?, Date=?,
+                        Buy_Order_Id=?, PnL_Perc=0, PnL_Value=0, Duration=0,
+                        Highest_Price_Since_Entry=?, Trail_Stop_ATR=0,
+                        Take_Profits_JSON='[]'
+                    WHERE Id=?
+                    """,
+                    (
+                        net_qty,
+                        average,
+                        average,
+                        position_date,
+                        str(result.exchange_order_id),
+                        average,
+                        int(intent["Position_Id"]),
+                    ),
+                )
+            else:
+                remaining = max(0.0, float(position[0] or 0) - delta_executed)
+                # A canceled/rejected full-sell request may still be only partially
+                # filled. Close the position only when no base quantity remains.
+                close_position = terminal and remaining <= 1e-12
+                if close_position:
+                    closed_position = True
+                    connection.execute(
+                        """
+                        UPDATE Positions SET Date=NULL, Position=0, Buy_Price=0,
+                            Curr_Price=0, Qty=0, PnL_Perc=0, PnL_Value=0,
+                            Duration=0, Buy_Order_Id=NULL, Take_Profits_JSON='[]',
+                            Highest_Price_Since_Entry=0, Trail_Stop_ATR=0
+                        WHERE Id=?
+                        """,
+                        (int(intent["Position_Id"]),),
+                    )
+                else:
+                    connection.execute(
+                        "UPDATE Positions SET Qty=? WHERE Id=?",
+                        (remaining, int(intent["Position_Id"])),
+                    )
+                remaining_qty = remaining
+                buy_price = float(position[1] or 0)
+                pnl_perc = (
+                    ((average - buy_price) / buy_price) * 100 if buy_price > 0 else 0
+                )
+                pnl_value = (average - buy_price) * executed
+                if fee_asset == str(intent.get("Quote_Asset") or ""):
+                    pnl_value -= fee_amount
+                buy_row = connection.execute(
+                    """
+                    SELECT Id FROM Orders
+                    WHERE Exchange_Id=? AND Exchange_Order_Id=? AND Side='BUY'
+                    ORDER BY Id DESC LIMIT 1
+                    """,
+                    (intent["Exchange_Id"], position[2]),
+                ).fetchone()
+                connection.execute(
+                    "UPDATE Orders SET PnL_Perc=?, PnL_Value=?, Buy_Order_Id=? WHERE Id=?",
+                    (
+                        round(pnl_perc, 2),
+                        pnl_value,
+                        str(buy_row[0]) if buy_row else "0",
+                        int(intent_id),
+                    ),
+                )
+
+        connection.execute(
+            """
+            UPDATE Orders
+            SET Exchange_Order_Id=?, Order_Status=?, Intent_State=?, Price=?, Qty=?,
+                Executed_Qty=?, Average_Price=?, Fee_Asset=?, Fee_Amount=?, Net_Qty=?,
+                Applied_Executed_Qty=?, Applied_Net_Qty=?, Last_Reconciled_At=CURRENT_TIMESTAMP,
+                Raw_Response_JSON=?, Error_Message=NULL
+            WHERE Id=?
+            """,
+            (
+                str(result.exchange_order_id),
+                result.status.value,
+                intent_state,
+                average,
+                executed,
+                executed,
+                average,
+                fee_asset,
+                fee_amount,
+                net_qty,
+                executed,
+                net_qty,
+                raw_json,
+                int(intent_id),
+            ),
+        )
+    return {
+        "intent_id": int(intent_id),
+        "status": result.status.value,
+        "delta_executed_qty": delta_executed,
+        "delta_net_qty": delta_net,
+        "terminal": terminal,
+        "remaining_qty": remaining_qty,
+        "closed_position": closed_position,
+    }
 
 
 sql_get_last_buy_order_by_bot_symbol = f"""
@@ -4998,6 +5411,14 @@ DEFAULT_JOB_SCHEDULES = [
         1,
         "BTC Supply in Profit/Loss macro on-chain alert.",
     ),
+    (
+        RECONCILIATION_JOB,
+        "reconcile_orders.py",
+        "",
+        "15m",
+        0,
+        "Reconcile unsettled Kraken order intents without resubmission.",
+    ),
     # ("delisting_checker_1h", "delisting_checker.py", "", "1h", 1, "Checks Binance delisting announcements."),
 ]
 
@@ -5724,8 +6145,18 @@ def ensure_job_schedules():
                     "UPDATE Job_Schedules SET script = ?, description = ? WHERE name = ?",
                     (script, description, name),
                 )
+        exchange_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(Exchanges)")
+        }
+        flags_available = {"Buy_Enabled", "Sell_Enabled"} <= exchange_columns
         has_active_exchange = connection.execute(
-            "SELECT Code FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1"
+            (
+                "SELECT Code, Buy_Enabled, Sell_Enabled FROM Exchanges "
+                "WHERE Enabled=1 AND Is_Default=1 LIMIT 1"
+                if flags_available
+                else "SELECT Code, 0, 0 FROM Exchanges "
+                "WHERE Enabled=1 AND Is_Default=1 LIMIT 1"
+            )
         ).fetchone()
         if has_active_exchange is None:
             connection.execute(
@@ -5738,11 +6169,34 @@ def ensure_job_schedules():
                 )
                 """
             )
-        elif str(has_active_exchange[0]) != "binance":
+        elif str(has_active_exchange[0]) == "kraken" and not (
+            bool(has_active_exchange[1]) or bool(has_active_exchange[2])
+        ):
             placeholders = ",".join("?" for _ in LIVE_TRADING_JOBS)
             connection.execute(
                 f"UPDATE Job_Schedules SET enabled=0 WHERE name IN ({placeholders})",
                 LIVE_TRADING_JOBS,
+            )
+        orders_exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='Orders'"
+        ).fetchone()
+        unsettled_kraken = (
+            connection.execute(
+                """
+                SELECT 1 FROM Orders o JOIN Exchanges e ON e.Id=o.Exchange_Id
+                WHERE e.Code='kraken'
+                  AND lower(COALESCE(o.Order_Status,'unknown'))
+                      IN ('pending','open','partially_filled','unknown')
+                LIMIT 1
+                """
+            ).fetchone()
+            if orders_exists
+            else None
+        )
+        if unsettled_kraken:
+            connection.execute(
+                "UPDATE Job_Schedules SET enabled=1 WHERE name=?",
+                (RECONCILIATION_JOB,),
             )
 
 
@@ -6544,16 +6998,16 @@ def get_job_schedules():
 def set_job_schedule_enabled(name: str, enabled: bool):
     connection = _get_conn()
     active_exchange = get_active_exchange(required=False)
-    if (
-        bool(enabled)
-        and str(name) in LIVE_TRADING_JOBS
-        and active_exchange is not None
-        and active_exchange["code"] != "binance"
-    ):
-        raise ValueError(
-            f"{name} cannot be enabled while {active_exchange['name']} is "
-            "public-data-only"
-        )
+    if bool(enabled) and str(name) in LIVE_TRADING_JOBS and active_exchange:
+        if active_exchange["code"] == "kraken" and not (
+            active_exchange["buy_enabled"] or active_exchange["sell_enabled"]
+        ):
+            raise ValueError(
+                f"{name} cannot be enabled until Kraken buy or sell operations "
+                "are explicitly enabled"
+            )
+        if active_exchange["code"] not in {"binance", "kraken"}:
+            raise ValueError(f"{name} is unavailable for {active_exchange['name']}")
     with connection:
         connection.execute(
             "UPDATE Job_Schedules SET enabled = ? WHERE name = ?",

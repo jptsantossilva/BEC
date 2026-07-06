@@ -103,6 +103,7 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
         "3:kraken_public_exchange",
         "4:exchange_specific_backtesting",
         "5:kraken_backtesting_defaults",
+        "6:gated_kraken_live_execution",
     ]
     assert report.unresolved_legacy_symbols == ["UNKNOWNPAIR"]
 
@@ -112,6 +113,7 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
         "3:kraken_public_exchange",
         "4:exchange_specific_backtesting",
         "5:kraken_backtesting_defaults",
+        "6:gated_kraken_live_execution",
     ]
     assert applied.unresolved_legacy_symbols == ["UNKNOWNPAIR"]
 
@@ -121,6 +123,13 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
         ).fetchall() == [
             ("binance", 1, 1, "USDT"),
             ("kraken", 1, 0, "USDC"),
+        ]
+        assert connection.execute(
+            "SELECT Code, Buy_Enabled, Sell_Enabled, Partial_Sell_Policy "
+            "FROM Exchanges ORDER BY Id"
+        ).fetchall() == [
+            ("binance", 1, 1, "accumulate"),
+            ("kraken", 0, 0, "accumulate"),
         ]
         assert connection.execute(
             "SELECT ebs.Commission_Value FROM Exchange_Backtesting_Settings ebs "
@@ -290,6 +299,9 @@ def test_new_install_exchange_metadata_defaults_to_kraken(tmp_path):
         assert connection.execute(
             "SELECT Code, Enabled, Is_Default FROM Exchanges ORDER BY Id"
         ).fetchall() == [("binance", 0, 0), ("kraken", 1, 1)]
+        assert connection.execute(
+            "SELECT Buy_Enabled, Sell_Enabled FROM Exchanges WHERE Code='kraken'"
+        ).fetchone() == (0, 0)
 
         connection.execute("BEGIN IMMEDIATE")
         apply_exchange_aware_schema(connection, upgraded_install=True)
@@ -315,6 +327,7 @@ def test_kraken_metadata_migration_applies_automatically_after_version_two(tmp_p
             "kraken_public_exchange",
             "exchange_specific_backtesting",
             "kraken_backtesting_defaults",
+            "gated_kraken_live_execution",
         ]
         assert connection.execute(
             "SELECT Enabled, Is_Default FROM Exchanges WHERE Code='kraken'"
@@ -356,7 +369,8 @@ def test_kraken_defaults_migration_preserves_existing_fee(tmp_path):
         applied = apply_pending_migrations(connection, MIGRATIONS, allow_rebuild=False)
 
         assert [migration.name for migration in applied] == [
-            "kraken_backtesting_defaults"
+            "kraken_backtesting_defaults",
+            "gated_kraken_live_execution",
         ]
         assert connection.execute(
             "SELECT Commission_Value FROM Exchange_Backtesting_Settings "

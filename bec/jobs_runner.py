@@ -119,6 +119,20 @@ def _sleep_until_next_minute():
     if sleep_seconds > 0:
         time.sleep(sleep_seconds)
 
+
+def _run_startup_reconciliation():
+    try:
+        if not database.get_unsettled_order_intents():
+            return {"checked": 0, "updated": 0, "unresolved": 0}
+        from bec.exchanges.live_execution import reconcile_unsettled_orders
+
+        stats = reconcile_unsettled_orders()
+        _print_log(f"Startup Kraken reconciliation: {stats}")
+        return stats
+    except Exception as exc:
+        _print_log(f"Startup Kraken reconciliation deferred: {exc!r}")
+        return {"checked": 0, "updated": 0, "unresolved": 1}
+
 def _backtesting_job_command(job):
     command = [
         PYTHON,
@@ -360,6 +374,7 @@ def run_loop():
     _print_log("jobs_runner started (UTC).")
     database.reset_running_backtesting_jobs("jobs_runner restarted before this job completed.")
     database.reset_running_monte_carlo_jobs("jobs_runner restarted before this job completed.")
+    _run_startup_reconciliation()
     running = []
     running_backtesting_job = None
     running_monte_carlo_job = None

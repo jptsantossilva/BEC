@@ -3,6 +3,10 @@
 All notable changes to this project will be documented in this file.
 
 ## [2026-07-05]
+- Kraken Live Execution - Added explicitly gated private balances and spot market orders through CCXT, with buy/sell flags disabled by default and no withdrawal support.
+- Order Safety - Added durable pre-submission intents, unique client order IDs, uncertain-outcome protection, startup/scheduled reconciliation, partial-fill accounting, fee/net quantity persistence and idempotent position updates.
+- Order Validation - Enforced Kraken market precision, amount/cost limits, a configurable 1% base-quantity buffer and `accumulate`, `sell_all` or `skip` below-minimum partial-sell policies.
+- Database - Added additive migration version 6 for live-operation flags and order-intent/reconciliation metadata.
 - Backtesting - Added exchange-specific commissions, immutable queue context, exchange-aware fingerprints and context-matched trading approval for Binance and Kraken.
 - Kraken Backtesting - Enabled public-data backtests and Monte Carlo analysis with normalized Kraken symbols while keeping all private Kraken operations disabled.
 - Backtesting Reports - Included exchange identity in results, queues and generated report filenames to prevent Binance/Kraken collisions.

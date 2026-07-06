@@ -20,6 +20,10 @@ from bec.db.exchange_schema import (
     validate_exchange_aware_schema,
 )
 from bec.db.migrations.core import Migration, MigrationKind
+from bec.db.live_execution_schema import (
+    apply_live_execution_schema,
+    validate_live_execution_schema,
+)
 
 
 def _framework_baseline(connection: sqlite3.Connection) -> None:
@@ -50,6 +54,10 @@ def _exchange_specific_backtesting(connection: sqlite3.Connection) -> None:
 
 def _kraken_backtesting_defaults(connection: sqlite3.Connection) -> None:
     apply_kraken_backtesting_defaults(connection)
+
+
+def _gated_kraken_live_execution(connection: sqlite3.Connection) -> None:
+    apply_live_execution_schema(connection)
 
 
 MIGRATIONS = (
@@ -91,5 +99,13 @@ MIGRATIONS = (
         apply=_kraken_backtesting_defaults,
         validate=validate_kraken_backtesting_defaults,
         signature="bec-kraken-backtesting-defaults-v1",
+    ),
+    Migration(
+        version=6,
+        name="gated_kraken_live_execution",
+        kind=MigrationKind.ADDITIVE,
+        apply=_gated_kraken_live_execution,
+        validate=validate_live_execution_schema,
+        signature="bec-gated-kraken-live-execution-v1",
     ),
 )

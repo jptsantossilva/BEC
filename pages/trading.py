@@ -1030,9 +1030,45 @@ def _save_exchange_editor(edited: pd.DataFrame, quote_assets: dict) -> None:
                 "Enabled": bool(row["Enabled"]),
                 "Quote_Asset": quote_asset,
                 "Taker_Fee": float(row["Spot Taker Fee %"]) / 100.0,
+                "Buy_Enabled": bool(row.get("Buy Enabled", False)),
+                "Sell_Enabled": bool(row.get("Sell Enabled", False)),
+                "Partial_Sell_Policy": str(
+                    row.get("Partial Sell Policy", "accumulate")
+                ),
+                "Sizing_Buffer_Pct": float(row.get("Sizing Buffer %", 1.0)),
             }
         )
     database.update_exchange_settings(records)
+
+
+def _render_trade_schedule_toggles(*, exchange_code: str, disabled: bool = False):
+    marker = "_job_toggle_exchange"
+    if st.session_state.get(marker) != exchange_code:
+        for schedule_name in ("main_1d", "main_4h", "main_1h"):
+            st.session_state[f"job_{schedule_name}_enabled"] = (
+                database.get_job_schedule_enabled(schedule_name)
+            )
+        st.session_state[marker] = exchange_code
+    for schedule_name, label in (
+        ("main_1d", "Enable 1d"),
+        ("main_4h", "Enable 4h"),
+        ("main_1h", "Enable 1h"),
+    ):
+        state_key = f"job_{schedule_name}_enabled"
+
+        def _toggle(name=schedule_name, key=state_key):
+            database.set_job_schedule_enabled(name, bool(st.session_state[key]))
+
+        st.toggle(
+            label,
+            key=state_key,
+            on_change=_toggle,
+            disabled=disabled,
+            help=(
+                "Enable scheduled strategy execution for this timeframe. Buy and "
+                "sell operations remain independently controlled by exchange flags."
+            ),
+        )
 
 
 def settings():
@@ -1063,6 +1099,12 @@ def settings():
         editor["Active"] = editor["Is_Default"].astype(bool)
         editor["Quote Asset"] = editor["Quote_Asset"].fillna("USDC")
         editor["Spot Taker Fee %"] = editor["Taker_Fee"].fillna(0.0) * 100.0
+        editor["Buy Enabled"] = editor["Buy_Enabled"].astype(bool)
+        editor["Sell Enabled"] = editor["Sell_Enabled"].astype(bool)
+        editor["Partial Sell Policy"] = editor["Partial_Sell_Policy"].fillna(
+            "accumulate"
+        )
+        editor["Sizing Buffer %"] = editor["Sizing_Buffer_Pct"].fillna(1.0)
         editor["API Status"] = editor["Code"].map(statuses).fillna("Not checked")
         quote_options = sorted(
             {"USDC"}
@@ -1083,6 +1125,10 @@ def settings():
                     "Active",
                     "Quote Asset",
                     "Spot Taker Fee %",
+                    "Buy Enabled",
+                    "Sell Enabled",
+                    "Partial Sell Policy",
+                    "Sizing Buffer %",
                     "Trading_Mode",
                     "API Status",
                 ]
@@ -1101,6 +1147,16 @@ def settings():
                 ),
                 "Spot Taker Fee %": st.column_config.NumberColumn(
                     "Spot Taker Fee %", min_value=0.0, max_value=10.0, format="%.4f"
+                ),
+                "Buy Enabled": st.column_config.CheckboxColumn("Buy Enabled"),
+                "Sell Enabled": st.column_config.CheckboxColumn("Sell Enabled"),
+                "Partial Sell Policy": st.column_config.SelectboxColumn(
+                    "Partial Sell Policy",
+                    options=["accumulate", "sell_all", "skip"],
+                    required=True,
+                ),
+                "Sizing Buffer %": st.column_config.NumberColumn(
+                    "Sizing Buffer %", min_value=0.0, max_value=10.0, format="%.2f"
                 ),
                 "Trading_Mode": st.column_config.TextColumn("Trading Mode"),
                 "API Status": st.column_config.TextColumn("API Status", width="large"),
@@ -1170,9 +1226,47 @@ def settings():
             f"Mode: {active_exchange['trading_mode']}"
         )
         if active_exchange["code"] == "kraken":
+            if active_exchange["buy_enabled"] or active_exchange["sell_enabled"]:
+                st.error(
+                    "Kraken live operations are armed. They still require run_mode=live, "
+                    "private credentials and enabled main schedules."
+                )
+            else:
+                st.warning(
+                    "Kraken live operations are disabled. Public market data and "
+                    "backtesting remain available."
+                )
             st.warning(
-                "Kraken is available for public market data only. Private balances "
-                "and order execution are disabled, and live trading jobs remain off."
+                "Kraken API keys must have no withdrawal permission. Restrict the key "
+                "to Query Funds and Create/Modify Orders and configure an IP allowlist."
+            )
+            if st.button("Check Kraken Private API", icon=":material/key:"):
+                from bec.exchanges.live_execution import private_api_status
+
+                available, message = private_api_status()
+                (st.success if available else st.error)(message)
+            live_mode_key = "kraken_live_run_mode"
+            if live_mode_key not in st.session_state:
+                st.session_state[live_mode_key] = (
+                    config.read_setting("run_mode") == "live"
+                )
+            live_mode = st.toggle(
+                "Live run mode",
+                key=live_mode_key,
+                help="Master execution gate. Keep disabled except during controlled live operation.",
+            )
+            desired_mode = "live" if live_mode else "test"
+            if config.read_setting("run_mode") != desired_mode:
+                config.update_setting("run_mode", desired_mode)
+            if live_mode:
+                st.error("Live run mode is enabled. Real Kraken orders are possible.")
+            st.markdown("### Trade Execution by Timeframe")
+            _render_trade_schedule_toggles(
+                exchange_code="kraken",
+                disabled=not (
+                    active_exchange["buy_enabled"]
+                    or active_exchange["sell_enabled"]
+                ),
             )
             return
         st.divider()
@@ -1329,29 +1423,7 @@ def settings():
 
         st.markdown("### Trade Execution by Timeframe")
         with st.container():
-            for schedule_name, lbl in [
-                ("main_1d", "Enable 1d"),
-                ("main_4h", "Enable 4h"),
-                ("main_1h", "Enable 1h"),
-            ]:
-                state_key = f"job_{schedule_name}_enabled"
-                if state_key not in st.session_state:
-                    st.session_state[state_key] = database.get_job_schedule_enabled(
-                        schedule_name
-                    )
-
-                def _make_toggle(name=schedule_name, key=state_key):
-                    database.set_job_schedule_enabled(name, bool(st.session_state[key]))
-
-                st.toggle(
-                    lbl,
-                    key=state_key,
-                    on_change=_make_toggle,
-                    help="""
-                              **:green[Enabled]**: Buy new positions and sell existing ones based on the daily timeframe.  
-                              **:red[Disabled]**: Will not buy new positions but will continue to attempt to sell existing positions based on sell strategy conditions.
-                          """,
-                )
+            _render_trade_schedule_toggles(exchange_code="binance")
 
         # st.space()
         st.divider()

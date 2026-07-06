@@ -10,6 +10,9 @@ symbols for persistence and diagnostics.
 
 ## Safety Boundary
 
+This was the enforced boundary through PR 6. PR 7 private behavior is described
+in `agent-docs/kraken-live-execution.md` and remains disabled by default.
+
 - Kraken API keys are not read or required.
 - Private balances, order creation, order lookup and cancellation raise an
   explicit disabled-operation error.
@@ -18,10 +21,8 @@ symbols for persistence and diagnostics.
 - Existing Binance positions or unsettled orders continue to block switching.
 - Binance remains the only exchange with live trading support.
 
-The Trading settings page labels Kraken as public-data-only and checks public
-API health only when requested by the operator. Kraken-specific backtesting
-isolation belongs to PR 6; private
-execution belongs to the explicitly gated PR 7.
+The Trading settings page checks public API health only when requested by the
+operator. Kraken-specific backtesting isolation belongs to PR 6.
 
 ## Dependency and Validation
 

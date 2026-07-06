@@ -423,9 +423,11 @@ def prepare_exchange_schema_for_startup(
         register_kraken_public_exchange(connection)
         from bec.db.backtesting_schema import apply_exchange_backtesting_schema
         from bec.db.backtesting_schema import configure_new_install_kraken_default
+        from bec.db.live_execution_schema import apply_live_execution_schema
 
         apply_exchange_backtesting_schema(connection)
         configure_new_install_kraken_default(connection)
+        apply_live_execution_schema(connection)
         return
     validate_exchange_aware_schema(connection)
 

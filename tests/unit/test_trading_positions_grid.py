@@ -13,7 +13,15 @@ def _selection_event(rows):
     return SimpleNamespace(selection=SimpleNamespace(rows=rows))
 
 
-def _exchange_editor(quote="USDC", fee_pct=0.4):
+def _exchange_editor(
+    quote="USDC",
+    fee_pct=0.4,
+    *,
+    buy_enabled=False,
+    sell_enabled=False,
+    partial_sell_policy="accumulate",
+    sizing_buffer_pct=1.0,
+):
     return pd.DataFrame(
         [
             {
@@ -22,6 +30,10 @@ def _exchange_editor(quote="USDC", fee_pct=0.4):
                 "Quote Asset": quote,
                 "Enabled": True,
                 "Spot Taker Fee %": fee_pct,
+                "Buy Enabled": buy_enabled,
+                "Sell Enabled": sell_enabled,
+                "Partial Sell Policy": partial_sell_policy,
+                "Sizing Buffer %": sizing_buffer_pct,
             }
         ]
     )
@@ -54,8 +66,44 @@ def test_exchange_editor_persists_validated_fee_and_quote(monkeypatch):
     )
 
     assert saved == [
-        {"Id": 2, "Enabled": True, "Quote_Asset": "EUR", "Taker_Fee": 0.004}
+        {
+            "Id": 2,
+            "Enabled": True,
+            "Quote_Asset": "EUR",
+            "Taker_Fee": 0.004,
+            "Buy_Enabled": False,
+            "Sell_Enabled": False,
+            "Partial_Sell_Policy": "accumulate",
+            "Sizing_Buffer_Pct": 1.0,
+        }
     ]
+
+
+def test_exchange_editor_persists_explicit_live_gates(monkeypatch):
+    saved = []
+    monkeypatch.setattr(
+        trading.database,
+        "get_exchange_settings_table",
+        lambda: pd.DataFrame([{"Code": "kraken", "Quote_Asset": "USDC"}]),
+    )
+    monkeypatch.setattr(
+        trading.database, "update_exchange_settings", lambda rows: saved.extend(rows)
+    )
+
+    trading._save_exchange_editor(
+        _exchange_editor(
+            buy_enabled=True,
+            sell_enabled=True,
+            partial_sell_policy="sell_all",
+            sizing_buffer_pct=1.5,
+        ),
+        {"kraken": ["USDC"]},
+    )
+
+    assert saved[0]["Buy_Enabled"] is True
+    assert saved[0]["Sell_Enabled"] is True
+    assert saved[0]["Partial_Sell_Policy"] == "sell_all"
+    assert saved[0]["Sizing_Buffer_Pct"] == pytest.approx(1.5)
 
 
 def test_positions_display_grid_removes_internal_columns_without_mutating_source():

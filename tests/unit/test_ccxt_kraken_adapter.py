@@ -4,7 +4,7 @@ import ccxt
 import pandas as pd
 import pytest
 
-from bec.exchanges.base import ExchangeAdapter, OrderRequest
+from bec.exchanges.base import ExchangeAdapter, OrderRequest, OrderStatus
 from bec.exchanges.ccxt_adapter import PrivateExchangeOperationDisabled
 from bec.exchanges.kraken_adapter import KrakenAdapter
 from bec.exchanges import service
@@ -20,6 +20,7 @@ class FakeKrakenClient:
         }
         self.load_calls = []
         self.fail_status = False
+        self.created = []
         self.candles = [
             [1_700_000_000_000, 10, 12, 9, 11, 5],
             [1_700_000_060_000, 11, 13, 10, 12, 6],
@@ -106,6 +107,57 @@ class FakeKrakenClient:
         if self.fail_status:
             raise RuntimeError("offline")
         return {"status": "ok", "updated": "operational"}
+
+    def fetch_balance(self):
+        return {
+            "free": {"XBT": "0.5", "USDC": "100"},
+            "used": {"XBT": "0.1", "USDC": "2"},
+        }
+
+    def _order(self, side, status="closed", client_order_id="bec-test"):
+        return {
+            "id": "KRAKEN-1",
+            "clientOrderId": client_order_id,
+            "symbol": "BTC/EUR",
+            "side": side,
+            "status": status,
+            "amount": 0.001,
+            "filled": 0.001 if status == "closed" else 0.0005,
+            "average": 60000,
+            "cost": 60,
+            "timestamp": 1_700_000_000_000,
+            "trades": [
+                {
+                    "id": "trade-1",
+                    "price": 60000,
+                    "amount": 0.001,
+                    "fee": {"currency": "XBT", "cost": 0.000001},
+                }
+            ],
+        }
+
+    def create_market_buy_order_with_cost(self, symbol, cost, params):
+        self.created.append(("cost", symbol, cost, params))
+        return self._order("buy", client_order_id=params.get("clientOrderId"))
+
+    def create_order(self, symbol, order_type, side, amount, price, params):
+        self.created.append((side, symbol, amount, price, params))
+        return self._order(side, client_order_id=params.get("clientOrderId"))
+
+    def fetch_order(self, order_id, symbol):
+        assert (order_id, symbol) == ("KRAKEN-1", "BTC/EUR")
+        return self._order("buy", status="open")
+
+    def fetch_orders(self, symbol, params):
+        return [
+            self._order(
+                "buy", status="open", client_order_id=params["clientOrderId"]
+            )
+        ]
+
+    def cancel_order(self, order_id, symbol):
+        assert (order_id, symbol) == ("KRAKEN-1", "BTC/EUR")
+        return self._order("buy", status="canceled")
 
 
 def test_kraken_adapter_implements_contract_and_maps_aliases_and_limits():
@@ -231,3 +283,43 @@ def test_kraken_private_operations_are_disabled(operation):
 
     with pytest.raises(PrivateExchangeOperationDisabled):
         operation(adapter)
+
+
+def test_kraken_private_balance_orders_fills_and_reconciliation():
+    client = FakeKrakenClient()
+    adapter = KrakenAdapter(client=client, private_enabled=True)
+
+    balances = adapter.fetch_balance()
+    buy = adapter.create_market_buy(
+        "XBT/EUR", quote_amount=Decimal("60"), client_order_id="bec-buy"
+    )
+    sell = adapter.create_market_sell(
+        "BTC/EUR", Decimal("0.00129"), client_order_id="bec-sell"
+    )
+    fetched = adapter.fetch_order("KRAKEN-1", "BTC/EUR")
+    resolved = adapter.fetch_order_by_client_id("bec-buy", "BTC/EUR")
+    canceled = adapter.cancel_order("KRAKEN-1", "BTC/EUR")
+
+    assert balances["BTC"].free == Decimal("0.5")
+    assert balances["BTC"].locked == Decimal("0.1")
+    assert buy.status is OrderStatus.FILLED
+    assert buy.fills[0].fee_asset == "BTC"
+    assert buy.client_order_id == "bec-buy"
+    assert sell.executed_quantity == Decimal("0.001")
+    assert client.created[1][2] == 0.0012
+    assert fetched.status is OrderStatus.PARTIALLY_FILLED
+    assert resolved.status is OrderStatus.PARTIALLY_FILLED
+    assert canceled.status is OrderStatus.CANCELED
+
+
+def test_market_buy_fallback_applies_one_percent_base_quantity_buffer():
+    client = FakeKrakenClient()
+    client.has["createMarketBuyOrderWithCost"] = False
+    adapter = KrakenAdapter(client=client, private_enabled=True)
+
+    adapter.create_market_buy(
+        "BTC/EUR", quote_amount=Decimal("60"), client_order_id="bec-buffer"
+    )
+
+    assert client.created[0][0] == "buy"
+    assert client.created[0][2] == 0.0009

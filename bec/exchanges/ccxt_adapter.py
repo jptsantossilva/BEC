@@ -16,6 +16,8 @@ from bec.exchanges.base import (
     ExchangeHealth,
     MarketInfo,
     OrderBook,
+    OrderFill,
+    OrderStatus,
     OrderRequest,
     OrderResult,
     OrderValidation,
@@ -24,7 +26,7 @@ from bec.exchanges.base import (
 
 
 class PrivateExchangeOperationDisabled(NotImplementedError):
-    """Raised when PR5 code attempts to use private exchange functionality."""
+    """Raised when private exchange functionality lacks explicit credentials."""
 
 
 def _decimal(value: Any, default: str = "0") -> Decimal:
@@ -47,7 +49,7 @@ def _timestamp(value: Any) -> datetime | None:
 
 
 class CcxtExchangeAdapter(ExchangeAdapter):
-    """CCXT adapter with public data enabled and all private APIs disabled."""
+    """CCXT spot adapter with explicitly gated private operations."""
 
     asset_aliases: Mapping[str, str] = {}
 
@@ -58,11 +60,19 @@ class CcxtExchangeAdapter(ExchangeAdapter):
         client: Any | None = None,
         name: str | None = None,
         market_cache_ttl_seconds: float = 900,
+        api_key: str = "",
+        api_secret: str = "",
+        private_enabled: bool = False,
+        sizing_buffer_pct: Decimal = Decimal("1"),
         clock=time.monotonic,
     ):
         self.code = str(exchange_id).lower()
         self.name = name or self.code.title()
-        self._client = client or self._create_public_client(self.code)
+        self._client = client or self._create_client(
+            self.code, api_key=api_key, api_secret=api_secret
+        )
+        self._private_enabled = bool(private_enabled)
+        self._sizing_buffer_pct = _decimal(sizing_buffer_pct)
         self._market_cache_ttl_seconds = float(market_cache_ttl_seconds)
         self._clock = clock
         self._markets: dict[str, MarketInfo] | None = None
@@ -70,21 +80,28 @@ class CcxtExchangeAdapter(ExchangeAdapter):
         self._markets_loaded_at = 0.0
 
     @staticmethod
-    def _create_public_client(exchange_id: str):
+    def _create_client(exchange_id: str, *, api_key: str = "", api_secret: str = ""):
         try:
             exchange_class = getattr(ccxt, exchange_id)
         except AttributeError as exc:
             raise ValueError(f"Unknown CCXT exchange: {exchange_id}") from exc
-        return exchange_class(
-            {
-                "enableRateLimit": True,
-                "options": {"defaultType": "spot"},
-            }
-        )
+        config = {
+            "enableRateLimit": True,
+            "options": {"defaultType": "spot"},
+        }
+        if api_key:
+            config["apiKey"] = api_key
+        if api_secret:
+            config["secret"] = api_secret
+        return exchange_class(config)
 
     @property
     def client(self):
         return self._client
+
+    @property
+    def private_enabled(self) -> bool:
+        return self._private_enabled
 
     def _canonical_asset(self, asset: Any) -> str:
         value = str(asset or "").strip().upper()
@@ -192,6 +209,10 @@ class CcxtExchangeAdapter(ExchangeAdapter):
     def validate_order(self, request: OrderRequest) -> OrderValidation:
         market = self._market(request.symbol)
         errors: list[str] = []
+        if not market.active:
+            errors.append("market is not active")
+        if str(request.side).lower() not in {"buy", "sell"}:
+            errors.append("side must be buy or sell")
         if request.amount is not None and request.quote_amount is not None:
             errors.append("amount and quote_amount are mutually exclusive")
         if request.amount is None and request.quote_amount is None:
@@ -213,6 +234,8 @@ class CcxtExchangeAdapter(ExchangeAdapter):
             estimated_cost = normalized_amount * normalized_price
         elif request.quote_amount is not None:
             estimated_cost = _decimal(request.quote_amount)
+            if estimated_cost <= 0:
+                errors.append("quote amount must be greater than zero")
         if estimated_cost is not None:
             if market.min_cost is not None and estimated_cost < market.min_cost:
                 errors.append("cost is below the exchange minimum")
@@ -349,13 +372,132 @@ class CcxtExchangeAdapter(ExchangeAdapter):
             return ExchangeHealth(False, f"public API unavailable: {exc!r}", checked_at)
 
     def _private_disabled(self, operation: str):
-        raise PrivateExchangeOperationDisabled(
-            f"{self.name} {operation} is disabled until gated live execution is implemented"
+        if not self._private_enabled:
+            raise PrivateExchangeOperationDisabled(
+                f"{self.name} {operation} requires configured private credentials"
+            )
+
+    @staticmethod
+    def _order_status(value: Any) -> OrderStatus:
+        normalized = str(value or "").strip().lower()
+        return {
+            "pending": OrderStatus.PENDING,
+            "open": OrderStatus.OPEN,
+            "partially_filled": OrderStatus.PARTIALLY_FILLED,
+            "partial": OrderStatus.PARTIALLY_FILLED,
+            "closed": OrderStatus.FILLED,
+            "filled": OrderStatus.FILLED,
+            "canceled": OrderStatus.CANCELED,
+            "cancelled": OrderStatus.CANCELED,
+            "rejected": OrderStatus.REJECTED,
+            "expired": OrderStatus.EXPIRED,
+        }.get(normalized, OrderStatus.UNKNOWN)
+
+    def _parse_order(self, raw: Mapping[str, Any], canonical: str) -> OrderResult:
+        filled = _decimal(raw.get("filled"))
+        requested = _optional_decimal(raw.get("amount"))
+        average = _optional_decimal(raw.get("average"))
+        cost = _optional_decimal(raw.get("cost"))
+        if average is None and cost is not None and filled > 0:
+            average = cost / filled
+
+        fills = []
+        for item in raw.get("trades") or raw.get("fills") or ():
+            fee = item.get("fee") or {}
+            fills.append(
+                OrderFill(
+                    price=_decimal(item.get("price")),
+                    quantity=_decimal(item.get("amount") or item.get("qty")),
+                    fee_asset=(
+                        self._canonical_asset(fee.get("currency"))
+                        if fee.get("currency")
+                        else None
+                    ),
+                    fee_amount=_decimal(fee.get("cost")),
+                    trade_id=(
+                        str(item.get("id")) if item.get("id") is not None else None
+                    ),
+                )
+            )
+        if not fills and raw.get("fee"):
+            fee = raw.get("fee") or {}
+            fills.append(
+                OrderFill(
+                    price=average or Decimal("0"),
+                    quantity=filled,
+                    fee_asset=(
+                        self._canonical_asset(fee.get("currency"))
+                        if fee.get("currency")
+                        else None
+                    ),
+                    fee_amount=_decimal(fee.get("cost")),
+                )
+            )
+        if not fills and raw.get("fees"):
+            for fee in raw.get("fees") or ():
+                fills.append(
+                    OrderFill(
+                        price=average or Decimal("0"),
+                        quantity=filled,
+                        fee_asset=(
+                            self._canonical_asset(fee.get("currency"))
+                            if fee.get("currency")
+                            else None
+                        ),
+                        fee_amount=_decimal(fee.get("cost")),
+                    )
+                )
+
+        market = self._market(canonical)
+        status = self._order_status(raw.get("status"))
+        if (
+            status is OrderStatus.OPEN
+            and filled > 0
+            and requested is not None
+            and filled < requested
+        ):
+            status = OrderStatus.PARTIALLY_FILLED
+        return OrderResult(
+            exchange_order_id=str(raw.get("id") or ""),
+            symbol=canonical,
+            exchange_symbol=market.exchange_symbol,
+            side=str(raw.get("side") or "").lower(),
+            status=status,
+            requested_quantity=requested,
+            executed_quantity=filled,
+            average_price=average,
+            fills=tuple(fills),
+            client_order_id=(
+                str(raw.get("clientOrderId"))
+                if raw.get("clientOrderId") not in (None, "")
+                else None
+            ),
+            timestamp=_timestamp(raw.get("timestamp")),
+            raw=raw,
         )
 
     def fetch_balance(self, asset: str | None = None) -> Balance | Mapping[str, Balance]:
-        del asset
         self._private_disabled("balances")
+        raw = self.client.fetch_balance()
+        free = raw.get("free") or {}
+        used = raw.get("used") or {}
+        balances = {}
+        for source in set(free) | set(used):
+            canonical = self._canonical_asset(source)
+            if not canonical:
+                continue
+            previous = balances.get(
+                canonical, Balance(canonical, Decimal("0"), Decimal("0"))
+            )
+            balances[canonical] = Balance(
+                asset=canonical,
+                free=previous.free + _decimal(free.get(source)),
+                locked=previous.locked + _decimal(used.get(source)),
+            )
+        if asset is not None:
+            canonical = self._canonical_asset(asset)
+            return balances.get(canonical, Balance(canonical, Decimal("0")))
+        return balances
 
     def create_market_buy(
         self,
@@ -365,8 +507,38 @@ class CcxtExchangeAdapter(ExchangeAdapter):
         quote_amount: Decimal | None = None,
         client_order_id: str | None = None,
     ) -> OrderResult:
-        del symbol, amount, quote_amount, client_order_id
         self._private_disabled("market buys")
+        canonical = self.normalize_symbol(symbol)
+        params = {"clientOrderId": client_order_id} if client_order_id else {}
+        if quote_amount is not None and amount is not None:
+            raise ValueError("amount and quote_amount are mutually exclusive")
+        if quote_amount is not None:
+            quote_amount = _decimal(quote_amount)
+            market = self._market(canonical)
+            if market.quote_market_buy_allowed and hasattr(
+                self.client, "create_market_buy_order_with_cost"
+            ):
+                raw = self.client.create_market_buy_order_with_cost(
+                    canonical, float(quote_amount), params
+                )
+                return self._parse_order(raw, canonical)
+            ticker = self.fetch_ticker(canonical)
+            price = ticker.ask or ticker.last
+            buffer = (Decimal("100") - self._sizing_buffer_pct) / Decimal("100")
+            amount = self.normalize_amount(canonical, (quote_amount / price) * buffer)
+        if amount is None:
+            raise ValueError("amount or quote_amount is required")
+        amount = self.normalize_amount(canonical, _decimal(amount))
+        ticker = self.fetch_ticker(canonical)
+        validation = self.validate_order(
+            OrderRequest(canonical, "buy", amount=amount, price=ticker.ask or ticker.last)
+        )
+        if not validation.valid:
+            raise ValueError("; ".join(validation.errors))
+        raw = self.client.create_order(
+            canonical, "market", "buy", float(amount), None, params
+        )
+        return self._parse_order(raw, canonical)
 
     def create_market_sell(
         self,
@@ -375,13 +547,53 @@ class CcxtExchangeAdapter(ExchangeAdapter):
         *,
         client_order_id: str | None = None,
     ) -> OrderResult:
-        del symbol, amount, client_order_id
         self._private_disabled("market sells")
+        canonical = self.normalize_symbol(symbol)
+        amount = self.normalize_amount(canonical, _decimal(amount))
+        ticker = self.fetch_ticker(canonical)
+        validation = self.validate_order(
+            OrderRequest(canonical, "sell", amount=amount, price=ticker.bid or ticker.last)
+        )
+        if not validation.valid:
+            raise ValueError("; ".join(validation.errors))
+        params = {"clientOrderId": client_order_id} if client_order_id else {}
+        raw = self.client.create_order(
+            canonical, "market", "sell", float(amount), None, params
+        )
+        return self._parse_order(raw, canonical)
 
     def fetch_order(self, exchange_order_id: str, symbol: str) -> OrderResult:
-        del exchange_order_id, symbol
         self._private_disabled("order lookup")
+        canonical = self.normalize_symbol(symbol)
+        return self._parse_order(
+            self.client.fetch_order(str(exchange_order_id), canonical), canonical
+        )
+
+    def fetch_order_by_client_id(
+        self, client_order_id: str, symbol: str
+    ) -> OrderResult | None:
+        """Resolve an uncertain submission without ever resubmitting it."""
+        self._private_disabled("order lookup")
+        canonical = self.normalize_symbol(symbol)
+        params = {"clientOrderId": str(client_order_id)}
+        methods = [
+            getattr(self.client, "fetch_open_orders", None),
+            getattr(self.client, "fetch_closed_orders", None),
+        ]
+        if not any(callable(method) for method in methods):
+            methods.append(getattr(self.client, "fetch_orders", None))
+        for method in methods:
+            if not callable(method):
+                continue
+            orders = method(canonical, params=params)
+            for raw in orders or ():
+                if str(raw.get("clientOrderId") or "") == str(client_order_id):
+                    return self._parse_order(raw, canonical)
+        return None
 
     def cancel_order(self, exchange_order_id: str, symbol: str) -> OrderResult:
-        del exchange_order_id, symbol
         self._private_disabled("order cancellation")
+        canonical = self.normalize_symbol(symbol)
+        return self._parse_order(
+            self.client.cancel_order(str(exchange_order_id), canonical), canonical
+        )

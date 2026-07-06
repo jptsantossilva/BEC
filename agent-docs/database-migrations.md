@@ -94,6 +94,19 @@ installations initialized directly at the latest schema, Kraken is enabled and
 selected by default. Private Kraken balances and order methods remain disabled
 through PR 6, and only the public market-phase schedule may run for Kraken.
 
+## Gated Kraken Live Execution (Version 6)
+
+Migration `6:gated_kraken_live_execution` is additive. It adds disabled-by-
+default buy/sell flags and partial-sell/sizing settings to `Exchanges`, plus
+durable client-order intent, submission, reconciliation and idempotent fill
+metadata to `Orders`. It also adds unique client-order and reconciliation
+indexes.
+
+The migration never enables Kraken buy or sell operations. For an upgraded
+installation with active Binance, its buy/sell flags are initialized enabled
+to preserve existing behavior. New installations keep Binance live flags off.
+No credentials are stored in SQLite.
+
 ## Rollback
 
 Migration steps run in explicit SQLite transactions. A failed step rolls back

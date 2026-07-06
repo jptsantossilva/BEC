@@ -182,12 +182,28 @@ def calc_stake_amount(symbol: str, bot: str):
 
 
 def create_buy_order(*args: Any, **kwargs: Any):
+    if exchange_code() == "kraken":
+        from bec.exchanges.live_execution import create_buy_order as create_kraken_buy
+
+        return create_kraken_buy(*args, **kwargs)
     _require_native_private_trading("buy orders")
+    from bec.utils import database
+
+    if not database.get_active_exchange(required=True)["buy_enabled"]:
+        raise RuntimeError("Binance buy operations are disabled in Trading Settings")
     return _legacy_binance.create_buy_order(*args, **kwargs)
 
 
 def create_sell_order(*args: Any, **kwargs: Any):
+    if exchange_code() == "kraken":
+        from bec.exchanges.live_execution import create_sell_order as create_kraken_sell
+
+        return create_kraken_sell(*args, **kwargs)
     _require_native_private_trading("sell orders")
+    from bec.utils import database
+
+    if not database.get_active_exchange(required=True)["sell_enabled"]:
+        raise RuntimeError("Binance sell operations are disabled in Trading Settings")
     return _legacy_binance.create_sell_order(*args, **kwargs)
 
 

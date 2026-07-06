@@ -99,3 +99,5 @@ pins unless the dependency workflow is being updated deliberately.
   credentials, and notification changes.
 - Use `agent-docs/kraken-backtesting.md` for exchange-specific backtesting,
   commissions, fingerprints, approvals, and PR 6 rollout checks.
+- Use `agent-docs/kraken-live-execution.md` for PR 7 credentials, live flags,
+  order intents, reconciliation, partial fills, and rollout safety.

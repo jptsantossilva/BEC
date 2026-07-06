@@ -1,11 +1,14 @@
 import sqlite3
+from datetime import datetime, timezone
+from decimal import Decimal
 
 import pytest
 
 import bec.utils.database as database
-from bec.exchanges.base import MarketInfo
+from bec.exchanges.base import MarketInfo, OrderFill, OrderResult, OrderStatus
 from bec.db.backtesting_schema import apply_exchange_backtesting_schema
 from bec.db.exchange_schema import apply_exchange_aware_schema
+from bec.db.live_execution_schema import apply_live_execution_schema
 
 
 def _runtime_database(tmp_path):
@@ -44,6 +47,7 @@ def _runtime_database(tmp_path):
     )
     connection.execute("INSERT INTO Strategies (Id, Name) VALUES ('ema', 'EMA')")
     apply_exchange_backtesting_schema(connection)
+    apply_live_execution_schema(connection)
     connection.execute("UPDATE Exchanges SET Enabled=1")
     for name in database.EXCHANGE_DEPENDENT_JOBS:
         connection.execute(
@@ -135,10 +139,40 @@ def test_live_trading_job_cannot_be_enabled_for_public_only_kraken(tmp_path):
     try:
         database.set_active_exchange(2)
 
-        with pytest.raises(ValueError, match="public-data-only"):
+        with pytest.raises(ValueError, match="explicitly enabled"):
             database.set_job_schedule_enabled("main_1h", True)
 
         assert database.get_job_schedule_enabled("main_1h") is False
+    finally:
+        connection.close()
+        _restore_connection(original)
+
+
+def test_kraken_live_flags_explicitly_unlock_schedules_and_reconciliation(tmp_path):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        database.set_active_exchange(2)
+        database.update_exchange_settings(
+            [
+                {
+                    "Id": 2,
+                    "Enabled": True,
+                    "Quote_Asset": "USDC",
+                    "Taker_Fee": 0.004,
+                    "Buy_Enabled": True,
+                    "Sell_Enabled": False,
+                    "Partial_Sell_Policy": "accumulate",
+                    "Sizing_Buffer_Pct": 1.0,
+                }
+            ]
+        )
+
+        database.set_job_schedule_enabled("main_1h", True)
+
+        assert database.get_active_exchange()["buy_enabled"] == 1
+        assert database.get_job_schedule_enabled("main_1h") is True
+        assert database.get_job_schedule_enabled(database.RECONCILIATION_JOB) is True
     finally:
         connection.close()
         _restore_connection(original)
@@ -487,6 +521,259 @@ def test_exchange_settings_reject_invalid_fees(tmp_path, fee):
                     }
                 ]
             )
+    finally:
+        connection.close()
+        _restore_connection(original)
+
+
+def _kraken_order_result(
+    status,
+    executed,
+    fee="0",
+    exchange_order_id="K-1",
+    *,
+    side="buy",
+    fee_asset="BTC",
+):
+    return OrderResult(
+        exchange_order_id=exchange_order_id,
+        symbol="BTC/USDC",
+        exchange_symbol="XBTUSDC",
+        side=side,
+        status=status,
+        requested_quantity=Decimal("1"),
+        executed_quantity=Decimal(str(executed)),
+        average_price=Decimal("100"),
+        fills=(
+            OrderFill(
+                price=Decimal("100"),
+                quantity=Decimal(str(executed)),
+                fee_asset=fee_asset,
+                fee_amount=Decimal(str(fee)),
+            ),
+        ),
+        client_order_id="bec-test",
+        timestamp=datetime(2026, 7, 5, tzinfo=timezone.utc),
+        raw={"id": exchange_order_id, "status": status.value},
+    )
+
+
+def test_order_intent_is_persisted_before_submission_and_never_resubmitted(
+    tmp_path, monkeypatch
+):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        database.set_active_exchange(2)
+        monkeypatch.setattr(
+            database,
+            "_exchange_symbol_metadata",
+            lambda symbol: (2, "BTC/USDC", "XBTUSDC", "BTC", "USDC"),
+        )
+        position_id = connection.execute(
+            "INSERT INTO Positions (Symbol, Position, Exchange_Id) VALUES ('BTC/USDC',0,2)"
+        ).lastrowid
+        connection.commit()
+
+        intent = database.create_order_intent(
+            side="BUY",
+            symbol="BTC/USDC",
+            bot="1h",
+            position_id=position_id,
+            requested_quote_qty=100,
+            client_order_id="bec-test",
+        )
+
+        assert intent["Intent_State"] == "created"
+        assert intent["Order_Status"] == "pending"
+        database.mark_order_intent_submitting(intent["Id"])
+        with pytest.raises(RuntimeError, match="already been submitted"):
+            database.mark_order_intent_submitting(intent["Id"])
+        with pytest.raises(RuntimeError, match="unsettled order intent"):
+            database.create_order_intent(
+                side="BUY",
+                symbol="BTC/USDC",
+                bot="1h",
+                position_id=position_id,
+                requested_quote_qty=100,
+            )
+    finally:
+        connection.close()
+        _restore_connection(original)
+
+
+def test_partial_buy_reconciliation_applies_only_incremental_net_quantity(
+    tmp_path, monkeypatch
+):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        database.set_active_exchange(2)
+        monkeypatch.setattr(
+            database,
+            "_exchange_symbol_metadata",
+            lambda symbol: (2, "BTC/USDC", "XBTUSDC", "BTC", "USDC"),
+        )
+        position_id = connection.execute(
+            "INSERT INTO Positions (Symbol, Position, Exchange_Id) VALUES ('BTC/USDC',0,2)"
+        ).lastrowid
+        connection.commit()
+        intent = database.create_order_intent(
+            side="BUY",
+            symbol="BTC/USDC",
+            bot="1h",
+            position_id=position_id,
+            requested_quote_qty=100,
+            client_order_id="bec-test",
+        )
+        database.mark_order_intent_submitting(intent["Id"])
+
+        database.apply_order_result(
+            intent["Id"],
+            _kraken_order_result(OrderStatus.PARTIALLY_FILLED, "0.5", "0.01"),
+        )
+        database.apply_order_result(
+            intent["Id"], _kraken_order_result(OrderStatus.FILLED, "1", "0.02")
+        )
+        repeated = database.apply_order_result(
+            intent["Id"], _kraken_order_result(OrderStatus.FILLED, "1", "0.02")
+        )
+
+        assert repeated["delta_executed_qty"] == 0
+        assert connection.execute(
+            "SELECT Position, Qty, Buy_Order_Id FROM Positions WHERE Id=?",
+            (position_id,),
+        ).fetchone() == (1, pytest.approx(0.98), "K-1")
+        assert connection.execute(
+            "SELECT Order_Status, Intent_State, Executed_Qty, Fee_Asset, Fee_Amount, Net_Qty "
+            "FROM Orders WHERE Id=?",
+            (intent["Id"],),
+        ).fetchone() == (
+            "filled",
+            "settled",
+            pytest.approx(1.0),
+            "BTC",
+            pytest.approx(0.02),
+            pytest.approx(0.98),
+        )
+    finally:
+        connection.close()
+        _restore_connection(original)
+
+
+def test_partial_sell_reconciliation_decrements_position_once_and_keeps_remainder(
+    tmp_path, monkeypatch
+):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        database.set_active_exchange(2)
+        monkeypatch.setattr(
+            database,
+            "_exchange_symbol_metadata",
+            lambda symbol: (2, "BTC/USDC", "XBTUSDC", "BTC", "USDC"),
+        )
+        connection.execute(
+            """
+            INSERT INTO Orders
+                (Exchange_Id, Exchange_Order_Id, Symbol, Side, Price, Qty,
+                 Order_Status, Executed_Qty, Average_Price, Fee_Amount, Net_Qty)
+            VALUES (2, 'BUY-1', 'BTC/USDC', 'BUY', 80, 1, 'filled', 1, 80, 0, 1)
+            """
+        )
+        position_id = connection.execute(
+            """
+            INSERT INTO Positions
+                (Symbol, Position, Exchange_Id, Qty, Buy_Price, Buy_Order_Id, Bot)
+            VALUES ('BTC/USDC',1,2,1,80,'BUY-1','1h')
+            """
+        ).lastrowid
+        connection.commit()
+        intent = database.create_order_intent(
+            side="SELL",
+            symbol="BTC/USDC",
+            bot="1h",
+            position_id=position_id,
+            requested_qty=0.5,
+            sell_percentage=50,
+            client_order_id="bec-sell",
+        )
+        database.mark_order_intent_submitting(intent["Id"])
+        result = _kraken_order_result(
+            OrderStatus.FILLED,
+            "0.5",
+            "1",
+            "SELL-1",
+            side="sell",
+            fee_asset="USDC",
+        )
+
+        first = database.apply_order_result(intent["Id"], result)
+        repeated = database.apply_order_result(intent["Id"], result)
+
+        assert first["closed_position"] is False
+        assert repeated["delta_executed_qty"] == 0
+        assert connection.execute(
+            "SELECT Position, Qty FROM Positions WHERE Id=?", (position_id,)
+        ).fetchone() == (1, pytest.approx(0.5))
+        assert connection.execute(
+            "SELECT Buy_Order_Id, PnL_Value, Fee_Asset, Fee_Amount FROM Orders WHERE Id=?",
+            (intent["Id"],),
+        ).fetchone() == ("1", pytest.approx(9.0), "USDC", pytest.approx(1.0))
+
+        canceled_intent = database.create_order_intent(
+            side="SELL",
+            symbol="BTC/USDC",
+            bot="1h",
+            position_id=position_id,
+            requested_qty=0.5,
+            sell_percentage=100,
+            client_order_id="bec-canceled",
+        )
+        database.mark_order_intent_submitting(canceled_intent["Id"])
+        canceled = database.apply_order_result(
+            canceled_intent["Id"],
+            _kraken_order_result(
+                OrderStatus.CANCELED,
+                "0.1",
+                "0",
+                "SELL-CANCELED",
+                side="sell",
+                fee_asset="USDC",
+            ),
+        )
+        assert canceled["closed_position"] is False
+        assert connection.execute(
+            "SELECT Position, Qty FROM Positions WHERE Id=?", (position_id,)
+        ).fetchone() == (1, pytest.approx(0.4))
+
+        closing_intent = database.create_order_intent(
+            side="SELL",
+            symbol="BTC/USDC",
+            bot="1h",
+            position_id=position_id,
+            requested_qty=0.4,
+            sell_percentage=100,
+            client_order_id="bec-close",
+        )
+        database.mark_order_intent_submitting(closing_intent["Id"])
+        closed = database.apply_order_result(
+            closing_intent["Id"],
+            _kraken_order_result(
+                OrderStatus.FILLED,
+                "0.4",
+                "0",
+                "SELL-2",
+                side="sell",
+                fee_asset="USDC",
+            ),
+        )
+
+        assert closed["closed_position"] is True
+        assert connection.execute(
+            "SELECT Position, Qty, Buy_Order_Id FROM Positions WHERE Id=?",
+            (position_id,),
+        ).fetchone() == (0, 0.0, None)
     finally:
         connection.close()
         _restore_connection(original)

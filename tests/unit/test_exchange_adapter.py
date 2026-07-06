@@ -10,7 +10,6 @@ from bec.exchanges import registry
 from bec.exchanges import service
 from bec.exchanges.base import ExchangeAdapter, MarketInfo, OrderRequest, OrderStatus
 from bec.exchanges.binance_adapter import BinanceAdapter
-from bec.exchanges.ccxt_adapter import PrivateExchangeOperationDisabled
 
 
 EXCHANGE_INFO = {
@@ -142,7 +141,9 @@ def test_registry_selects_kraken_public_adapter(monkeypatch):
     registry.set_default_adapter(None)
 
 
-def test_legacy_private_service_paths_are_blocked_for_kraken(monkeypatch):
+def test_legacy_private_service_paths_route_kraken_to_gated_execution(monkeypatch):
+    from bec.exchanges import live_execution
+
     class PublicAdapter:
         code = "kraken"
 
@@ -154,9 +155,15 @@ def test_legacy_private_service_paths_are_blocked_for_kraken(monkeypatch):
             AssertionError("Binance order path must not be called")
         ),
     )
+    monkeypatch.setattr(
+        live_execution,
+        "create_buy_order",
+        lambda *args, **kwargs: {"gated": True, "symbol": kwargs["symbol"]},
+    )
 
-    with pytest.raises(PrivateExchangeOperationDisabled):
-        service.create_buy_order(symbol="XBTEUR", bot="1h")
+    result = service.create_buy_order(symbol="XBTEUR", bot="1h")
+
+    assert result == {"gated": True, "symbol": "XBTEUR"}
 
 
 def test_binance_adapter_normalizes_markets_amounts_prices_and_limits():
