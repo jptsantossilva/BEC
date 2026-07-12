@@ -13,7 +13,7 @@ import altair as alt
 import bec.utils.config as config
 import bec.utils.database as database
 import bec.exchanges.service as binance
-from bec.exchanges.registry import get_adapter_for_code
+from bec.exchanges.registry import get_adapter_for_code, get_registered_exchange_codes
 import bec.utils.trading_service as trading_service
 from bec.page_config import configure_page
 from bec.utils.take_profit import (
@@ -989,12 +989,21 @@ def blacklist():
 def _check_exchange_public_apis(exchanges: pd.DataFrame) -> tuple[dict, dict]:
     statuses = {}
     quote_assets = {}
+    registered_codes = set(get_registered_exchange_codes())
     for _, row in exchanges.iterrows():
         code = str(row["Code"])
+        if code not in registered_codes:
+            statuses[code] = "Configuration only; public adapter is not released"
+            quote_assets[code] = []
+            continue
         try:
-            adapter = get_adapter_for_code(code)
+            adapter = get_adapter_for_code(
+                code, adapter_id=str(row.get("Adapter_Id") or "")
+            )
             health = adapter.health_check()
             markets = adapter.load_markets()
+            if code == "okx" and health.available:
+                database.sync_exchange_market_catalog(int(row["Id"]), markets)
             quote_assets[code] = sorted(
                 {
                     market.quote_asset
@@ -1024,20 +1033,22 @@ def _save_exchange_editor(edited: pd.DataFrame, quote_assets: dict) -> None:
             raise ValueError(
                 f"{quote_asset} is not an active spot quote asset on {code}."
             )
-        records.append(
-            {
-                "Id": int(row["Id"]),
-                "Enabled": bool(row["Enabled"]),
-                "Quote_Asset": quote_asset,
-                "Taker_Fee": float(row["Spot Taker Fee %"]) / 100.0,
-                "Buy_Enabled": bool(row.get("Buy Enabled", False)),
-                "Sell_Enabled": bool(row.get("Sell Enabled", False)),
-                "Partial_Sell_Policy": str(
-                    row.get("Partial Sell Policy", "accumulate")
-                ),
-                "Sizing_Buffer_Pct": float(row.get("Sizing Buffer %", 1.0)),
-            }
-        )
+        raw_fee = row.get("Spot Taker Fee %")
+        fee = None if raw_fee is None or pd.isna(raw_fee) else float(raw_fee) / 100.0
+        record = {
+            "Id": int(row["Id"]),
+            "Enabled": bool(row["Enabled"]),
+            "Quote_Asset": quote_asset,
+            "Taker_Fee": fee,
+            "Buy_Enabled": bool(row.get("Buy Enabled", False)),
+            "Sell_Enabled": bool(row.get("Sell Enabled", False)),
+            "Partial_Sell_Policy": str(row.get("Partial Sell Policy", "accumulate")),
+            "Sizing_Buffer_Pct": float(row.get("Sizing Buffer %", 1.0)),
+        }
+        adapter_id = str(row.get("Adapter Variant", "") or "").strip()
+        if adapter_id:
+            record["Adapter_Id"] = adapter_id
+        records.append(record)
     database.update_exchange_settings(records)
 
 
@@ -1075,7 +1086,6 @@ def settings():
     with tab_settings:
         st.markdown("### Exchange")
         exchanges = database.get_exchanges()
-        exchanges = exchanges[exchanges["Code"].isin(("binance", "kraken"))]
         active_exchange = database.get_active_exchange(required=False)
         if exchanges.empty:
             st.error("No exchange adapters are configured.")
@@ -1084,6 +1094,14 @@ def settings():
         st.caption(
             "Configure availability, the active spot quote asset and the market-order "
             "fee used by backtesting."
+        )
+        st.info(
+            "OKX Production and Demo are configuration-only identities in this release. "
+            "They cannot be enabled, selected, queried, backtested, or used for orders yet."
+        )
+        st.caption(
+            "OKX defaults to the EEA `myokx` adapter variant. It may be changed to "
+            "global `okx` only before any OKX symbols, jobs, results, orders, or positions exist."
         )
         if st.button("Check API Health", icon=":material/health_and_safety:"):
             with st.spinner("Loading public exchange markets..."):
@@ -1094,11 +1112,13 @@ def settings():
         statuses = st.session_state.get("exchange_api_statuses", {})
         quote_assets = st.session_state.get("exchange_quote_assets", {})
         editor = database.get_exchange_settings_table()
-        editor = editor[editor["Code"].isin(("binance", "kraken"))].copy()
+        editor = editor.copy()
         editor["Enabled"] = editor["Enabled"].astype(bool)
         editor["Active"] = editor["Is_Default"].astype(bool)
         editor["Quote Asset"] = editor["Quote_Asset"].fillna("USDC")
-        editor["Spot Taker Fee %"] = editor["Taker_Fee"].fillna(0.0) * 100.0
+        editor["Spot Taker Fee %"] = editor["Taker_Fee"] * 100.0
+        editor["Adapter Variant"] = editor["Adapter_Id"]
+        editor["Environment"] = editor["Execution_Environment"].str.title()
         editor["Buy Enabled"] = editor["Buy_Enabled"].astype(bool)
         editor["Sell Enabled"] = editor["Sell_Enabled"].astype(bool)
         editor["Partial Sell Policy"] = editor["Partial_Sell_Policy"].fillna(
@@ -1121,6 +1141,8 @@ def settings():
                     "Id",
                     "Code",
                     "Name",
+                    "Environment",
+                    "Adapter Variant",
                     "Enabled",
                     "Active",
                     "Quote Asset",
@@ -1135,11 +1157,19 @@ def settings():
             ],
             hide_index=True,
             width="content",
-            disabled=["Id", "Code", "Name", "Active", "Trading_Mode", "API Status"],
+            disabled=[
+                "Id", "Code", "Name", "Environment", "Active", "Trading_Mode",
+                "API Status",
+            ],
             column_config={
                 "Id": None,
                 "Code": st.column_config.TextColumn("Code"),
                 "Name": st.column_config.TextColumn("Name"),
+                "Environment": st.column_config.TextColumn("Environment"),
+                "Adapter Variant": st.column_config.SelectboxColumn(
+                    "Adapter Variant", options=["binance", "kraken", "myokx", "okx"],
+                    required=True,
+                ),
                 "Enabled": st.column_config.CheckboxColumn("Enabled"),
                 "Active": st.column_config.CheckboxColumn("Active"),
                 "Quote Asset": st.column_config.SelectboxColumn(
@@ -1163,7 +1193,7 @@ def settings():
             },
             key="exchange_settings_editor",
         )
-        if (edited["Spot Taker Fee %"].astype(float) == 0).any():
+        if (edited["Spot Taker Fee %"].fillna(-1).astype(float) == 0).any():
             st.warning(
                 "A zero spot taker fee is configured. Backtest results will not "
                 "include exchange trading costs for that exchange."
@@ -1177,10 +1207,7 @@ def settings():
                 st.error(str(exc))
 
         exchanges = database.get_exchanges()
-        exchanges = exchanges[
-            exchanges["Code"].isin(("binance", "kraken"))
-            & (exchanges["Enabled"].astype(int) == 1)
-        ]
+        exchanges = exchanges[exchanges["Enabled"].astype(int) == 1]
         active_exchange = database.get_active_exchange(required=False)
         exchange_options = [None, *exchanges["Id"].astype(int).tolist()]
         labels = {
@@ -1225,27 +1252,29 @@ def settings():
             f"Active exchange: {active_exchange['name']} · "
             f"Mode: {active_exchange['trading_mode']}"
         )
-        if active_exchange["code"] == "kraken":
+        capabilities = get_adapter_for_code(active_exchange["code"]).capabilities
+        if capabilities.uses_gated_live_execution:
+            exchange_name = str(active_exchange["name"])
             if active_exchange["buy_enabled"] or active_exchange["sell_enabled"]:
                 st.error(
-                    "Kraken live operations are armed. They still require run_mode=live, "
+                    f"{exchange_name} live operations are armed. They still require run_mode=live, "
                     "private credentials and enabled main schedules."
                 )
             else:
                 st.warning(
-                    "Kraken live operations are disabled. Public market data and "
+                    f"{exchange_name} live operations are disabled. Public market data and "
                     "backtesting remain available."
                 )
             st.warning(
-                "Kraken API keys must have no withdrawal permission. Restrict the key "
-                "to Query Funds and Create/Modify Orders and configure an IP allowlist."
+                f"{exchange_name} API keys must have no withdrawal permission. Restrict "
+                "the key to the minimum balance/order permissions and configure an IP allowlist."
             )
-            if st.button("Check Kraken Private API", icon=":material/key:"):
+            if st.button(f"Check {exchange_name} Private API", icon=":material/key:"):
                 from bec.exchanges.live_execution import private_api_status
 
                 available, message = private_api_status()
                 (st.success if available else st.error)(message)
-            live_mode_key = "kraken_live_run_mode"
+            live_mode_key = f"{active_exchange['code']}_live_run_mode"
             if live_mode_key not in st.session_state:
                 st.session_state[live_mode_key] = (
                     config.read_setting("run_mode") == "live"
@@ -1259,10 +1288,10 @@ def settings():
             if config.read_setting("run_mode") != desired_mode:
                 config.update_setting("run_mode", desired_mode)
             if live_mode:
-                st.error("Live run mode is enabled. Real Kraken orders are possible.")
+                st.error(f"Live run mode is enabled. Real {exchange_name} orders are possible.")
             st.markdown("### Trade Execution by Timeframe")
             _render_trade_schedule_toggles(
-                exchange_code="kraken",
+                exchange_code=active_exchange["code"],
                 disabled=not (
                     active_exchange["buy_enabled"]
                     or active_exchange["sell_enabled"]

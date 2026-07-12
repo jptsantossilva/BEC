@@ -104,6 +104,8 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
         "4:exchange_specific_backtesting",
         "5:kraken_backtesting_defaults",
         "6:gated_kraken_live_execution",
+        "7:durable_order_fills",
+        "8:okx_configuration",
     ]
     assert report.unresolved_legacy_symbols == ["UNKNOWNPAIR"]
 
@@ -114,6 +116,8 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
         "4:exchange_specific_backtesting",
         "5:kraken_backtesting_defaults",
         "6:gated_kraken_live_execution",
+        "7:durable_order_fills",
+        "8:okx_configuration",
     ]
     assert applied.unresolved_legacy_symbols == ["UNKNOWNPAIR"]
 
@@ -123,6 +127,8 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
         ).fetchall() == [
             ("binance", 1, 1, "USDT"),
             ("kraken", 1, 0, "USDC"),
+            ("okx", 0, 0, "USDC"),
+            ("okx_demo", 0, 0, "USDC"),
         ]
         assert connection.execute(
             "SELECT Code, Buy_Enabled, Sell_Enabled, Partial_Sell_Policy "
@@ -130,7 +136,31 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
         ).fetchall() == [
             ("binance", 1, 1, "accumulate"),
             ("kraken", 0, 0, "accumulate"),
+            ("okx", 0, 0, "accumulate"),
+            ("okx_demo", 0, 0, "accumulate"),
         ]
+        assert connection.execute(
+            "SELECT Code, Adapter_Id, Execution_Environment "
+            "FROM Exchanges ORDER BY Id"
+        ).fetchall() == [
+            ("binance", "binance", "production"),
+            ("kraken", "kraken", "production"),
+            ("okx", "myokx", "production"),
+            ("okx_demo", "myokx", "demo"),
+        ]
+        assert connection.execute(
+            """
+            SELECT COUNT(*) FROM Exchange_Backtesting_Settings ebs
+            JOIN Exchanges e ON e.Id=ebs.Exchange_Id
+            WHERE e.Code IN ('okx', 'okx_demo')
+            """
+        ).fetchone()[0] == 0
+        assert {row[1] for row in connection.execute("PRAGMA table_info(Exchange_Symbols)")} >= {
+            "Amount_Step", "Price_Step", "Min_Amount", "Max_Amount",
+            "Min_Cost", "Max_Cost", "Market_Type", "Is_Spot", "Is_Contract",
+            "Contract_Size", "Is_Linear", "Is_Inverse", "Settle_Asset",
+            "Raw_Metadata_JSON", "Last_Synced_At", "Availability_Status",
+        }
         assert connection.execute(
             "SELECT ebs.Commission_Value FROM Exchange_Backtesting_Settings ebs "
             "JOIN Exchanges e ON e.Id=ebs.Exchange_Id WHERE e.Code='kraken'"
@@ -147,6 +177,13 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
             "SELECT Exchange_Id, Symbol_Normalized FROM Positions"
         ).fetchone() == (1, "ETH/USDT")
         assert connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='Order_Fills'"
+        ).fetchone() == ("Order_Fills",)
+        assert {row[1] for row in connection.execute("PRAGMA table_info(Orders)")} >= {
+            "Executed_Cost",
+            "Fees_JSON",
+        }
+        assert connection.execute(
             "SELECT Exchange_Id FROM Balances"
         ).fetchone() == (1,)
         connection.execute(
@@ -161,16 +198,16 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
         ).fetchone()[0] == 1
         connection.execute(
             """
-                INSERT INTO Exchanges
-                    (Id, Code, Name, Enabled, Is_Default, Trading_Mode)
-                VALUES (3, 'test-exchange', 'Test Exchange', 0, 0, 'spot')
+                    INSERT INTO Exchanges
+                        (Id, Code, Name, Enabled, Is_Default, Trading_Mode)
+                    VALUES (5, 'test-exchange', 'Test Exchange', 0, 0, 'spot')
             """
         )
         connection.execute(
             """
                 INSERT INTO Backtesting_Results
                     (Symbol, Time_Frame, Strategy_Id, Exchange_Id)
-                VALUES ('BTCUSDC', '1h', 'ema', 3)
+                VALUES ('BTCUSDC', '1h', 'ema', 5)
             """
         )
         assert connection.execute(
@@ -298,7 +335,10 @@ def test_new_install_exchange_metadata_defaults_to_kraken(tmp_path):
 
         assert connection.execute(
             "SELECT Code, Enabled, Is_Default FROM Exchanges ORDER BY Id"
-        ).fetchall() == [("binance", 0, 0), ("kraken", 1, 1)]
+        ).fetchall() == [
+            ("binance", 0, 0), ("kraken", 1, 1),
+            ("okx", 0, 0), ("okx_demo", 0, 0),
+        ]
         assert connection.execute(
             "SELECT Buy_Enabled, Sell_Enabled FROM Exchanges WHERE Code='kraken'"
         ).fetchone() == (0, 0)
@@ -328,6 +368,8 @@ def test_kraken_metadata_migration_applies_automatically_after_version_two(tmp_p
             "exchange_specific_backtesting",
             "kraken_backtesting_defaults",
             "gated_kraken_live_execution",
+            "durable_order_fills",
+            "okx_configuration",
         ]
         assert connection.execute(
             "SELECT Enabled, Is_Default FROM Exchanges WHERE Code='kraken'"
@@ -348,7 +390,10 @@ def test_new_database_is_marked_current_with_kraken_public_metadata(tmp_path):
         assert pending_migrations(connection, MIGRATIONS) == ()
         assert connection.execute(
             "SELECT Code, Enabled, Is_Default FROM Exchanges ORDER BY Id"
-        ).fetchall() == [("binance", 0, 0), ("kraken", 1, 1)]
+        ).fetchall() == [
+            ("binance", 0, 0), ("kraken", 1, 1),
+            ("okx", 0, 0), ("okx_demo", 0, 0),
+        ]
 
 
 def test_kraken_defaults_migration_preserves_existing_fee(tmp_path):
@@ -371,6 +416,8 @@ def test_kraken_defaults_migration_preserves_existing_fee(tmp_path):
         assert [migration.name for migration in applied] == [
             "kraken_backtesting_defaults",
             "gated_kraken_live_execution",
+            "durable_order_fills",
+            "okx_configuration",
         ]
         assert connection.execute(
             "SELECT Commission_Value FROM Exchange_Backtesting_Settings "

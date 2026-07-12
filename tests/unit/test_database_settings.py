@@ -122,7 +122,7 @@ def test_new_install_disables_exchange_dependent_jobs(tmp_path):
             "main_1d",
             "symbol_by_market_phase_1d",
             "super_rsi_15m",
-            "kraken_reconcile_15m",
+            "orders_reconcile_15m",
         }
         assert test_conn.execute(
             "SELECT COUNT(*) FROM Exchanges WHERE Enabled=1 OR Is_Default=1"
@@ -150,10 +150,10 @@ def test_upgraded_install_keeps_binance_active_and_jobs_enabled(tmp_path):
         database.ensure_job_schedules()
 
         assert database.get_active_exchange(required=True)["code"] == "binance"
-        expected_enabled = tuple(
-            name
-            for name in database.EXCHANGE_DEPENDENT_JOBS
-            if name != database.RECONCILIATION_JOB
+        expected_enabled = (
+            *database.LIVE_TRADING_JOBS,
+            *database.PUBLIC_ANALYSIS_JOBS,
+            *database.SIGNAL_SCHEDULE_JOBS,
         )
         placeholders = ",".join("?" for _ in expected_enabled)
         enabled = test_conn.execute(
@@ -163,6 +163,49 @@ def test_upgraded_install_keeps_binance_active_and_jobs_enabled(tmp_path):
         ).fetchone()[0]
         assert enabled == len(expected_enabled)
         assert database.get_job_schedule_enabled(database.RECONCILIATION_JOB) is False
+    finally:
+        test_conn.close()
+        if original_conn is None:
+            try:
+                delattr(database._thread_local, "conn")
+            except AttributeError:
+                pass
+        else:
+            database._thread_local.conn = original_conn
+
+
+def test_schedule_migration_preserves_legacy_reconciliation_cursor(tmp_path):
+    original_conn = getattr(database._thread_local, "conn", None)
+    test_conn = sqlite3.connect(tmp_path / "data.db", check_same_thread=False)
+    test_conn.execute(database.sql_create_job_schedules_table)
+    create_exchange_metadata(test_conn, upgraded_install=True)
+    test_conn.execute(
+        """
+        INSERT INTO Job_Schedules
+            (name, script, script_args, cadence, enabled, description, last_run)
+        VALUES (?, 'reconcile_orders.py', '', '15m', 1, 'legacy', '2026-07-12T10:15:00+00:00')
+        """,
+        (database.LEGACY_RECONCILIATION_JOB,),
+    )
+    test_conn.commit()
+
+    database._thread_local.conn = test_conn
+    try:
+        database.ensure_job_schedules()
+
+        migrated = test_conn.execute(
+            "SELECT enabled, last_run FROM Job_Schedules WHERE name=?",
+            (database.RECONCILIATION_JOB,),
+        ).fetchone()
+        legacy = test_conn.execute(
+            "SELECT enabled FROM Job_Schedules WHERE name=?",
+            (database.LEGACY_RECONCILIATION_JOB,),
+        ).fetchone()
+
+        # Binance does not support the gated reconciliation workflow, so the
+        # migrated schedule is safely disabled while retaining its cursor.
+        assert migrated == (0, "2026-07-12T10:15:00+00:00")
+        assert legacy == (0,)
     finally:
         test_conn.close()
         if original_conn is None:

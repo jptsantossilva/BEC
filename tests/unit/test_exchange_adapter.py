@@ -8,7 +8,13 @@ import pytest
 
 from bec.exchanges import registry
 from bec.exchanges import service
-from bec.exchanges.base import ExchangeAdapter, MarketInfo, OrderRequest, OrderStatus
+from bec.exchanges.base import (
+    ExchangeAdapter,
+    ExchangeCapabilities,
+    MarketInfo,
+    OrderRequest,
+    OrderStatus,
+)
 from bec.exchanges.binance_adapter import BinanceAdapter
 
 
@@ -80,9 +86,10 @@ class FakeBinanceClient:
         }
 
     def get_order(self, **params):
+        order_id = params.get("orderId", 123)
         return {
             "symbol": params["symbol"],
-            "orderId": params["orderId"],
+            "orderId": order_id,
             "status": "PARTIALLY_FILLED",
             "side": "BUY",
             "origQty": "0.002",
@@ -146,6 +153,8 @@ def test_legacy_private_service_paths_route_kraken_to_gated_execution(monkeypatc
 
     class PublicAdapter:
         code = "kraken"
+        name = "Kraken"
+        capabilities = ExchangeCapabilities(uses_gated_live_execution=True)
 
     monkeypatch.setattr(service, "get_adapter", lambda: PublicAdapter())
     monkeypatch.setattr(
@@ -243,7 +252,12 @@ def test_exchange_service_filters_tradable_symbols_without_raw_exchange_data(mon
     monkeypatch.setattr(
         service,
         "get_adapter",
-        lambda: SimpleNamespace(code="binance"),
+        lambda: SimpleNamespace(
+            code="binance",
+            capabilities=ExchangeCapabilities(
+                uses_exchange_symbols_for_legacy_workflows=True
+            ),
+        ),
     )
 
     assert service.get_tradable_symbols(
@@ -259,10 +273,20 @@ def test_exchange_service_returns_normalized_symbols_for_kraken(monkeypatch):
     monkeypatch.setattr(
         service,
         "get_adapter",
-        lambda: SimpleNamespace(code="kraken"),
+        lambda: SimpleNamespace(code="kraken", capabilities=ExchangeCapabilities()),
     )
 
     assert service.get_tradable_symbols("USDC") == ["BTC/USDC"]
+
+
+def test_adapter_capabilities_describe_existing_exchange_routing():
+    assert BinanceAdapter.capabilities.uses_native_private_workflows is True
+    assert BinanceAdapter.capabilities.uses_gated_live_execution is False
+
+    from bec.exchanges.kraken_adapter import KrakenAdapter
+
+    assert KrakenAdapter.capabilities.uses_gated_live_execution is True
+    assert KrakenAdapter.capabilities.requires_explicit_live_flags is True
 
 
 def test_binance_adapter_normalizes_order_results():
@@ -273,6 +297,7 @@ def test_binance_adapter_normalizes_order_results():
         "BTC/USDC", quote_amount=Decimal("60"), client_order_id="bec-1"
     )
     fetched = adapter.fetch_order("123", "BTC/USDC")
+    by_client_id = adapter.fetch_order_by_client_id("bec-1", "BTC/USDC")
     canceled = adapter.cancel_order("123", "BTC/USDC")
 
     assert client.created_order["quoteOrderQty"] == "60"
@@ -283,8 +308,17 @@ def test_binance_adapter_normalizes_order_results():
     assert created.fills[0].fee_asset == "BTC"
     assert created.fills[0].trade_id == "99"
     assert fetched.status is OrderStatus.PARTIALLY_FILLED
+    assert by_client_id.status is OrderStatus.PARTIALLY_FILLED
     assert canceled.status is OrderStatus.CANCELED
     assert adapter.health_check().available is True
+
+
+def test_binance_client_order_id_is_validated_before_submission():
+    adapter = BinanceAdapter(client=FakeBinanceClient())
+
+    assert adapter.validate_client_order_id("bec-binance-123") == "bec-binance-123"
+    with pytest.raises(ValueError, match="1-36"):
+        adapter.validate_client_order_id("x" * 37)
 
 
 def test_python_binance_imports_are_confined_to_native_adapter():

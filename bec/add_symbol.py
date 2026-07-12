@@ -16,7 +16,12 @@ timeframe = ["1d", "4h", "1h"]
 
 
 def _backtest_timeframes_for_trading():
-    if database.get_active_exchange_code() == "kraken":
+    from bec.exchanges.registry import get_adapter_capabilities_for_code
+
+    capabilities = get_adapter_capabilities_for_code(
+        database.get_active_exchange_code()
+    )
+    if capabilities.uses_gated_live_execution:
         return list(timeframe)
     return [
         tf

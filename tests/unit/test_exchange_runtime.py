@@ -5,10 +5,13 @@ from decimal import Decimal
 import pytest
 
 import bec.utils.database as database
+from bec.exchanges import service
 from bec.exchanges.base import MarketInfo, OrderFill, OrderResult, OrderStatus
 from bec.db.backtesting_schema import apply_exchange_backtesting_schema
 from bec.db.exchange_schema import apply_exchange_aware_schema
 from bec.db.live_execution_schema import apply_live_execution_schema
+from bec.db.order_fills_schema import apply_durable_order_fills_schema
+from bec.db.okx_configuration_schema import apply_okx_configuration_schema
 
 
 def _runtime_database(tmp_path):
@@ -48,7 +51,9 @@ def _runtime_database(tmp_path):
     connection.execute("INSERT INTO Strategies (Id, Name) VALUES ('ema', 'EMA')")
     apply_exchange_backtesting_schema(connection)
     apply_live_execution_schema(connection)
-    connection.execute("UPDATE Exchanges SET Enabled=1")
+    apply_durable_order_fills_schema(connection)
+    apply_okx_configuration_schema(connection)
+    connection.execute("UPDATE Exchanges SET Enabled=1 WHERE Code IN ('binance', 'kraken')")
     for name in database.EXCHANGE_DEPENDENT_JOBS:
         connection.execute(
             """
@@ -87,9 +92,17 @@ def test_new_install_activation_enables_jobs_and_candidates_do_not_block(tmp_pat
         selected = database.set_active_exchange(1)
 
         assert selected["code"] == "binance"
-        assert connection.execute(
-            "SELECT COUNT(*) FROM Job_Schedules WHERE enabled=1"
-        ).fetchone()[0] == len(database.EXCHANGE_DEPENDENT_JOBS)
+        enabled = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM Job_Schedules WHERE enabled=1"
+            )
+        }
+        assert enabled == {
+            *database.LIVE_TRADING_JOBS,
+            *database.PUBLIC_ANALYSIS_JOBS,
+            *database.SIGNAL_SCHEDULE_JOBS,
+        }
     finally:
         connection.close()
         _restore_connection(original)
@@ -526,6 +539,139 @@ def test_exchange_settings_reject_invalid_fees(tmp_path, fee):
         _restore_connection(original)
 
 
+def test_okx_identities_remain_configuration_only_and_lock_variant_after_activity(
+    tmp_path,
+):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        rows = connection.execute(
+            """
+            SELECT Id, Code, Adapter_Id, Execution_Environment, Enabled, Is_Default,
+                   Quote_Asset, Buy_Enabled, Sell_Enabled
+            FROM Exchanges WHERE Code IN ('okx', 'okx_demo') ORDER BY Id
+            """
+        ).fetchall()
+        assert rows == [
+            (3, "okx", "myokx", "production", 0, 0, "USDC", 0, 0),
+            (4, "okx_demo", "myokx", "demo", 0, 0, "USDC", 0, 0),
+        ]
+        assert connection.execute(
+            "SELECT COUNT(*) FROM Exchange_Backtesting_Settings WHERE Exchange_Id IN (3, 4)"
+        ).fetchone()[0] == 0
+
+        with pytest.raises(ValueError, match="Load OKX public markets"):
+            database.update_exchange_settings(
+                [{"Id": 3, "Enabled": True, "Quote_Asset": "USDC", "Taker_Fee": None}]
+            )
+        with pytest.raises(ValueError, match="Load OKX public markets"):
+            database.update_exchange_settings(
+                [{"Id": 3, "Enabled": False, "Quote_Asset": "EUR", "Taker_Fee": None}]
+            )
+
+        database.update_exchange_settings(
+            [{
+                "Id": 3,
+                "Enabled": False,
+                "Quote_Asset": "USDC",
+                "Taker_Fee": None,
+                "Adapter_Id": "okx",
+            }]
+        )
+        assert connection.execute(
+            "SELECT Adapter_Id FROM Exchanges WHERE Id=3"
+        ).fetchone() == ("okx",)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM Exchange_Backtesting_Settings WHERE Exchange_Id=3"
+        ).fetchone()[0] == 0
+
+        connection.execute(
+            """
+            INSERT INTO Exchange_Symbols
+                (Exchange_Id, Symbol_Normalized, Exchange_Symbol, Is_Tradable)
+            VALUES (3, 'BTC/USDC', 'BTC-USDC', 0)
+            """
+        )
+        connection.commit()
+        with pytest.raises(ValueError, match="cannot change after exchange data"):
+            database.update_exchange_settings(
+                [{
+                    "Id": 3,
+                    "Enabled": False,
+                    "Quote_Asset": "USDC",
+                    "Taker_Fee": None,
+                    "Adapter_Id": "myokx",
+                }]
+            )
+
+        connection.execute("UPDATE Exchanges SET Enabled=1 WHERE Id=3")
+        connection.commit()
+        with pytest.raises(ValueError, match="Load OKX public markets"):
+            database.set_active_exchange(3)
+    finally:
+        connection.close()
+        _restore_connection(original)
+
+
+def test_okx_public_catalog_validates_quote_enables_public_selection_and_marks_missing(
+    tmp_path,
+):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        markets = {
+            "BTC/USDC": MarketInfo(
+                "BTC/USDC", "BTC-USDC", "BTC", "USDC", True,
+                amount_step=Decimal("0.0001"), price_step=Decimal("0.1"),
+                min_amount=Decimal("0.0002"), max_amount=Decimal("10"),
+                min_cost=Decimal("5"), max_cost=Decimal("100000"),
+                market_type="spot", spot=True, contract=False,
+                raw={"instId": "BTC-USDC"},
+            ),
+            "DOGE/USDC": MarketInfo(
+                "DOGE/USDC", "DOGE-USDC", "DOGE", "USDC", True,
+                amount_step=Decimal("1"), price_step=Decimal("0.00001"),
+                min_amount=Decimal("1"), min_cost=Decimal("1"),
+                market_type="spot", spot=True, contract=False,
+                raw={"instId": "DOGE-USDC"},
+            ),
+        }
+        assert database.sync_exchange_market_catalog(3, markets) == {"upserted": 2}
+        assert database.exchange_quote_has_validated_markets(3, "USDC") is True
+        assert connection.execute(
+            """
+            SELECT Symbol_Normalized, Exchange_Symbol, Amount_Step, Min_Cost,
+                   Is_Spot, Is_Contract, Availability_Status
+            FROM Exchange_Symbols WHERE Exchange_Id=3 AND Exchange_Symbol='BTC-USDC'
+            """
+        ).fetchone() == ("BTC/USDC", "BTC-USDC", 0.0001, 5.0, 1, 0, "available")
+
+        database.update_exchange_settings(
+            [{"Id": 3, "Enabled": True, "Quote_Asset": "USDC", "Taker_Fee": None}]
+        )
+        selected = database.set_active_exchange(3)
+        assert selected["code"] == "okx"
+        assert connection.execute(
+            "SELECT COUNT(*) FROM Exchange_Backtesting_Settings WHERE Exchange_Id=3"
+        ).fetchone()[0] == 0
+        with pytest.raises(RuntimeError, match="Backtesting execution is unavailable"):
+            database.require_backtesting_execution_available()
+        enabled_jobs = {
+            row[0]
+            for row in connection.execute("SELECT name FROM Job_Schedules WHERE enabled=1")
+        }
+        assert enabled_jobs == set(database.PUBLIC_ANALYSIS_JOBS)
+
+        database.sync_exchange_market_catalog(3, {"BTC/USDC": markets["BTC/USDC"]})
+        assert connection.execute(
+            "SELECT Is_Tradable, Availability_Status FROM Exchange_Symbols "
+            "WHERE Exchange_Id=3 AND Exchange_Symbol='DOGE-USDC'"
+        ).fetchone() == (0, "missing")
+    finally:
+        connection.close()
+        _restore_connection(original)
+
+
 def _kraken_order_result(
     status,
     executed,
@@ -602,6 +748,36 @@ def test_order_intent_is_persisted_before_submission_and_never_resubmitted(
         _restore_connection(original)
 
 
+def test_invalid_client_order_id_is_rejected_before_intent_persistence(tmp_path, monkeypatch):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        database.set_active_exchange(2)
+        monkeypatch.setattr(
+            database,
+            "_exchange_symbol_metadata",
+            lambda symbol: (2, "BTC/USDC", "XBTUSDC", "BTC", "USDC"),
+        )
+        monkeypatch.setattr(
+            service,
+            "validate_client_order_id",
+            lambda value: (_ for _ in ()).throw(ValueError("invalid client id")),
+        )
+
+        with pytest.raises(ValueError, match="invalid client id"):
+            database.create_order_intent(
+                side="BUY",
+                symbol="BTC/USDC",
+                bot="1h",
+                requested_quote_qty=100,
+            )
+
+        assert connection.execute("SELECT COUNT(*) FROM Orders").fetchone()[0] == 0
+    finally:
+        connection.close()
+        _restore_connection(original)
+
+
 def test_partial_buy_reconciliation_applies_only_incremental_net_quantity(
     tmp_path, monkeypatch
 ):
@@ -656,6 +832,80 @@ def test_partial_buy_reconciliation_applies_only_incremental_net_quantity(
             pytest.approx(0.02),
             pytest.approx(0.98),
         )
+    finally:
+        connection.close()
+        _restore_connection(original)
+
+
+def test_durable_fills_support_fee_correction_and_multiple_assets(tmp_path, monkeypatch):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        database.set_active_exchange(2)
+        monkeypatch.setattr(
+            database,
+            "_exchange_symbol_metadata",
+            lambda symbol: (2, "BTC/USDC", "XBTUSDC", "BTC", "USDC"),
+        )
+        position_id = connection.execute(
+            "INSERT INTO Positions (Symbol, Position, Exchange_Id) VALUES ('BTC/USDC',0,2)"
+        ).lastrowid
+        connection.commit()
+        intent = database.create_order_intent(
+            side="BUY",
+            symbol="BTC/USDC",
+            bot="1h",
+            position_id=position_id,
+            requested_quote_qty=100,
+            client_order_id="bec-durable-fills",
+        )
+        database.mark_order_intent_submitting(intent["Id"])
+
+        first = _kraken_order_result(OrderStatus.PARTIALLY_FILLED, "1", "0")
+        first = OrderResult(
+            **{
+                **first.__dict__,
+                "fills": (
+                    OrderFill(
+                        price=Decimal("100"), quantity=Decimal("1"),
+                        fee_asset="BTC", fee_amount=Decimal("0"), trade_id="trade-1",
+                    ),
+                ),
+            }
+        )
+        database.apply_order_result(intent["Id"], first)
+
+        corrected = OrderResult(
+            **{
+                **first.__dict__,
+                "status": OrderStatus.FILLED,
+                "fills": (
+                    OrderFill(
+                        price=Decimal("100"), quantity=Decimal("1"),
+                        fee_asset="BTC", fee_amount=Decimal("0.01"), trade_id="trade-1",
+                    ),
+                    OrderFill(
+                        price=Decimal("100"), quantity=Decimal("1"),
+                        fee_asset="USDC", fee_amount=Decimal("1"), trade_id="fee-quote",
+                    ),
+                ),
+            }
+        )
+        updated = database.apply_order_result(intent["Id"], corrected)
+        repeated = database.apply_order_result(intent["Id"], corrected)
+
+        assert updated["delta_executed_qty"] == 0
+        assert repeated["delta_executed_qty"] == 0
+        assert connection.execute(
+            "SELECT Qty FROM Positions WHERE Id=?", (position_id,)
+        ).fetchone()[0] == pytest.approx(0.99)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM Order_Fills WHERE Order_Id=?", (intent["Id"],)
+        ).fetchone()[0] == 2
+        assert connection.execute(
+            "SELECT Fee_Asset, Fee_Amount, Executed_Cost, Fees_JSON FROM Orders WHERE Id=?",
+            (intent["Id"],),
+        ).fetchone() == ("", 0.0, pytest.approx(100.0), '{"BTC":0.01,"USDC":1.0}')
     finally:
         connection.close()
         _restore_connection(original)

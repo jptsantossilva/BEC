@@ -52,7 +52,9 @@ def get_tradable_symbols(
             and not market.base_asset.endswith(("UP", "DOWN"))
         ):
             symbols.append(
-                market.exchange_symbol if adapter.code == "binance" else market.symbol
+                market.exchange_symbol
+                if adapter.capabilities.uses_exchange_symbols_for_legacy_workflows
+                else market.symbol
             )
     return sorted(set(symbols))
 
@@ -97,6 +99,10 @@ def create_market_sell(
 
 def fetch_order(exchange_order_id: str, symbol: str):
     return get_adapter().fetch_order(exchange_order_id, symbol)
+
+
+def validate_client_order_id(client_order_id: str) -> str:
+    return get_adapter().validate_client_order_id(client_order_id)
 
 
 def cancel_order(exchange_order_id: str, symbol: str):
@@ -163,11 +169,12 @@ def get_exchange_info():
 
 
 def _require_native_private_trading(operation: str) -> None:
-    if exchange_code() != "binance":
+    adapter = get_adapter()
+    if not adapter.capabilities.uses_native_private_workflows:
         from bec.exchanges.ccxt_adapter import PrivateExchangeOperationDisabled
 
         raise PrivateExchangeOperationDisabled(
-            f"{exchange_code().title()} {operation} is disabled in public-data mode"
+            f"{adapter.name} {operation} is unavailable through the native workflow"
         )
 
 
@@ -182,28 +189,30 @@ def calc_stake_amount(symbol: str, bot: str):
 
 
 def create_buy_order(*args: Any, **kwargs: Any):
-    if exchange_code() == "kraken":
-        from bec.exchanges.live_execution import create_buy_order as create_kraken_buy
+    adapter = get_adapter()
+    if adapter.capabilities.uses_gated_live_execution:
+        from bec.exchanges.live_execution import create_buy_order as create_gated_buy
 
-        return create_kraken_buy(*args, **kwargs)
+        return create_gated_buy(*args, **kwargs)
     _require_native_private_trading("buy orders")
     from bec.utils import database
 
     if not database.get_active_exchange(required=True)["buy_enabled"]:
-        raise RuntimeError("Binance buy operations are disabled in Trading Settings")
+        raise RuntimeError("Buy operations are disabled in Trading Settings")
     return _legacy_binance.create_buy_order(*args, **kwargs)
 
 
 def create_sell_order(*args: Any, **kwargs: Any):
-    if exchange_code() == "kraken":
-        from bec.exchanges.live_execution import create_sell_order as create_kraken_sell
+    adapter = get_adapter()
+    if adapter.capabilities.uses_gated_live_execution:
+        from bec.exchanges.live_execution import create_sell_order as create_gated_sell
 
-        return create_kraken_sell(*args, **kwargs)
+        return create_gated_sell(*args, **kwargs)
     _require_native_private_trading("sell orders")
     from bec.utils import database
 
     if not database.get_active_exchange(required=True)["sell_enabled"]:
-        raise RuntimeError("Binance sell operations are disabled in Trading Settings")
+        raise RuntimeError("Sell operations are disabled in Trading Settings")
     return _legacy_binance.create_sell_order(*args, **kwargs)
 
 

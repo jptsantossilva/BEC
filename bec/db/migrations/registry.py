@@ -24,6 +24,14 @@ from bec.db.live_execution_schema import (
     apply_live_execution_schema,
     validate_live_execution_schema,
 )
+from bec.db.order_fills_schema import (
+    apply_durable_order_fills_schema,
+    validate_durable_order_fills_schema,
+)
+from bec.db.okx_configuration_schema import (
+    apply_okx_configuration_schema,
+    validate_okx_configuration_schema,
+)
 
 
 def _framework_baseline(connection: sqlite3.Connection) -> None:
@@ -58,6 +66,14 @@ def _kraken_backtesting_defaults(connection: sqlite3.Connection) -> None:
 
 def _gated_kraken_live_execution(connection: sqlite3.Connection) -> None:
     apply_live_execution_schema(connection)
+
+
+def _durable_order_fills(connection: sqlite3.Connection) -> None:
+    apply_durable_order_fills_schema(connection)
+
+
+def _okx_configuration(connection: sqlite3.Connection) -> None:
+    apply_okx_configuration_schema(connection)
 
 
 MIGRATIONS = (
@@ -107,5 +123,21 @@ MIGRATIONS = (
         apply=_gated_kraken_live_execution,
         validate=validate_live_execution_schema,
         signature="bec-gated-kraken-live-execution-v1",
+    ),
+    Migration(
+        version=7,
+        name="durable_order_fills",
+        kind=MigrationKind.ADDITIVE,
+        apply=_durable_order_fills,
+        validate=validate_durable_order_fills_schema,
+        signature="bec-durable-order-fills-v1",
+    ),
+    Migration(
+        version=8,
+        name="okx_configuration",
+        kind=MigrationKind.ADDITIVE,
+        apply=_okx_configuration,
+        validate=validate_okx_configuration_schema,
+        signature="bec-okx-configuration-v1",
     ),
 )

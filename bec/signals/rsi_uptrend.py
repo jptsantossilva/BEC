@@ -58,7 +58,7 @@ def get_data(symbol, time_frame, start_date):
             timeframe=time_frame,
             reason="Historical dataframe is empty after retries.",
             impact="Signal calculation skipped for this symbol.",
-            next_step="Check Binance data availability and rerun the signal job.",
+            next_step="Check active-exchange data availability and rerun the signal job.",
             notify_main=False,
         )
         return pd.DataFrame()

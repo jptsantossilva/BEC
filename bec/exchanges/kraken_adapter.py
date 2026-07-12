@@ -29,12 +29,20 @@ class KrakenAdapter(CcxtExchangeAdapter):
         sizing_buffer_pct: Decimal = Decimal("1"),
         clock=None,
     ):
-        load_env_file()
-        api_key = os.getenv("KRAKEN_API_KEY", "") if api_key is None else api_key
+        # An injected client is a test/integration boundary. Do not silently
+        # import process credentials into it unless the caller explicitly asks.
+        use_environment_credentials = client is None
+        if use_environment_credentials:
+            load_env_file()
+        api_key = (
+            os.getenv("KRAKEN_API_KEY", "")
+            if api_key is None and use_environment_credentials
+            else (api_key or "")
+        )
         api_secret = (
             os.getenv("KRAKEN_API_SECRET", "")
-            if api_secret is None
-            else api_secret
+            if api_secret is None and use_environment_credentials
+            else (api_secret or "")
         )
         if private_enabled is None:
             private_enabled = bool(api_key and api_secret)

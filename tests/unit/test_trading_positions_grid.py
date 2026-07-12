@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
+from bec.exchanges.base import MarketInfo
 
 trading = importlib.import_module("pages.trading")
 
@@ -104,6 +105,37 @@ def test_exchange_editor_persists_explicit_live_gates(monkeypatch):
     assert saved[0]["Sell_Enabled"] is True
     assert saved[0]["Partial_Sell_Policy"] == "sell_all"
     assert saved[0]["Sizing_Buffer_Pct"] == pytest.approx(1.5)
+
+
+def test_okx_public_health_check_syncs_catalog_without_touching_demo(monkeypatch):
+    synced = []
+    exchanges = pd.DataFrame(
+        [
+            {"Id": 3, "Code": "okx", "Adapter_Id": "myokx"},
+            {"Id": 4, "Code": "okx_demo", "Adapter_Id": "myokx"},
+        ]
+    )
+    market = MarketInfo("BTC/USDC", "BTC-USDC", "BTC", "USDC", True)
+    adapter = SimpleNamespace(
+        health_check=lambda: SimpleNamespace(available=True, message="ok"),
+        load_markets=lambda: {market.symbol: market},
+    )
+    monkeypatch.setattr(trading, "get_registered_exchange_codes", lambda: ("okx",))
+    monkeypatch.setattr(trading, "get_adapter_for_code", lambda *args, **kwargs: adapter)
+    monkeypatch.setattr(
+        trading.database,
+        "sync_exchange_market_catalog",
+        lambda exchange_id, markets: synced.append((exchange_id, markets)),
+    )
+
+    statuses, quotes = trading._check_exchange_public_apis(exchanges)
+
+    assert statuses == {
+        "okx": "Available",
+        "okx_demo": "Configuration only; public adapter is not released",
+    }
+    assert quotes == {"okx": ["USDC"], "okx_demo": []}
+    assert synced == [(3, {"BTC/USDC": market})]
 
 
 def test_positions_display_grid_removes_internal_columns_without_mutating_source():

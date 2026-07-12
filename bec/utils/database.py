@@ -47,12 +47,33 @@ EXCHANGE_DEPENDENT_JOBS = (
     "main_1d",
     "symbol_by_market_phase_1d",
     "super_rsi_15m",
-    "kraken_reconcile_15m",
+    "orders_reconcile_15m",
 )
 LIVE_TRADING_JOBS = ("main_1h", "main_4h", "main_1d")
 PUBLIC_ANALYSIS_JOBS = ("symbol_by_market_phase_1d",)
-RECONCILIATION_JOB = "kraken_reconcile_15m"
+SIGNAL_SCHEDULE_JOBS = ("super_rsi_15m",)
+RECONCILIATION_JOB = "orders_reconcile_15m"
+LEGACY_RECONCILIATION_JOB = "kraken_reconcile_15m"
 UNSETTLED_ORDER_STATUSES = ("pending", "open", "partially_filled", "unknown")
+
+
+def _adapter_capabilities_for_code(code: str):
+    """Resolve static behavior without constructing an exchange client."""
+    from bec.exchanges.registry import get_adapter_capabilities_for_code
+
+    return get_adapter_capabilities_for_code(code)
+
+
+def _is_registered_exchange_code(code: str) -> bool:
+    from bec.exchanges.registry import get_registered_exchange_codes
+
+    return str(code).strip().lower() in get_registered_exchange_codes()
+
+
+def _live_flags_satisfy_capabilities(capabilities, buy_enabled, sell_enabled) -> bool:
+    return not capabilities.requires_explicit_live_flags or bool(
+        buy_enabled or sell_enabled
+    )
 
 
 def get_exchanges():
@@ -67,7 +88,8 @@ def get_exchange_settings_table():
     return pd.read_sql(
         """
         SELECT e.Id, e.Code, e.Name, e.Enabled, e.Is_Default,
-               e.Quote_Asset, e.Trading_Mode,
+               e.Quote_Asset, e.Trading_Mode, e.Adapter_Id,
+               e.Execution_Environment,
                e.Buy_Enabled, e.Sell_Enabled, e.Partial_Sell_Policy,
                e.Sizing_Buffer_Pct,
                ebs.Commission_Value AS Taker_Fee
@@ -80,10 +102,11 @@ def get_exchange_settings_table():
 
 
 def _disable_exchange_jobs(connection) -> None:
-    placeholders = ",".join("?" for _ in EXCHANGE_DEPENDENT_JOBS)
+    jobs = (*EXCHANGE_DEPENDENT_JOBS, LEGACY_RECONCILIATION_JOB)
+    placeholders = ",".join("?" for _ in jobs)
     connection.execute(
         f"UPDATE Job_Schedules SET enabled=0 WHERE name IN ({placeholders})",
-        EXCHANGE_DEPENDENT_JOBS,
+        jobs,
     )
 
 
@@ -112,15 +135,18 @@ def update_exchange_settings(rows) -> None:
     current = get_active_exchange(required=False)
     existing_settings = {
         int(item[0]): {
-            "Buy_Enabled": bool(item[1]),
-            "Sell_Enabled": bool(item[2]),
-            "Partial_Sell_Policy": str(item[3] or "accumulate"),
-            "Sizing_Buffer_Pct": float(item[4] if item[4] is not None else 1.0),
+            "Code": str(item[1]),
+            "Adapter_Id": str(item[2] or ""),
+            "Quote_Asset": str(item[3] or ""),
+            "Buy_Enabled": bool(item[4]),
+            "Sell_Enabled": bool(item[5]),
+            "Partial_Sell_Policy": str(item[6] or "accumulate"),
+            "Sizing_Buffer_Pct": float(item[7] if item[7] is not None else 1.0),
         }
         for item in connection.execute(
             """
-            SELECT Id, Buy_Enabled, Sell_Enabled, Partial_Sell_Policy,
-                   Sizing_Buffer_Pct FROM Exchanges
+            SELECT Id, Code, Adapter_Id, Quote_Asset, Buy_Enabled, Sell_Enabled,
+                   Partial_Sell_Policy, Sizing_Buffer_Pct FROM Exchanges
             """
         )
     }
@@ -128,9 +154,14 @@ def update_exchange_settings(rows) -> None:
     for row in rows:
         exchange_id = int(row["Id"])
         existing = existing_settings.get(exchange_id, {})
+        code = existing.get("Code", "")
         enabled = int(bool(row["Enabled"]))
         quote_asset = str(row["Quote_Asset"] or "").strip().upper()
-        fee = float(row["Taker_Fee"])
+        raw_fee = row.get("Taker_Fee")
+        fee = None if raw_fee is None else float(raw_fee)
+        adapter_id = str(
+            row.get("Adapter_Id", existing.get("Adapter_Id", "")) or ""
+        ).strip().lower()
         buy_enabled = int(
             bool(row.get("Buy_Enabled", existing.get("Buy_Enabled", False)))
         )
@@ -149,7 +180,7 @@ def update_exchange_settings(rows) -> None:
         )
         if not quote_asset:
             raise ValueError("Quote asset is required")
-        if not math.isfinite(fee) or fee < 0:
+        if fee is not None and (not math.isfinite(fee) or fee < 0):
             raise ValueError("Spot taker fee must be a finite non-negative number")
         if partial_sell_policy not in {"accumulate", "sell_all", "skip"}:
             raise ValueError("Invalid partial-sell policy")
@@ -157,9 +188,33 @@ def update_exchange_settings(rows) -> None:
             raise ValueError("Sizing buffer must be between 0 and 100 percent")
         if (buy_enabled or sell_enabled) and not enabled:
             raise ValueError("Enable the exchange before enabling live operations")
+        if enabled and not _is_registered_exchange_code(code):
+            raise ValueError(
+                f"{code} is registered for configuration only and cannot be enabled before its adapter is released"
+            )
+        if code == "okx":
+            quote_changed = quote_asset != str(existing.get("Quote_Asset", "USDC"))
+            if (quote_changed or enabled) and not exchange_quote_has_validated_markets(
+                exchange_id, quote_asset, connection=connection
+            ):
+                raise ValueError(
+                    "Load OKX public markets successfully before saving its quote asset or enabling it"
+                )
+        if code in {"okx", "okx_demo"}:
+            if adapter_id not in {"myokx", "okx"}:
+                raise ValueError("OKX adapter variant must be myokx or okx")
+            if adapter_id != existing.get("Adapter_Id") and _exchange_has_persisted_activity(
+                connection, exchange_id
+            ):
+                raise ValueError(
+                    "OKX adapter variant cannot change after exchange data has been persisted"
+                )
+        elif adapter_id != existing.get("Adapter_Id"):
+            raise ValueError("Adapter identity is immutable for this exchange")
         normalized.append(
             (
                 exchange_id,
+                adapter_id,
                 enabled,
                 quote_asset,
                 fee,
@@ -174,7 +229,7 @@ def update_exchange_settings(rows) -> None:
         active_update = next(
             (item for item in normalized if item[0] == int(current["id"])), None
         )
-        if active_update and not active_update[1]:
+        if active_update and not active_update[2]:
             blockers = get_exchange_switch_blockers(connection)
             if blockers["open_positions"] or blockers["unsettled_orders"]:
                 raise ValueError(
@@ -190,6 +245,7 @@ def update_exchange_settings(rows) -> None:
             raise ValueError("Unknown exchange in settings update")
         for (
             exchange_id,
+            adapter_id,
             enabled,
             quote_asset,
             fee,
@@ -201,12 +257,13 @@ def update_exchange_settings(rows) -> None:
             connection.execute(
                 """
                 UPDATE Exchanges
-                SET Enabled=?, Quote_Asset=?, Buy_Enabled=?, Sell_Enabled=?,
+                SET Adapter_Id=?, Enabled=?, Quote_Asset=?, Buy_Enabled=?, Sell_Enabled=?,
                     Partial_Sell_Policy=?, Sizing_Buffer_Pct=?,
                     Updated_At=CURRENT_TIMESTAMP
                 WHERE Id=?
                 """,
                 (
+                    adapter_id,
                     enabled,
                     quote_asset,
                     buy_enabled,
@@ -216,17 +273,18 @@ def update_exchange_settings(rows) -> None:
                     exchange_id,
                 ),
             )
-            connection.execute(
-                """
-                INSERT INTO Exchange_Backtesting_Settings
-                    (Exchange_Id, Commission_Value, Updated_At)
-                VALUES (?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT(Exchange_Id) DO UPDATE SET
-                    Commission_Value=excluded.Commission_Value,
-                    Updated_At=CURRENT_TIMESTAMP
-                """,
-                (exchange_id, fee),
-            )
+            if fee is not None:
+                connection.execute(
+                    """
+                    INSERT INTO Exchange_Backtesting_Settings
+                        (Exchange_Id, Commission_Value, Updated_At)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(Exchange_Id) DO UPDATE SET
+                        Commission_Value=excluded.Commission_Value,
+                        Updated_At=CURRENT_TIMESTAMP
+                    """,
+                    (exchange_id, fee),
+                )
         connection.execute(
             "UPDATE Exchanges SET Is_Default=0, Updated_At=CURRENT_TIMESTAMP "
             "WHERE Is_Default=1 AND Enabled=0"
@@ -236,15 +294,29 @@ def update_exchange_settings(rows) -> None:
         ).fetchone()
         if has_active is None:
             _disable_exchange_jobs(connection)
-        kraken_live = connection.execute(
+        active = connection.execute(
             """
-            SELECT 1 FROM Exchanges
-            WHERE Code='kraken' AND Enabled=1 AND (Buy_Enabled=1 OR Sell_Enabled=1)
+            SELECT Code, Buy_Enabled, Sell_Enabled
+            FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1
             """
         ).fetchone()
-        if kraken_live:
+        if active is not None:
+            capabilities = _adapter_capabilities_for_code(str(active[0]))
+            if capabilities.supports_reconciliation and _live_flags_satisfy_capabilities(
+                capabilities, active[1], active[2]
+            ):
+                connection.execute(
+                    "UPDATE Job_Schedules SET enabled=1 WHERE name=?",
+                    (RECONCILIATION_JOB,),
+                )
+            else:
+                connection.execute(
+                    "UPDATE Job_Schedules SET enabled=0 WHERE name=?",
+                    (RECONCILIATION_JOB,),
+                )
+        else:
             connection.execute(
-                "UPDATE Job_Schedules SET enabled=1 WHERE name=?",
+                "UPDATE Job_Schedules SET enabled=0 WHERE name=?",
                 (RECONCILIATION_JOB,),
             )
     from bec.exchanges.registry import set_default_adapter
@@ -267,10 +339,17 @@ def get_active_exchange(required: bool = False) -> dict | None:
     sizing_buffer = (
         "Sizing_Buffer_Pct" if "Sizing_Buffer_Pct" in exchange_columns else "1.0"
     )
+    adapter_id = "Adapter_Id" if "Adapter_Id" in exchange_columns else "Code"
+    execution_environment = (
+        "Execution_Environment"
+        if "Execution_Environment" in exchange_columns
+        else "'production'"
+    )
     row = connection.execute(
         f"""
         SELECT Id, Code, Name, Enabled, Is_Default, Quote_Asset, Trading_Mode,
-               {buy_enabled}, {sell_enabled}, {partial_sell_policy}, {sizing_buffer}
+               {adapter_id}, {execution_environment}, {buy_enabled}, {sell_enabled},
+               {partial_sell_policy}, {sizing_buffer}
         FROM Exchanges
         WHERE Enabled=1 AND Is_Default=1
         ORDER BY Id LIMIT 1
@@ -284,8 +363,8 @@ def get_active_exchange(required: bool = False) -> dict | None:
         return None
     keys = (
         "id", "code", "name", "enabled", "is_default", "quote_asset",
-        "trading_mode", "buy_enabled", "sell_enabled", "partial_sell_policy",
-        "sizing_buffer_pct",
+        "trading_mode", "adapter_id", "execution_environment", "buy_enabled",
+        "sell_enabled", "partial_sell_policy", "sizing_buffer_pct",
     )
     return dict(zip(keys, row))
 
@@ -365,7 +444,8 @@ def set_exchange_backtesting_fee(
 
 def require_backtesting_execution_available() -> dict:
     exchange = get_active_exchange(required=True)
-    if exchange["code"] not in {"binance", "kraken"}:
+    capabilities = _adapter_capabilities_for_code(str(exchange["code"]))
+    if not capabilities.supports_backtesting:
         raise RuntimeError(
             f"Backtesting execution is unavailable for {exchange['name']}"
         )
@@ -388,6 +468,144 @@ def get_exchange_switch_blockers(connection=None) -> dict[str, int]:
     return {"open_positions": open_positions, "unsettled_orders": unsettled_orders}
 
 
+def _exchange_has_persisted_activity(connection, exchange_id: int) -> bool:
+    """Prevent regional-adapter changes once an exchange has stored data."""
+    for table in (
+        "Exchange_Symbols",
+        "Backtesting_Jobs",
+        "Backtesting_Results",
+        "Backtesting_Trades",
+        "Orders",
+        "Positions",
+    ):
+        if connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone() is None:
+            continue
+        columns = {
+            row[1] for row in connection.execute(f'PRAGMA table_info("{table}")')
+        }
+        if "Exchange_Id" not in columns:
+            continue
+        if connection.execute(
+            f'SELECT 1 FROM "{table}" WHERE Exchange_Id=? LIMIT 1',
+            (int(exchange_id),),
+        ).fetchone() is not None:
+            return True
+    return False
+
+
+def exchange_quote_has_validated_markets(
+    exchange_id: int, quote_asset: str, *, connection=None
+) -> bool:
+    """Whether a recent public catalog contains a tradable market for a quote."""
+    connection = connection or _get_conn()
+    row = connection.execute(
+        """
+        SELECT 1 FROM Exchange_Symbols
+        WHERE Exchange_Id=? AND Quote_Asset=? AND Is_Tradable=1
+          AND Availability_Status='available' AND Last_Synced_At IS NOT NULL
+        LIMIT 1
+        """,
+        (int(exchange_id), str(quote_asset or "").strip().upper()),
+    ).fetchone()
+    return row is not None
+
+
+def sync_exchange_market_catalog(exchange_id: int, markets) -> dict[str, int]:
+    """Persist a public market snapshot and retain absent instruments as inactive."""
+    connection = _get_conn()
+    exchange_id = int(exchange_id)
+    synchronized_at = datetime.now(timezone.utc).isoformat()
+    seen_symbols: list[str] = []
+    with connection:
+        for market in markets.values():
+            exchange_symbol = str(market.exchange_symbol or "").strip()
+            normalized = str(market.symbol or "").strip()
+            if not exchange_symbol or not normalized:
+                raise ValueError("Market catalog contains an incomplete symbol")
+            seen_symbols.append(exchange_symbol)
+            connection.execute(
+                """
+                INSERT INTO Exchange_Symbols (
+                    Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset,
+                    Quote_Asset, Is_Tradable, Resolution_Status, Amount_Step,
+                    Price_Step, Min_Amount, Max_Amount, Min_Cost, Max_Cost,
+                    Market_Type, Is_Spot, Is_Contract, Contract_Size, Is_Linear,
+                    Is_Inverse, Settle_Asset, Raw_Metadata_JSON, Last_Synced_At,
+                    Availability_Status
+                ) VALUES (?, ?, ?, ?, ?, ?, 'resolved', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(Exchange_Id, Exchange_Symbol) DO UPDATE SET
+                    Symbol_Normalized=excluded.Symbol_Normalized,
+                    Base_Asset=excluded.Base_Asset,
+                    Quote_Asset=excluded.Quote_Asset,
+                    Is_Tradable=excluded.Is_Tradable,
+                    Resolution_Status=excluded.Resolution_Status,
+                    Amount_Step=excluded.Amount_Step,
+                    Price_Step=excluded.Price_Step,
+                    Min_Amount=excluded.Min_Amount,
+                    Max_Amount=excluded.Max_Amount,
+                    Min_Cost=excluded.Min_Cost,
+                    Max_Cost=excluded.Max_Cost,
+                    Market_Type=excluded.Market_Type,
+                    Is_Spot=excluded.Is_Spot,
+                    Is_Contract=excluded.Is_Contract,
+                    Contract_Size=excluded.Contract_Size,
+                    Is_Linear=excluded.Is_Linear,
+                    Is_Inverse=excluded.Is_Inverse,
+                    Settle_Asset=excluded.Settle_Asset,
+                    Raw_Metadata_JSON=excluded.Raw_Metadata_JSON,
+                    Last_Synced_At=excluded.Last_Synced_At,
+                    Availability_Status=excluded.Availability_Status
+                """,
+                (
+                    exchange_id,
+                    normalized,
+                    exchange_symbol,
+                    str(market.base_asset),
+                    str(market.quote_asset),
+                    int(bool(market.active)),
+                    float(market.amount_step) if market.amount_step is not None else None,
+                    float(market.price_step) if market.price_step is not None else None,
+                    float(market.min_amount) if market.min_amount is not None else None,
+                    float(market.max_amount) if market.max_amount is not None else None,
+                    float(market.min_cost) if market.min_cost is not None else None,
+                    float(market.max_cost) if market.max_cost is not None else None,
+                    str(market.market_type),
+                    int(bool(market.spot)),
+                    int(bool(market.contract)),
+                    float(market.contract_size) if market.contract_size is not None else None,
+                    int(bool(market.linear)),
+                    int(bool(market.inverse)),
+                    str(market.settle_asset) if market.settle_asset else None,
+                    json.dumps(dict(market.raw), ensure_ascii=True, default=str),
+                    synchronized_at,
+                    "available" if market.active else "inactive",
+                ),
+            )
+        if seen_symbols:
+            placeholders = ",".join("?" for _ in seen_symbols)
+            connection.execute(
+                f"""
+                UPDATE Exchange_Symbols
+                SET Is_Tradable=0, Availability_Status='missing',
+                    Last_Synced_At=?
+                WHERE Exchange_Id=? AND Exchange_Symbol NOT IN ({placeholders})
+                """,
+                (synchronized_at, exchange_id, *seen_symbols),
+            )
+        else:
+            connection.execute(
+                """
+                UPDATE Exchange_Symbols
+                SET Is_Tradable=0, Availability_Status='missing', Last_Synced_At=?
+                WHERE Exchange_Id=?
+                """,
+                (synchronized_at, exchange_id),
+            )
+    return {"upserted": len(seen_symbols)}
+
+
 def set_active_exchange(exchange_id: int) -> dict:
     connection = _get_conn()
     started_transaction = not connection.in_transaction
@@ -395,12 +613,27 @@ def set_active_exchange(exchange_id: int) -> dict:
         if started_transaction:
             connection.execute("BEGIN IMMEDIATE")
         target = connection.execute(
-            "SELECT Id, Code, Enabled FROM Exchanges WHERE Id=?", (int(exchange_id),)
+            """
+            SELECT Id, Code, Enabled, Buy_Enabled, Sell_Enabled, Quote_Asset
+            FROM Exchanges WHERE Id=?
+            """,
+            (int(exchange_id),),
         ).fetchone()
         if target is None:
             raise ValueError(f"Unknown exchange id: {exchange_id}")
         if not bool(target[2]):
             raise ValueError("Enable the exchange before selecting it")
+        if not _is_registered_exchange_code(str(target[1])):
+            raise ValueError(
+                f"{target[1]} is registered for configuration only and cannot be selected before its adapter is released"
+            )
+        if str(target[1]) == "okx" and not exchange_quote_has_validated_markets(
+            int(target[0]), str(target[5] or ""), connection=connection
+        ):
+            raise ValueError(
+                "Load OKX public markets successfully before selecting it"
+            )
+        capabilities = _adapter_capabilities_for_code(str(target[1]))
         current = get_active_exchange(required=False)
         if current and int(current["id"]) == int(exchange_id):
             if started_transaction:
@@ -418,23 +651,37 @@ def set_active_exchange(exchange_id: int) -> dict:
             "UPDATE Exchanges SET Enabled=1, Is_Default=1, Updated_At=CURRENT_TIMESTAMP WHERE Id=?",
             (int(exchange_id),),
         )
+        live_flags_enabled = _live_flags_satisfy_capabilities(
+            capabilities, target[3], target[4]
+        )
         if current is None:
-            jobs_to_enable = (
-                EXCHANGE_DEPENDENT_JOBS
-                if str(target[1]) == "binance"
-                else PUBLIC_ANALYSIS_JOBS
-            )
+            jobs_to_enable = list(PUBLIC_ANALYSIS_JOBS)
+            if capabilities.supports_signal_schedules:
+                jobs_to_enable.extend(SIGNAL_SCHEDULE_JOBS)
+            if capabilities.supports_live_trading and live_flags_enabled:
+                jobs_to_enable.extend(LIVE_TRADING_JOBS)
             if jobs_to_enable:
                 placeholders = ",".join("?" for _ in jobs_to_enable)
                 connection.execute(
                     f"UPDATE Job_Schedules SET enabled=1 WHERE name IN ({placeholders})",
                     jobs_to_enable,
                 )
-        if str(target[1]) != "binance":
+        if not capabilities.supports_live_trading or not live_flags_enabled:
             placeholders = ",".join("?" for _ in LIVE_TRADING_JOBS)
             connection.execute(
                 f"UPDATE Job_Schedules SET enabled=0 WHERE name IN ({placeholders})",
                 LIVE_TRADING_JOBS,
+            )
+        if not capabilities.supports_signal_schedules:
+            placeholders = ",".join("?" for _ in SIGNAL_SCHEDULE_JOBS)
+            connection.execute(
+                f"UPDATE Job_Schedules SET enabled=0 WHERE name IN ({placeholders})",
+                SIGNAL_SCHEDULE_JOBS,
+            )
+        if not capabilities.supports_reconciliation or not live_flags_enabled:
+            connection.execute(
+                "UPDATE Job_Schedules SET enabled=0 WHERE name=?",
+                (RECONCILIATION_JOB,),
             )
         if started_transaction:
             connection.commit()
@@ -454,7 +701,8 @@ def _exchange_symbol_metadata(symbol: str) -> tuple[int, str, str, str, str]:
     exchange = get_active_exchange(required=True)
     exchange_id = int(exchange["id"])
     exchange_symbol = str(symbol or "").strip().upper()
-    if exchange["code"] == "kraken":
+    capabilities = _adapter_capabilities_for_code(str(exchange["code"]))
+    if not capabilities.uses_exchange_symbols_for_legacy_workflows:
         from bec.exchanges.registry import get_default_adapter
 
         adapter = get_default_adapter()
@@ -1382,6 +1630,11 @@ def create_order_intent(
     client_order_id = client_order_id or (
         f"bec-{exchange['code']}-{secrets.token_hex(12)}"
     )
+    # This is the permanent idempotency key used by reconciliation. It must be
+    # valid for the active adapter before the intent becomes durable.
+    from bec.exchanges import service
+
+    client_order_id = service.validate_client_order_id(client_order_id)
     exchange_fields = _exchange_symbol_metadata(symbol)
     if not strategy_params_json:
         strategy_params_json = build_strategy_params_json(strategy_id)
@@ -1497,6 +1750,21 @@ def mark_order_intent_unknown(intent_id: int, error: str) -> None:
         )
 
 
+def mark_order_intent_rejected(intent_id: int, error: str) -> None:
+    """Settle a definitively rejected submission without any retry path."""
+    connection = _get_conn()
+    with connection:
+        connection.execute(
+            """
+            UPDATE Orders
+            SET Order_Status='rejected', Intent_State='rejected',
+                Error_Message=?, Last_Reconciled_At=CURRENT_TIMESTAMP
+            WHERE Id=?
+            """,
+            (str(error), int(intent_id)),
+        )
+
+
 def get_unsettled_order_intents(exchange_id: int | None = None) -> list[dict]:
     connection = _get_conn()
     exchange_id = int(exchange_id or get_active_exchange_id(required=True))
@@ -1514,6 +1782,68 @@ def get_unsettled_order_intents(exchange_id: int | None = None) -> list[dict]:
     return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
 
+def _fill_key(fill, index: int) -> str:
+    trade_id = str(fill.trade_id or "").strip()
+    return f"trade:{trade_id}" if trade_id else f"snapshot:{int(index)}"
+
+
+def _persist_order_fills(connection, intent: dict, result) -> dict[str, float]:
+    """Upsert the latest fill snapshot and return fees by canonical asset."""
+    for index, fill in enumerate(result.fills):
+        filled_at = fill.timestamp or result.timestamp
+        connection.execute(
+            """
+            INSERT INTO Order_Fills (
+                Order_Id, Exchange_Id, Exchange_Order_Id, Fill_Key, Trade_Id,
+                Symbol_Normalized, Exchange_Symbol, Price, Qty, Fee_Asset,
+                Fee_Amount, Filled_At, Raw_JSON, Updated_At
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(Order_Id, Fill_Key) DO UPDATE SET
+                Exchange_Order_Id=excluded.Exchange_Order_Id,
+                Trade_Id=excluded.Trade_Id,
+                Symbol_Normalized=excluded.Symbol_Normalized,
+                Exchange_Symbol=excluded.Exchange_Symbol,
+                Price=excluded.Price,
+                Qty=excluded.Qty,
+                Fee_Asset=excluded.Fee_Asset,
+                Fee_Amount=excluded.Fee_Amount,
+                Filled_At=excluded.Filled_At,
+                Raw_JSON=excluded.Raw_JSON,
+                Updated_At=CURRENT_TIMESTAMP
+            """,
+            (
+                int(intent["Id"]),
+                int(intent["Exchange_Id"]),
+                str(result.exchange_order_id),
+                _fill_key(fill, index),
+                str(fill.trade_id) if fill.trade_id is not None else None,
+                str(result.symbol),
+                str(result.exchange_symbol),
+                float(fill.price),
+                float(fill.quantity),
+                str(fill.fee_asset) if fill.fee_asset else None,
+                float(fill.fee_amount),
+                (
+                    filled_at.astimezone(timezone.utc).isoformat()
+                    if filled_at is not None
+                    else None
+                ),
+                json.dumps(dict(fill.raw), ensure_ascii=True, default=str),
+            ),
+        )
+
+    rows = connection.execute(
+        """
+        SELECT Fee_Asset, COALESCE(SUM(Fee_Amount), 0)
+        FROM Order_Fills
+        WHERE Order_Id=? AND COALESCE(Fee_Asset, '') <> ''
+        GROUP BY Fee_Asset
+        """,
+        (int(intent["Id"]),),
+    ).fetchall()
+    return {str(asset): float(amount) for asset, amount in rows}
+
+
 def apply_order_result(intent_id: int, result) -> dict:
     """Persist one canonical result and idempotently apply its fill delta."""
     from bec.exchanges.base import OrderStatus
@@ -1522,22 +1852,6 @@ def apply_order_result(intent_id: int, result) -> dict:
     intent = get_order_intent(intent_id)
     executed = float(result.executed_quantity)
     average = float(result.average_price or 0)
-    fee_totals = {}
-    for fill in result.fills:
-        if fill.fee_asset:
-            fee_totals[fill.fee_asset] = fee_totals.get(fill.fee_asset, 0.0) + float(
-                fill.fee_amount
-            )
-    fee_asset = next(iter(fee_totals)) if len(fee_totals) == 1 else ""
-    fee_amount = fee_totals.get(fee_asset, 0.0) if fee_asset else 0.0
-    base_asset = str(intent.get("Base_Asset") or "")
-    net_qty = executed
-    if str(intent["Side"]).upper() == "BUY" and fee_asset == base_asset:
-        net_qty = max(0.0, executed - fee_amount)
-    old_applied_executed = float(intent.get("Applied_Executed_Qty") or 0)
-    old_applied_net = float(intent.get("Applied_Net_Qty") or 0)
-    delta_executed = max(0.0, executed - old_applied_executed)
-    delta_net = max(0.0, net_qty - old_applied_net)
     terminal = result.status in {
         OrderStatus.FILLED,
         OrderStatus.CANCELED,
@@ -1550,7 +1864,20 @@ def apply_order_result(intent_id: int, result) -> dict:
     closed_position = False
 
     with connection:
-        if intent.get("Position_Id") is not None and (delta_executed > 0 or delta_net > 0):
+        fee_totals = _persist_order_fills(connection, intent, result)
+        fee_asset = next(iter(fee_totals)) if len(fee_totals) == 1 else ""
+        fee_amount = fee_totals.get(fee_asset, 0.0) if fee_asset else 0.0
+        base_asset = str(intent.get("Base_Asset") or "")
+        net_qty = executed
+        if str(intent["Side"]).upper() == "BUY":
+            net_qty = max(0.0, executed - fee_totals.get(base_asset, 0.0))
+        old_applied_executed = float(intent.get("Applied_Executed_Qty") or 0)
+        old_applied_net = float(intent.get("Applied_Net_Qty") or 0)
+        delta_executed = max(0.0, executed - old_applied_executed)
+        delta_net = net_qty - old_applied_net
+        fees_json = json.dumps(fee_totals, sort_keys=True, separators=(",", ":"))
+
+        if intent.get("Position_Id") is not None and (delta_executed != 0 or delta_net != 0):
             position = connection.execute(
                 "SELECT Qty, Buy_Price, Buy_Order_Id FROM Positions WHERE Id=?",
                 (int(intent["Position_Id"]),),
@@ -1612,8 +1939,7 @@ def apply_order_result(intent_id: int, result) -> dict:
                     ((average - buy_price) / buy_price) * 100 if buy_price > 0 else 0
                 )
                 pnl_value = (average - buy_price) * executed
-                if fee_asset == str(intent.get("Quote_Asset") or ""):
-                    pnl_value -= fee_amount
+                pnl_value -= fee_totals.get(str(intent.get("Quote_Asset") or ""), 0.0)
                 buy_row = connection.execute(
                     """
                     SELECT Id FROM Orders
@@ -1638,7 +1964,7 @@ def apply_order_result(intent_id: int, result) -> dict:
             SET Exchange_Order_Id=?, Order_Status=?, Intent_State=?, Price=?, Qty=?,
                 Executed_Qty=?, Average_Price=?, Fee_Asset=?, Fee_Amount=?, Net_Qty=?,
                 Applied_Executed_Qty=?, Applied_Net_Qty=?, Last_Reconciled_At=CURRENT_TIMESTAMP,
-                Raw_Response_JSON=?, Error_Message=NULL
+                Raw_Response_JSON=?, Error_Message=NULL, Executed_Cost=?, Fees_JSON=?
             WHERE Id=?
             """,
             (
@@ -1655,6 +1981,8 @@ def apply_order_result(intent_id: int, result) -> dict:
                 executed,
                 net_qty,
                 raw_json,
+                executed * average,
+                fees_json,
                 int(intent_id),
             ),
         )
@@ -5417,7 +5745,7 @@ DEFAULT_JOB_SCHEDULES = [
         "",
         "15m",
         0,
-        "Reconcile unsettled Kraken order intents without resubmission.",
+        "Reconcile unsettled exchange order intents without resubmission.",
     ),
     # ("delisting_checker_1h", "delisting_checker.py", "", "1h", 1, "Checks Binance delisting announcements."),
 ]
@@ -6123,6 +6451,13 @@ def ensure_job_schedules():
     connection = _get_conn()
     with connection:
         connection.execute(sql_create_job_schedules_table)
+        legacy_reconciliation = connection.execute(
+            """
+            SELECT script, script_args, cadence, enabled, description, last_run
+            FROM Job_Schedules WHERE name=?
+            """,
+            (LEGACY_RECONCILIATION_JOB,),
+        ).fetchone()
         for (
             name,
             script,
@@ -6145,6 +6480,23 @@ def ensure_job_schedules():
                     "UPDATE Job_Schedules SET script = ?, description = ? WHERE name = ?",
                     (script, description, name),
                 )
+        if legacy_reconciliation is not None:
+            connection.execute(
+                """
+                UPDATE Job_Schedules
+                SET enabled=?, last_run=COALESCE(last_run, ?)
+                WHERE name=?
+                """,
+                (
+                    int(bool(legacy_reconciliation[3])),
+                    legacy_reconciliation[5],
+                    RECONCILIATION_JOB,
+                ),
+            )
+            connection.execute(
+                "UPDATE Job_Schedules SET enabled=0 WHERE name=?",
+                (LEGACY_RECONCILIATION_JOB,),
+            )
         exchange_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(Exchanges)")
         }
@@ -6169,23 +6521,40 @@ def ensure_job_schedules():
                 )
                 """
             )
-        elif str(has_active_exchange[0]) == "kraken" and not (
-            bool(has_active_exchange[1]) or bool(has_active_exchange[2])
-        ):
-            placeholders = ",".join("?" for _ in LIVE_TRADING_JOBS)
-            connection.execute(
-                f"UPDATE Job_Schedules SET enabled=0 WHERE name IN ({placeholders})",
-                LIVE_TRADING_JOBS,
+        else:
+            capabilities = _adapter_capabilities_for_code(str(has_active_exchange[0]))
+            live_flags_enabled = _live_flags_satisfy_capabilities(
+                capabilities, has_active_exchange[1], has_active_exchange[2]
             )
+            if not capabilities.supports_signal_schedules:
+                placeholders = ",".join("?" for _ in SIGNAL_SCHEDULE_JOBS)
+                connection.execute(
+                    f"UPDATE Job_Schedules SET enabled=0 WHERE name IN ({placeholders})",
+                    SIGNAL_SCHEDULE_JOBS,
+                )
+            if not capabilities.supports_live_trading or not live_flags_enabled:
+                placeholders = ",".join("?" for _ in LIVE_TRADING_JOBS)
+                connection.execute(
+                    f"UPDATE Job_Schedules SET enabled=0 WHERE name IN ({placeholders})",
+                    LIVE_TRADING_JOBS,
+                )
+            if not capabilities.supports_reconciliation or not live_flags_enabled:
+                connection.execute(
+                    "UPDATE Job_Schedules SET enabled=0 WHERE name=?",
+                    (RECONCILIATION_JOB,),
+                )
         orders_exists = connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='Orders'"
         ).fetchone()
-        unsettled_kraken = (
+        unsettled_active_exchange = (
             connection.execute(
                 """
-                SELECT 1 FROM Orders o JOIN Exchanges e ON e.Id=o.Exchange_Id
-                WHERE e.Code='kraken'
-                  AND lower(COALESCE(o.Order_Status,'unknown'))
+                SELECT 1 FROM Orders
+                WHERE Exchange_Id=(
+                    SELECT Id FROM Exchanges
+                    WHERE Enabled=1 AND Is_Default=1 LIMIT 1
+                )
+                  AND lower(COALESCE(Order_Status,'unknown'))
                       IN ('pending','open','partially_filled','unknown')
                 LIMIT 1
                 """
@@ -6193,7 +6562,11 @@ def ensure_job_schedules():
             if orders_exists
             else None
         )
-        if unsettled_kraken:
+        if (
+            has_active_exchange is not None
+            and capabilities.supports_reconciliation
+            and unsettled_active_exchange
+        ):
             connection.execute(
                 "UPDATE Job_Schedules SET enabled=1 WHERE name=?",
                 (RECONCILIATION_JOB,),
@@ -6999,15 +7372,16 @@ def set_job_schedule_enabled(name: str, enabled: bool):
     connection = _get_conn()
     active_exchange = get_active_exchange(required=False)
     if bool(enabled) and str(name) in LIVE_TRADING_JOBS and active_exchange:
-        if active_exchange["code"] == "kraken" and not (
+        capabilities = _adapter_capabilities_for_code(str(active_exchange["code"]))
+        if not capabilities.supports_live_trading:
+            raise ValueError(f"{name} is unavailable for {active_exchange['name']}")
+        if capabilities.requires_explicit_live_flags and not (
             active_exchange["buy_enabled"] or active_exchange["sell_enabled"]
         ):
             raise ValueError(
-                f"{name} cannot be enabled until Kraken buy or sell operations "
+                f"{name} cannot be enabled until {active_exchange['name']} buy or sell operations "
                 "are explicitly enabled"
             )
-        if active_exchange["code"] not in {"binance", "kraken"}:
-            raise ValueError(f"{name} is unavailable for {active_exchange['name']}")
     with connection:
         connection.execute(
             "UPDATE Job_Schedules SET enabled = ? WHERE name = ?",

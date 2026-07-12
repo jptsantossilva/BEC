@@ -85,6 +85,8 @@ def create_exchange_metadata(connection: sqlite3.Connection, *, upgraded_install
             Is_Default INTEGER NOT NULL DEFAULT 0 CHECK (Is_Default IN (0, 1)),
             Quote_Asset TEXT,
             Trading_Mode TEXT NOT NULL DEFAULT 'spot' CHECK (Trading_Mode = 'spot'),
+            Adapter_Id TEXT NOT NULL DEFAULT 'binance',
+            Execution_Environment TEXT NOT NULL DEFAULT 'production',
             Created_At TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             Updated_At TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
@@ -113,8 +115,9 @@ def create_exchange_metadata(connection: sqlite3.Connection, *, upgraded_install
     connection.execute(
         """
         INSERT INTO Exchanges
-            (Id, Code, Name, Enabled, Is_Default, Quote_Asset, Trading_Mode)
-        VALUES (?, 'binance', 'Binance', ?, ?, ?, 'spot')
+            (Id, Code, Name, Enabled, Is_Default, Quote_Asset, Trading_Mode,
+             Adapter_Id, Execution_Environment)
+        VALUES (?, 'binance', 'Binance', ?, ?, ?, 'spot', 'binance', 'production')
         ON CONFLICT(Code) DO UPDATE SET
             Name = excluded.Name,
             Trading_Mode = excluded.Trading_Mode
@@ -130,8 +133,9 @@ def register_kraken_public_exchange(connection: sqlite3.Connection) -> None:
     connection.execute(
         """
         INSERT INTO Exchanges
-            (Id, Code, Name, Enabled, Is_Default, Quote_Asset, Trading_Mode)
-        VALUES (?, 'kraken', 'Kraken', 0, 0, 'EUR', 'spot')
+            (Id, Code, Name, Enabled, Is_Default, Quote_Asset, Trading_Mode,
+             Adapter_Id, Execution_Environment)
+        VALUES (?, 'kraken', 'Kraken', 0, 0, 'EUR', 'spot', 'kraken', 'production')
         ON CONFLICT(Code) DO UPDATE SET
             Name=excluded.Name,
             Trading_Mode=excluded.Trading_Mode
@@ -424,10 +428,14 @@ def prepare_exchange_schema_for_startup(
         from bec.db.backtesting_schema import apply_exchange_backtesting_schema
         from bec.db.backtesting_schema import configure_new_install_kraken_default
         from bec.db.live_execution_schema import apply_live_execution_schema
+        from bec.db.order_fills_schema import apply_durable_order_fills_schema
+        from bec.db.okx_configuration_schema import apply_okx_configuration_schema
 
         apply_exchange_backtesting_schema(connection)
         configure_new_install_kraken_default(connection)
         apply_live_execution_schema(connection)
+        apply_durable_order_fills_schema(connection)
+        apply_okx_configuration_schema(connection)
         return
     validate_exchange_aware_schema(connection)
 

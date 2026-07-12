@@ -4,7 +4,14 @@ from types import SimpleNamespace
 import pytest
 
 from bec.exchanges import live_execution
-from bec.exchanges.base import MarketInfo, OrderResult, OrderStatus, OrderValidation, Ticker
+from bec.exchanges.base import (
+    ExchangeCapabilities,
+    MarketInfo,
+    OrderResult,
+    OrderStatus,
+    OrderValidation,
+    Ticker,
+)
 
 
 def _exchange(**overrides):
@@ -49,7 +56,11 @@ def test_live_operation_requires_run_mode_and_explicit_side_flag(monkeypatch):
     monkeypatch.setattr(
         live_execution.service,
         "get_adapter",
-        lambda: SimpleNamespace(private_enabled=True),
+        lambda: SimpleNamespace(
+            name="Kraken",
+            private_enabled=True,
+            capabilities=ExchangeCapabilities(uses_gated_live_execution=True),
+        ),
     )
     monkeypatch.setattr(
         live_execution.database,
@@ -204,10 +215,31 @@ def test_uncertain_submission_is_marked_for_reconciliation(monkeypatch):
     assert unknown and unknown[0][0] == 1
 
 
+def test_known_submission_rejection_is_settled_without_reconciliation(monkeypatch):
+    rejected = []
+    monkeypatch.setattr(
+        live_execution.database,
+        "mark_order_intent_rejected",
+        lambda intent_id, error: rejected.append((intent_id, error)),
+    )
+    monkeypatch.setattr(
+        live_execution.database,
+        "mark_order_intent_unknown",
+        lambda *_args: pytest.fail("known rejection must not be unknown"),
+    )
+    monkeypatch.setattr(live_execution.telegram, "send_error_event", lambda **kwargs: None)
+
+    live_execution._record_submission_failure(7, "create exchange buy order", ValueError("invalid"))
+
+    assert rejected == [(7, "ValueError('invalid')")]
+
+
 def test_reconciliation_resolves_unknown_intent_by_client_id(monkeypatch):
     applied = []
 
     class Adapter:
+        capabilities = ExchangeCapabilities(supports_reconciliation=True)
+
         def fetch_order_by_client_id(self, client_order_id, symbol):
             assert (client_order_id, symbol) == ("bec-test", "BTC/USDC")
             return _result(side="buy")
@@ -226,7 +258,7 @@ def test_reconciliation_resolves_unknown_intent_by_client_id(monkeypatch):
                 "Id": 1,
                 "Side": "BUY",
                 "Symbol": "BTC/USDC",
-                "Exchange_Order_Id": "",
+                "Exchange_Order_Id": "K-1",
                 "Client_Order_Id": "bec-test",
             }
         ],

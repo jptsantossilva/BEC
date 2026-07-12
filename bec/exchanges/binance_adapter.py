@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
@@ -21,6 +22,7 @@ import bec.utils.telegram as telegram
 from bec.exchanges.base import (
     Balance,
     ExchangeAdapter,
+    ExchangeCapabilities,
     ExchangeHealth,
     MarketInfo,
     OrderBook,
@@ -114,6 +116,14 @@ def get_client() -> Client:
 class BinanceAdapter(ExchangeAdapter):
     code = "binance"
     name = "Binance"
+    capabilities = ExchangeCapabilities(
+        supports_backtesting=True,
+        supports_live_trading=True,
+        requires_explicit_live_flags=False,
+        supports_signal_schedules=True,
+        uses_native_private_workflows=True,
+        uses_exchange_symbols_for_legacy_workflows=True,
+    )
 
     def __init__(self, client: Client | None = None):
         self._injected_client = client
@@ -161,6 +171,8 @@ class BinanceAdapter(ExchangeAdapter):
                 quote_market_buy_allowed=bool(
                     raw.get("quoteOrderQtyMarketAllowed", False)
                 ),
+                market_type="spot",
+                spot=True,
                 raw=raw,
             )
         self._markets = markets
@@ -278,6 +290,44 @@ class BinanceAdapter(ExchangeAdapter):
             symbol=self.to_exchange_symbol(canonical), orderId=exchange_order_id
         )
         return self._parse_order(raw, canonical)
+
+    def fetch_order_by_client_id(
+        self, client_order_id: str, symbol: str
+    ) -> OrderResult | None:
+        canonical = self.normalize_symbol(symbol)
+        raw = self.client.get_order(
+            symbol=self.to_exchange_symbol(canonical),
+            origClientOrderId=str(client_order_id),
+        )
+        return self._parse_order(raw, canonical) if raw else None
+
+    def validate_client_order_id(self, client_order_id: str) -> str:
+        """Apply Binance's documented ``newClientOrderId`` constraints."""
+        value = str(client_order_id or "").strip()
+        if not re.fullmatch(r"[.A-Za-z0-9_:/-]{1,36}", value):
+            raise ValueError(
+                "Binance client order ID must use [.-_:A-Za-z0-9/] and be 1-36 characters"
+            )
+        return value
+
+    def is_known_submission_rejection(self, exc: Exception) -> bool:
+        if super().is_known_submission_rejection(exc) or isinstance(
+            exc, BinanceOrderException
+        ):
+            return True
+        # These Binance codes identify validation, permission/authentication,
+        # or insufficient-balance rejections. Request/transport errors remain
+        # unknown because the exchange may still have accepted the order.
+        return isinstance(exc, BinanceAPIException) and getattr(exc, "code", None) in {
+            -2015,  # invalid API key, IP, or permission
+            -2014,  # API key format
+            -2010,  # account has insufficient balance
+            -1121,  # invalid symbol
+            -1100,  # illegal characters
+            -1102,  # mandatory parameter missing
+            -1111,  # bad precision
+            -1013,  # filter failure
+        }
 
     def cancel_order(self, exchange_order_id: str, symbol: str) -> OrderResult:
         canonical = self.normalize_symbol(symbol)
@@ -401,6 +451,12 @@ class BinanceAdapter(ExchangeAdapter):
                 fee_asset=fill.get("commissionAsset"),
                 fee_amount=_decimal(fill.get("commission")),
                 trade_id=(str(fill["tradeId"]) if fill.get("tradeId") is not None else None),
+                timestamp=(
+                    datetime.fromtimestamp(int(fill["time"]) / 1000, tz=timezone.utc)
+                    if fill.get("time") is not None
+                    else None
+                ),
+                raw=fill,
             )
             for fill in raw.get("fills", [])
         )

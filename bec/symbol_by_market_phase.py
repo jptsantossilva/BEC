@@ -212,7 +212,7 @@ def trade_against_auto_switch(settings=None, warning_stats=None):
                 timeframe=btc_timeframe,
                 reason="Historical dataframe is empty after retries.",
                 impact="Trade-against auto-switch was skipped for this run.",
-                next_step="Check Binance data availability and rerun market phase job.",
+                next_step="Check active-exchange data availability and rerun market phase job.",
                 notify_main=False,
             )
             return settings
@@ -235,7 +235,7 @@ def trade_against_auto_switch(settings=None, warning_stats=None):
                 timeframe=signal_timeframe,
                 reason="Could not identify the closed signal candle.",
                 impact="Trade-against auto-switch was skipped to avoid repeated execution.",
-                next_step="Check Binance OHLCV availability for the selected Bitcoin Strategy timeframe.",
+                next_step="Check active-exchange OHLCV availability for the selected Bitcoin Strategy timeframe.",
                 notify_main=False,
             )
             return settings
@@ -562,7 +562,10 @@ def main(timeframe):
                         format='%(asctime)s %(message)s', datefmt='%Y-%m-%d %I:%M:%S %p -')
 
     active_exchange = database.get_active_exchange(required=True)
-    if active_exchange["code"] == "binance":
+    from bec.exchanges.registry import get_adapter_capabilities_for_code
+
+    capabilities = get_adapter_capabilities_for_code(active_exchange["code"])
+    if capabilities.uses_native_private_workflows:
         # Private account actions remain native-Binance-only through PR 6.
         binance.create_balance_snapshot(telegram_prefix="", notify=False)
         _run_btc_auto_switch_backtest_if_needed(settings, timeframe)
@@ -573,7 +576,7 @@ def main(timeframe):
     settings = config.load_settings(refresh=True)
     trade_against = (
         settings.trade_against
-        if active_exchange["code"] == "binance"
+        if capabilities.uses_exchange_symbols_for_legacy_workflows
         else active_exchange["quote_asset"]
     )
 

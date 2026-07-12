@@ -1,4 +1,4 @@
-"""Gated Kraken live-order workflow with durable intents and reconciliation."""
+"""Gated spot live-order workflow with durable intents and reconciliation."""
 
 from __future__ import annotations
 
@@ -11,16 +11,18 @@ from bec.utils import config, database, telegram
 
 def _live_exchange(side: str) -> dict:
     exchange = database.get_active_exchange(required=True)
-    if exchange["code"] != "kraken":
-        raise RuntimeError("The CCXT live workflow is only enabled for Kraken")
+    adapter = service.get_adapter()
+    name = str(exchange.get("name") or adapter.name)
+    if not adapter.capabilities.uses_gated_live_execution:
+        raise RuntimeError(f"The gated live workflow is unavailable for {name}")
     settings = config.load_settings(refresh=True)
     if settings.run_mode == "test":
-        raise RuntimeError("Kraken live execution is disabled while run_mode=test")
+        raise RuntimeError(f"{name} live execution is disabled while run_mode=test")
     flag = "buy_enabled" if str(side).lower() == "buy" else "sell_enabled"
     if not bool(exchange[flag]):
-        raise RuntimeError(f"Kraken {side} operations are disabled in Trading Settings")
-    if not bool(getattr(service.get_adapter(), "private_enabled", False)):
-        raise RuntimeError("Kraken private credentials are not configured")
+        raise RuntimeError(f"{name} {side} operations are disabled in Trading Settings")
+    if not bool(getattr(adapter, "private_enabled", False)):
+        raise RuntimeError(f"{name} private credentials are not configured")
     return exchange
 
 
@@ -54,13 +56,36 @@ def _stake_amount(quote_asset: str) -> Decimal:
     return amount
 
 
+def _is_known_submission_rejection(exc: Exception) -> bool:
+    """Return true only when an exception proves the order was not submitted."""
+    try:
+        return bool(service.get_adapter().is_known_submission_rejection(exc))
+    except (AttributeError, RuntimeError):
+        # Keep the failure path safe for a partially initialized runtime.
+        return isinstance(exc, ValueError)
+
+
 def _record_submission_failure(intent_id: int, operation: str, exc: Exception) -> None:
+    if _is_known_submission_rejection(exc):
+        database.mark_order_intent_rejected(intent_id, repr(exc))
+        telegram.send_error_event(
+            action=operation,
+            reason="Exchange submission was rejected",
+            impact="No retry was scheduled and no replacement order was submitted.",
+            next_step=(
+                "Correct the validation, balance, credential, or permission issue "
+                "before creating a new intent."
+            ),
+            exception=exc,
+            notify_main=False,
+        )
+        return
     database.mark_order_intent_unknown(intent_id, repr(exc))
     telegram.send_error_event(
         action=operation,
-        reason="Kraken submission outcome is uncertain",
+        reason="Exchange submission outcome is uncertain",
         impact="The intent was not retried and requires reconciliation.",
-        next_step="Check the Kraken order and reconciliation logs before any manual action.",
+        next_step="Check the exchange order and reconciliation logs before any manual action.",
         exception=exc,
         notify_main=False,
     )
@@ -137,7 +162,7 @@ def create_buy_order(
             client_order_id=intent["Client_Order_Id"],
         )
     except Exception as exc:
-        _record_submission_failure(intent["Id"], "create Kraken buy order", exc)
+        _record_submission_failure(intent["Id"], "create exchange buy order", exc)
         return None
     applied = database.apply_order_result(intent["Id"], result)
     telegram.send_trade_event(
@@ -230,7 +255,7 @@ def create_sell_order(
             percentage = 100
         if not validation.valid:
             message = (
-                f"Kraken sell skipped by {policy} policy: "
+                f"Exchange sell skipped by {policy} policy: "
                 + "; ".join(validation.errors)
             )
             print(database.exchange_log_prefix(), message)
@@ -260,7 +285,7 @@ def create_sell_order(
             client_order_id=intent["Client_Order_Id"],
         )
     except Exception as exc:
-        _record_submission_failure(intent["Id"], "create Kraken sell order", exc)
+        _record_submission_failure(intent["Id"], "create exchange sell order", exc)
         return None
     applied = database.apply_order_result(intent["Id"], result)
     _post_apply_sell(intent, applied, float(result.average_price or 0))
@@ -294,23 +319,25 @@ def create_sell_order(
 
 def reconcile_unsettled_orders() -> dict:
     exchange = database.get_active_exchange(required=False)
-    if not exchange or exchange["code"] != "kraken":
+    if not exchange:
         return {"checked": 0, "updated": 0, "unresolved": 0}
     adapter = service.get_adapter()
+    if not adapter.capabilities.supports_reconciliation:
+        return {"checked": 0, "updated": 0, "unresolved": 0}
     stats = {"checked": 0, "updated": 0, "unresolved": 0}
     for intent in database.get_unsettled_order_intents(int(exchange["id"])):
         stats["checked"] += 1
         try:
-            exchange_order_id = str(intent.get("Exchange_Order_Id") or "")
-            if exchange_order_id:
-                result = adapter.fetch_order(exchange_order_id, intent["Symbol"])
-            else:
-                resolver = getattr(adapter, "fetch_order_by_client_id", None)
-                result = (
-                    resolver(intent["Client_Order_Id"], intent["Symbol"])
-                    if resolver
-                    else None
-                )
+            resolver = getattr(adapter, "fetch_order_by_client_id", None)
+            result = (
+                resolver(intent["Client_Order_Id"], intent["Symbol"])
+                if resolver and str(intent.get("Client_Order_Id") or "")
+                else None
+            )
+            if result is None:
+                exchange_order_id = str(intent.get("Exchange_Order_Id") or "")
+                if exchange_order_id:
+                    result = adapter.fetch_order(exchange_order_id, intent["Symbol"])
             if result is None:
                 stats["unresolved"] += 1
                 continue
@@ -330,6 +357,6 @@ def private_api_status() -> tuple[bool, str]:
     except Exception as exc:
         return False, f"Private API unavailable: {exc}"
     return True, (
-        "Private balance access succeeded. Confirm the key has Query Funds and "
-        "Create/Modify Orders only, no Withdraw Funds permission, and an IP allowlist."
+        "Private balance access succeeded. Confirm the key has only the minimum "
+        "balance/order permissions, no withdrawal permission, and an IP allowlist."
     )

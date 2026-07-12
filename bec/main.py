@@ -133,7 +133,7 @@ def get_data(symbol, timeframe):
             timeframe=timeframe,
             reason="Historical dataframe is empty after retries.",
             impact="Symbol was skipped in this cycle.",
-            next_step="Check Binance OHLCV availability and request logs.",
+            next_step="Check active-exchange OHLCV availability and request logs.",
             notify_main=False,
         )
         return pd.DataFrame()
@@ -888,7 +888,7 @@ def trade(timeframe, run_mode, settings=None, send_summary=True):
                 strategy=strategy_name,
                 reason="Empty dataframe on BUY loop",
                 impact="Symbol was skipped for entry in this cycle.",
-                next_step="Check Binance data availability and OHLCV fetch logs.",
+                next_step="Check active-exchange data availability and OHLCV fetch logs.",
                 notify_main=False,
             )
             continue

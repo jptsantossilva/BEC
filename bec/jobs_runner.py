@@ -127,10 +127,10 @@ def _run_startup_reconciliation():
         from bec.exchanges.live_execution import reconcile_unsettled_orders
 
         stats = reconcile_unsettled_orders()
-        _print_log(f"Startup Kraken reconciliation: {stats}")
+        _print_log(f"Startup exchange reconciliation: {stats}")
         return stats
     except Exception as exc:
-        _print_log(f"Startup Kraken reconciliation deferred: {exc!r}")
+        _print_log(f"Startup exchange reconciliation deferred: {exc!r}")
         return {"checked": 0, "updated": 0, "unresolved": 1}
 
 def _backtesting_job_command(job):

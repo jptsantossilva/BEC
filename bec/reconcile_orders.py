@@ -1,11 +1,11 @@
-"""Reconcile unsettled Kraken order intents without submitting new orders."""
+"""Reconcile unsettled exchange order intents without submitting new orders."""
 
 from bec.exchanges.live_execution import reconcile_unsettled_orders
 
 
 def main() -> int:
     stats = reconcile_unsettled_orders()
-    print(f"Kraken reconciliation: {stats}")
+    print(f"Exchange reconciliation: {stats}")
     return 0
 
 

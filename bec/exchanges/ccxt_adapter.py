@@ -13,6 +13,7 @@ import pandas as pd
 from bec.exchanges.base import (
     Balance,
     ExchangeAdapter,
+    ExchangeCapabilities,
     ExchangeHealth,
     MarketInfo,
     OrderBook,
@@ -52,6 +53,13 @@ class CcxtExchangeAdapter(ExchangeAdapter):
     """CCXT spot adapter with explicitly gated private operations."""
 
     asset_aliases: Mapping[str, str] = {}
+    capabilities = ExchangeCapabilities(
+        supports_backtesting=True,
+        supports_live_trading=True,
+        requires_explicit_live_flags=True,
+        supports_reconciliation=True,
+        uses_gated_live_execution=True,
+    )
 
     def __init__(
         self,
@@ -103,6 +111,21 @@ class CcxtExchangeAdapter(ExchangeAdapter):
     def private_enabled(self) -> bool:
         return self._private_enabled
 
+    def is_known_submission_rejection(self, exc: Exception) -> bool:
+        return isinstance(
+            exc,
+            (
+                ValueError,
+                PrivateExchangeOperationDisabled,
+                ccxt.AuthenticationError,
+                ccxt.PermissionDenied,
+                ccxt.InsufficientFunds,
+                ccxt.InvalidOrder,
+                ccxt.BadRequest,
+                ccxt.BadSymbol,
+            ),
+        )
+
     def _canonical_asset(self, asset: Any) -> str:
         value = str(asset or "").strip().upper()
         return self.asset_aliases.get(value, value)
@@ -133,8 +156,23 @@ class CcxtExchangeAdapter(ExchangeAdapter):
         )
         markets: dict[str, MarketInfo] = {}
         lookup: dict[str, str] = {}
+
+        def register_alias(alias: object, canonical: str) -> None:
+            value = str(alias or "").strip().upper()
+            if not value:
+                return
+            existing = lookup.get(value)
+            if existing is not None and existing != canonical:
+                raise ValueError(
+                    f"{self.name} market alias collision for {value}: "
+                    f"{existing} and {canonical}"
+                )
+            lookup[value] = canonical
+
         for raw in raw_markets.values():
             if not (raw.get("spot") or raw.get("type") == "spot"):
+                continue
+            if bool(raw.get("contract", False)) or not bool(raw.get("active", True)):
                 continue
             base = self._canonical_asset(raw.get("base"))
             quote = self._canonical_asset(raw.get("quote"))
@@ -142,6 +180,8 @@ class CcxtExchangeAdapter(ExchangeAdapter):
             if not base or not quote or not exchange_symbol:
                 continue
             symbol = f"{base}/{quote}"
+            if symbol in markets:
+                raise ValueError(f"{self.name} canonical market collision for {symbol}")
             limits = raw.get("limits") or {}
             amount_limits = limits.get("amount") or {}
             cost_limits = limits.get("cost") or {}
@@ -151,7 +191,7 @@ class CcxtExchangeAdapter(ExchangeAdapter):
                 exchange_symbol=exchange_symbol,
                 base_asset=base,
                 quote_asset=quote,
-                active=bool(raw.get("active", True)),
+                active=True,
                 amount_step=self._precision_step(precision.get("amount")),
                 price_step=self._precision_step(precision.get("price")),
                 min_amount=_optional_decimal(amount_limits.get("min")),
@@ -159,6 +199,13 @@ class CcxtExchangeAdapter(ExchangeAdapter):
                 min_cost=_optional_decimal(cost_limits.get("min")),
                 max_cost=_optional_decimal(cost_limits.get("max")),
                 quote_market_buy_allowed=quote_market_buy,
+                market_type=str(raw.get("type") or "spot").lower(),
+                spot=bool(raw.get("spot") or raw.get("type") == "spot"),
+                contract=bool(raw.get("contract", False)),
+                contract_size=_optional_decimal(raw.get("contractSize")),
+                linear=bool(raw.get("linear", False)),
+                inverse=bool(raw.get("inverse", False)),
+                settle_asset=self._canonical_asset(raw.get("settle")) or None,
                 raw=raw,
             )
             markets[symbol] = market
@@ -170,11 +217,10 @@ class CcxtExchangeAdapter(ExchangeAdapter):
                 str((raw.get("info") or {}).get("wsname") or ""),
             }
             for alias in aliases:
-                if alias:
-                    lookup[alias.strip().upper()] = symbol
+                register_alias(alias, symbol)
             for alias, canonical in self.asset_aliases.items():
                 if canonical == base:
-                    lookup[f"{alias}/{quote}"] = symbol
+                    register_alias(f"{alias}/{quote}", symbol)
 
         self._markets = markets
         self._market_lookup = lookup
@@ -417,6 +463,8 @@ class CcxtExchangeAdapter(ExchangeAdapter):
                     trade_id=(
                         str(item.get("id")) if item.get("id") is not None else None
                     ),
+                    timestamp=_timestamp(item.get("timestamp")),
+                    raw=item,
                 )
             )
         if not fills and raw.get("fee"):
@@ -431,6 +479,7 @@ class CcxtExchangeAdapter(ExchangeAdapter):
                         else None
                     ),
                     fee_amount=_decimal(fee.get("cost")),
+                    raw=raw,
                 )
             )
         if not fills and raw.get("fees"):
@@ -445,6 +494,7 @@ class CcxtExchangeAdapter(ExchangeAdapter):
                             else None
                         ),
                         fee_amount=_decimal(fee.get("cost")),
+                        raw=raw,
                     )
                 )
 
@@ -576,6 +626,11 @@ class CcxtExchangeAdapter(ExchangeAdapter):
         self._private_disabled("order lookup")
         canonical = self.normalize_symbol(symbol)
         params = {"clientOrderId": str(client_order_id)}
+        direct_lookup = getattr(self.client, "fetch_order_by_client_order_id", None)
+        if callable(direct_lookup):
+            raw = direct_lookup(str(client_order_id), canonical, params)
+            if raw:
+                return self._parse_order(raw, canonical)
         methods = [
             getattr(self.client, "fetch_open_orders", None),
             getattr(self.client, "fetch_closed_orders", None),
