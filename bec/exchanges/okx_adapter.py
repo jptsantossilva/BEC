@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import os
+import re
 from decimal import Decimal
 from typing import Any
 
-from bec.exchanges.base import ExchangeCapabilities
+from bec.exchanges.base import ExchangeCapabilities, OrderRequest
 from bec.exchanges.ccxt_adapter import (
     CcxtExchangeAdapter,
     PrivateExchangeOperationDisabled,
@@ -26,11 +27,11 @@ class OkxAdapter(CcxtExchangeAdapter):
     name = "OKX"
     capabilities = ExchangeCapabilities(
         supports_backtesting=True,
-        supports_live_trading=False,
+        supports_live_trading=True,
         requires_explicit_live_flags=True,
         supports_signal_schedules=False,
-        supports_reconciliation=False,
-        uses_gated_live_execution=False,
+        supports_reconciliation=True,
+        uses_gated_live_execution=True,
     )
 
     def __init__(
@@ -44,6 +45,8 @@ class OkxAdapter(CcxtExchangeAdapter):
         api_secret: str | None = None,
         api_passphrase: str | None = None,
         private_enabled: bool = False,
+        execution_code: str = "okx",
+        sizing_buffer_pct: Decimal = Decimal("5"),
         clock=None,
     ):
         variant = str(adapter_id or "").strip().lower()
@@ -52,6 +55,11 @@ class OkxAdapter(CcxtExchangeAdapter):
         environment = str(execution_environment or "").strip().lower()
         if environment not in {"production", "demo"}:
             raise ValueError("OKX execution environment must be production or demo")
+        code = str(execution_code or "okx").strip().lower()
+        if code not in {"okx", "okx_demo"}:
+            raise ValueError("OKX execution code must be okx or okx_demo")
+        if code == "okx_demo" and environment != "demo":
+            raise ValueError("OKX demo execution code requires the demo environment")
 
         # A public adapter must remain credential-free even when process
         # variables exist.  An injected client is also a strict test boundary.
@@ -95,12 +103,12 @@ class OkxAdapter(CcxtExchangeAdapter):
             "api_secret": api_secret,
             "api_password": api_passphrase,
             "private_enabled": private_access_ready,
-            "sizing_buffer_pct": Decimal("1"),
+            "sizing_buffer_pct": sizing_buffer_pct,
         }
         if clock is not None:
             kwargs["clock"] = clock
         super().__init__(variant, **kwargs)
-        self.code = "okx"
+        self.code = code
         self.adapter_id = variant
         if private_access_ready and environment == "demo":
             self._enable_demo_sandbox()
@@ -114,22 +122,139 @@ class OkxAdapter(CcxtExchangeAdapter):
             )
         set_sandbox_mode(True)
 
-    def _orders_disabled(self, operation: str) -> None:
-        raise PrivateExchangeOperationDisabled(
-            f"OKX {operation} is unavailable until the dedicated execution PR"
+    def _require_demo_execution(self, operation: str) -> None:
+        if self.code != "okx_demo" or self.execution_environment != "demo":
+            raise PrivateExchangeOperationDisabled(
+                f"OKX {operation} is unavailable outside the mandatory demo identity"
+            )
+        self._private_disabled(operation)
+
+    def validate_client_order_id(self, client_order_id: str) -> str:
+        """Apply OKX ``clOrdId``'s 32-character alphanumeric constraint."""
+        value = str(client_order_id or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9]{1,32}", value):
+            raise ValueError(
+                "OKX client order ID must be 1-32 ASCII letters or digits"
+            )
+        return value
+
+    @staticmethod
+    def _okx_order_params(client_order_id: str | None = None) -> dict[str, str]:
+        params = {"tdMode": "cash"}
+        if client_order_id:
+            params["clOrdId"] = str(client_order_id)
+        return params
+
+    def _parse_order(self, raw, canonical: str):
+        """Accept OKX's native client id when CCXT has not normalized it yet."""
+        normalized = dict(raw)
+        info = normalized.get("info") or {}
+        if not normalized.get("clientOrderId"):
+            normalized["clientOrderId"] = (
+                normalized.get("clOrdId") or info.get("clOrdId") or None
+            )
+        return super()._parse_order(normalized, canonical)
+
+    def validate_order(self, request: OrderRequest):
+        validation = super().validate_order(request)
+        market = self._market(request.symbol)
+        if market.contract or not market.spot or market.market_type != "spot":
+            return type(validation)(
+                False,
+                (*validation.errors, "OKX demo execution requires an active spot cash market"),
+                validation.normalized_amount,
+                validation.normalized_price,
+                validation.estimated_cost,
+            )
+        return validation
+
+    def create_market_buy(
+        self,
+        symbol: str,
+        *,
+        amount: Decimal | None = None,
+        quote_amount: Decimal | None = None,
+        client_order_id: str | None = None,
+    ):
+        self._require_demo_execution("market buys")
+        if amount is not None or quote_amount is None:
+            raise ValueError("OKX market buys require an explicit quote_amount only")
+        canonical = self.normalize_symbol(symbol)
+        quote_amount = Decimal(str(quote_amount))
+        validation = self.validate_order(
+            OrderRequest(canonical, "buy", quote_amount=quote_amount)
         )
+        if not validation.valid:
+            raise ValueError("; ".join(validation.errors))
+        create_with_cost = getattr(self.client, "create_market_buy_order_with_cost", None)
+        if not callable(create_with_cost):
+            raise PrivateExchangeOperationDisabled(
+                "OKX demo client does not support quote-cost market buys"
+            )
+        raw = create_with_cost(
+            canonical,
+            float(quote_amount),
+            self._okx_order_params(client_order_id),
+        )
+        return self._parse_order(raw, canonical)
 
-    def create_market_buy(self, *args, **kwargs):
-        self._orders_disabled("market buys")
+    def create_market_sell(
+        self,
+        symbol: str,
+        amount: Decimal,
+        *,
+        client_order_id: str | None = None,
+    ):
+        self._require_demo_execution("market sells")
+        canonical = self.normalize_symbol(symbol)
+        amount = self.normalize_amount(canonical, Decimal(str(amount)))
+        ticker = self.fetch_ticker(canonical)
+        validation = self.validate_order(
+            OrderRequest(canonical, "sell", amount=amount, price=ticker.bid or ticker.last)
+        )
+        if not validation.valid:
+            raise ValueError("; ".join(validation.errors))
+        raw = self.client.create_order(
+            canonical,
+            "market",
+            "sell",
+            float(amount),
+            None,
+            self._okx_order_params(client_order_id),
+        )
+        return self._parse_order(raw, canonical)
 
-    def create_market_sell(self, *args, **kwargs):
-        self._orders_disabled("market sells")
+    def fetch_order(self, exchange_order_id: str, symbol: str):
+        self._require_demo_execution("order lookup")
+        canonical = self.normalize_symbol(symbol)
+        raw = self.client.fetch_order(
+            str(exchange_order_id), canonical, self._okx_order_params()
+        )
+        return self._parse_order(raw, canonical)
 
-    def fetch_order(self, *args, **kwargs):
-        self._orders_disabled("order queries")
+    def fetch_order_by_client_id(self, client_order_id: str, symbol: str):
+        self._require_demo_execution("order lookup")
+        canonical = self.normalize_symbol(symbol)
+        client_order_id = self.validate_client_order_id(client_order_id)
+        params = self._okx_order_params(client_order_id)
+        direct_lookup = getattr(self.client, "fetch_order_by_client_order_id", None)
+        if callable(direct_lookup):
+            raw = direct_lookup(client_order_id, canonical, params)
+            if raw:
+                return self._parse_order(raw, canonical)
+        for method_name in ("fetch_open_orders", "fetch_closed_orders", "fetch_orders"):
+            method = getattr(self.client, method_name, None)
+            if not callable(method):
+                continue
+            for raw in method(canonical, params=params) or ():
+                if str(raw.get("clientOrderId") or raw.get("clOrdId") or "") == client_order_id:
+                    return self._parse_order(raw, canonical)
+        return None
 
-    def fetch_order_by_client_id(self, *args, **kwargs):
-        self._orders_disabled("client-order queries")
-
-    def cancel_order(self, *args, **kwargs):
-        self._orders_disabled("order cancellation")
+    def cancel_order(self, exchange_order_id: str, symbol: str):
+        self._require_demo_execution("order cancellation")
+        canonical = self.normalize_symbol(symbol)
+        raw = self.client.cancel_order(
+            str(exchange_order_id), canonical, self._okx_order_params()
+        )
+        return self._parse_order(raw, canonical)

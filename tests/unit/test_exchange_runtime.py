@@ -13,6 +13,7 @@ from bec.db.exchange_schema import apply_exchange_aware_schema
 from bec.db.live_execution_schema import apply_live_execution_schema
 from bec.db.order_fills_schema import apply_durable_order_fills_schema
 from bec.db.okx_configuration_schema import apply_okx_configuration_schema
+from bec.db.okx_demo_execution_schema import apply_okx_demo_execution_schema
 
 
 def _runtime_database(tmp_path):
@@ -55,6 +56,7 @@ def _runtime_database(tmp_path):
     apply_live_execution_schema(connection)
     apply_durable_order_fills_schema(connection)
     apply_okx_configuration_schema(connection)
+    apply_okx_demo_execution_schema(connection)
     connection.execute("UPDATE Exchanges SET Enabled=1 WHERE Code IN ('binance', 'kraken')")
     for name in database.EXCHANGE_DEPENDENT_JOBS:
         connection.execute(
@@ -793,6 +795,109 @@ def _kraken_order_result(
         timestamp=datetime(2026, 7, 5, tzinfo=timezone.utc),
         raw={"id": exchange_order_id, "status": status.value},
     )
+
+
+def test_okx_demo_validation_record_requires_settled_round_trip(tmp_path, monkeypatch):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        connection.execute("UPDATE Exchanges SET Enabled=1 WHERE Id=4")
+        connection.commit()
+        database.set_active_exchange(4)
+        monkeypatch.setattr(
+            database,
+            "_exchange_symbol_metadata",
+            lambda symbol: (4, "BTC/USDC", "BTC-USDC", "BTC", "USDC"),
+        )
+        monkeypatch.setattr(service, "validate_client_order_id", lambda value: value)
+        for side, client_id, exchange_order_id in (
+            ("BUY", "BECDEMO1", "OKX-BUY-1"),
+            ("SELL", "BECDEMO2", "OKX-SELL-1"),
+        ):
+            intent = database.create_order_intent(
+                side=side,
+                symbol="BTC/USDC",
+                bot="1h",
+                requested_quote_qty=10 if side == "BUY" else None,
+                requested_qty=0.1 if side == "SELL" else None,
+                client_order_id=client_id,
+            )
+            database.mark_order_intent_submitting(intent["Id"])
+            database.apply_order_result(
+                intent["Id"],
+                _kraken_order_result(
+                    OrderStatus.FILLED,
+                    "0.1",
+                    exchange_order_id=exchange_order_id,
+                    side=side.lower(),
+                ),
+            )
+
+        record = database.record_okx_demo_validation(
+            {"checked": 2, "updated": 2, "unresolved": 0}
+        )
+
+        assert record["Adapter_Id"] == "myokx"
+        assert record["Tested_Symbols_JSON"] == '["BTC/USDC"]'
+        assert record["Buy_Order_Ids_JSON"] == '["OKX-BUY-1"]'
+        assert record["Sell_Order_Ids_JSON"] == '["OKX-SELL-1"]'
+    finally:
+        connection.close()
+        _restore_connection(original)
+
+
+def test_okx_demo_reconciliation_stays_scheduled_after_sides_are_disarmed(
+    tmp_path, monkeypatch
+):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        connection.execute("UPDATE Exchanges SET Enabled=1 WHERE Id=4")
+        connection.commit()
+        database.set_active_exchange(4)
+        monkeypatch.setattr(
+            database,
+            "_exchange_symbol_metadata",
+            lambda symbol: (4, "BTC/USDC", "BTC-USDC", "BTC", "USDC"),
+        )
+        monkeypatch.setattr(service, "validate_client_order_id", lambda value: value)
+        database.update_exchange_settings(
+            [{
+                "Id": 4,
+                "Enabled": True,
+                "Quote_Asset": "USDC",
+                "Taker_Fee": None,
+                "Buy_Enabled": True,
+                "Sell_Enabled": False,
+                "Sizing_Buffer_Pct": 5.0,
+            }]
+        )
+        assert database.get_job_schedule_enabled(database.RECONCILIATION_JOB) is True
+        intent = database.create_order_intent(
+            side="BUY",
+            symbol="BTC/USDC",
+            bot="1h",
+            requested_quote_qty=10,
+            client_order_id="BECDEMO1",
+        )
+        database.mark_order_intent_unknown(intent["Id"], "timeout")
+        database.update_exchange_settings(
+            [{
+                "Id": 4,
+                "Enabled": True,
+                "Quote_Asset": "USDC",
+                "Taker_Fee": None,
+                "Buy_Enabled": False,
+                "Sell_Enabled": False,
+                "Sizing_Buffer_Pct": 5.0,
+            }]
+        )
+
+        assert database.get_job_schedule_enabled(database.RECONCILIATION_JOB) is True
+        assert database.get_unsettled_order_intents(4)[0]["Intent_State"] == "reconcile_required"
+    finally:
+        connection.close()
+        _restore_connection(original)
 
 
 def test_order_intent_is_persisted_before_submission_and_never_resubmitted(

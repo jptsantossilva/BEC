@@ -88,6 +88,58 @@ def test_live_operation_requires_run_mode_and_explicit_side_flag(monkeypatch):
         live_execution._live_exchange("buy")
 
 
+def test_demo_run_mode_is_rejected_for_kraken(monkeypatch):
+    monkeypatch.setattr(
+        live_execution.service,
+        "get_adapter",
+        lambda: SimpleNamespace(
+            code="kraken",
+            name="Kraken",
+            private_enabled=True,
+            capabilities=ExchangeCapabilities(uses_gated_live_execution=True),
+        ),
+    )
+    monkeypatch.setattr(
+        live_execution.database,
+        "get_active_exchange",
+        lambda required=True: _exchange(buy_enabled=True),
+    )
+    monkeypatch.setattr(
+        live_execution.config,
+        "load_settings",
+        lambda refresh=True: _settings(run_mode="demo"),
+    )
+
+    with pytest.raises(RuntimeError, match="reserved for the active OKX Demo"):
+        live_execution._live_exchange("buy")
+
+
+def test_okx_demo_adapter_requires_the_active_demo_identity(monkeypatch):
+    monkeypatch.setattr(
+        live_execution.service,
+        "get_adapter",
+        lambda: SimpleNamespace(
+            code="okx_demo",
+            name="OKX",
+            private_enabled=True,
+            capabilities=ExchangeCapabilities(uses_gated_live_execution=True),
+        ),
+    )
+    monkeypatch.setattr(
+        live_execution.database,
+        "get_active_exchange",
+        lambda required=True: _exchange(code="kraken", buy_enabled=True),
+    )
+    monkeypatch.setattr(
+        live_execution.config,
+        "load_settings",
+        lambda refresh=True: _settings(run_mode="demo"),
+    )
+
+    with pytest.raises(RuntimeError, match="active okx_demo identity"):
+        live_execution._live_exchange("buy")
+
+
 def test_below_minimum_accumulate_policy_skips_without_creating_intent(monkeypatch):
     market = MarketInfo("BTC/USDC", "XBTUSDC", "BTC", "USDC", True)
     monkeypatch.setattr(

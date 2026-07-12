@@ -651,10 +651,11 @@ def test_buy_candidates_are_limited_to_selected_main_strategies():
     assert filtered["Symbol"].tolist() == ["BBBUSDC", "DDDUSDC"]
 
 
-def test_binance_order_functions_abort_in_test_mode(monkeypatch):
+@pytest.mark.parametrize("run_mode", ["test", "demo"])
+def test_binance_order_functions_abort_when_run_mode_disallows_binance(monkeypatch, run_mode):
     get_client_calls = []
     settings = _settings()
-    settings.run_mode = "test"
+    settings.run_mode = run_mode
 
     monkeypatch.setattr(binance.config, "load_settings", lambda: settings)
     monkeypatch.setattr(binance, "get_client", lambda: get_client_calls.append(True))

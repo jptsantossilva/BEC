@@ -107,6 +107,7 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
         "7:durable_order_fills",
         "8:okx_configuration",
         "9:backtesting_exchange_context",
+        "10:okx_demo_execution",
     ]
     assert report.unresolved_legacy_symbols == ["UNKNOWNPAIR"]
 
@@ -120,6 +121,7 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
         "7:durable_order_fills",
         "8:okx_configuration",
         "9:backtesting_exchange_context",
+        "10:okx_demo_execution",
     ]
     assert applied.unresolved_legacy_symbols == ["UNKNOWNPAIR"]
 
@@ -157,6 +159,13 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
             WHERE e.Code IN ('okx', 'okx_demo')
             """
         ).fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT Sizing_Buffer_Pct FROM Exchanges WHERE Code='okx_demo'"
+        ).fetchone() == (5.0,)
+        assert connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='OKX_Demo_Validation_Records'"
+        ).fetchone() == (1,)
         assert {row[1] for row in connection.execute("PRAGMA table_info(Exchange_Symbols)")} >= {
             "Amount_Step", "Price_Step", "Min_Amount", "Max_Amount",
             "Min_Cost", "Max_Cost", "Market_Type", "Is_Spot", "Is_Contract",
@@ -390,6 +399,7 @@ def test_kraken_metadata_migration_applies_automatically_after_version_two(tmp_p
             "durable_order_fills",
             "okx_configuration",
             "backtesting_exchange_context",
+            "okx_demo_execution",
         ]
         assert connection.execute(
             "SELECT Enabled, Is_Default FROM Exchanges WHERE Code='kraken'"
@@ -439,6 +449,7 @@ def test_kraken_defaults_migration_preserves_existing_fee(tmp_path):
             "durable_order_fills",
             "okx_configuration",
             "backtesting_exchange_context",
+            "okx_demo_execution",
         ]
         assert connection.execute(
             "SELECT Commission_Value FROM Exchange_Backtesting_Settings "

@@ -431,6 +431,7 @@ def prepare_exchange_schema_for_startup(
         from bec.db.order_fills_schema import apply_durable_order_fills_schema
         from bec.db.okx_configuration_schema import apply_okx_configuration_schema
         from bec.db.backtesting_context_schema import apply_backtesting_context_schema
+        from bec.db.okx_demo_execution_schema import apply_okx_demo_execution_schema
 
         apply_exchange_backtesting_schema(connection)
         configure_new_install_kraken_default(connection)
@@ -438,6 +439,7 @@ def prepare_exchange_schema_for_startup(
         apply_durable_order_fills_schema(connection)
         apply_okx_configuration_schema(connection)
         apply_backtesting_context_schema(connection)
+        apply_okx_demo_execution_schema(connection)
         return
     validate_exchange_aware_schema(connection)
 

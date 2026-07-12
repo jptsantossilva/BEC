@@ -224,5 +224,5 @@ def test_okx_private_adapter_keeps_all_order_operations_disabled():
         lambda: adapter.fetch_order_by_client_id("client-1", "BTC/USDC"),
         lambda: adapter.cancel_order("1", "BTC/USDC"),
     ):
-        with pytest.raises(PrivateExchangeOperationDisabled, match="dedicated execution PR"):
+        with pytest.raises(PrivateExchangeOperationDisabled, match="mandatory demo identity"):
             operation()

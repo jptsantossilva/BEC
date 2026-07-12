@@ -36,6 +36,10 @@ from bec.db.okx_configuration_schema import (
     apply_okx_configuration_schema,
     validate_okx_configuration_schema,
 )
+from bec.db.okx_demo_execution_schema import (
+    apply_okx_demo_execution_schema,
+    validate_okx_demo_execution_schema,
+)
 
 
 def _framework_baseline(connection: sqlite3.Connection) -> None:
@@ -82,6 +86,10 @@ def _okx_configuration(connection: sqlite3.Connection) -> None:
 
 def _backtesting_context(connection: sqlite3.Connection) -> None:
     apply_backtesting_context_schema(connection)
+
+
+def _okx_demo_execution(connection: sqlite3.Connection) -> None:
+    apply_okx_demo_execution_schema(connection)
 
 
 MIGRATIONS = (
@@ -155,5 +163,13 @@ MIGRATIONS = (
         apply=_backtesting_context,
         validate=validate_backtesting_context_schema,
         signature="bec-backtesting-exchange-context-v1",
+    ),
+    Migration(
+        version=10,
+        name="okx_demo_execution",
+        kind=MigrationKind.ADDITIVE,
+        apply=_okx_demo_execution,
+        validate=validate_okx_demo_execution_schema,
+        signature="bec-okx-demo-execution-v1",
     ),
 )

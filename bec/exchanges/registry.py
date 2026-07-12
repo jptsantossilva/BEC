@@ -11,7 +11,7 @@ _default_adapter: ExchangeAdapter | None = None
 
 def get_registered_exchange_codes() -> tuple[str, ...]:
     """Return adapters that the current application build can resolve."""
-    return ("binance", "kraken", "okx")
+    return ("binance", "kraken", "okx", "okx_demo")
 
 
 def get_adapter_capabilities_for_code(code: str) -> ExchangeCapabilities:
@@ -25,7 +25,7 @@ def get_adapter_capabilities_for_code(code: str) -> ExchangeCapabilities:
         from bec.exchanges.kraken_adapter import KrakenAdapter
 
         return KrakenAdapter.capabilities
-    if code == "okx":
+    if code in {"okx", "okx_demo"}:
         from bec.exchanges.okx_adapter import OkxAdapter
 
         return OkxAdapter.capabilities
@@ -47,10 +47,17 @@ def get_adapter_for_code(
         from bec.exchanges.kraken_adapter import KrakenAdapter
 
         return KrakenAdapter(sizing_buffer_pct=sizing_buffer_pct)
-    if code == "okx":
+    if code in {"okx", "okx_demo"}:
         from bec.exchanges.okx_adapter import OkxAdapter
 
-        return OkxAdapter(adapter_id=adapter_id or "myokx")
+        demo = code == "okx_demo"
+        return OkxAdapter(
+            adapter_id=adapter_id or "myokx",
+            execution_environment="demo" if demo else "production",
+            execution_code=code,
+            private_enabled=demo,
+            sizing_buffer_pct=sizing_buffer_pct,
+        )
     raise RuntimeError(f"No adapter is available for exchange: {code}")
 
 

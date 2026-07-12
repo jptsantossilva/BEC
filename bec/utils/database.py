@@ -186,7 +186,7 @@ def update_exchange_settings(rows) -> None:
             raise ValueError("Invalid partial-sell policy")
         if not math.isfinite(sizing_buffer_pct) or not 0 <= sizing_buffer_pct < 100:
             raise ValueError("Sizing buffer must be between 0 and 100 percent")
-        if code in {"okx", "okx_demo"} and (buy_enabled or sell_enabled):
+        if code == "okx" and (buy_enabled or sell_enabled):
             raise ValueError(
                 "OKX order execution is unavailable; Buy Enabled and Sell Enabled must remain off"
             )
@@ -300,14 +300,25 @@ def update_exchange_settings(rows) -> None:
             _disable_exchange_jobs(connection)
         active = connection.execute(
             """
-            SELECT Code, Buy_Enabled, Sell_Enabled
+            SELECT Id, Code, Buy_Enabled, Sell_Enabled
             FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1
             """
         ).fetchone()
         if active is not None:
-            capabilities = _adapter_capabilities_for_code(str(active[0]))
-            if capabilities.supports_reconciliation and _live_flags_satisfy_capabilities(
-                capabilities, active[1], active[2]
+            capabilities = _adapter_capabilities_for_code(str(active[1]))
+            has_unsettled = bool(
+                connection.execute(
+                    """
+                    SELECT 1 FROM Orders WHERE Exchange_Id=?
+                    AND lower(COALESCE(Order_Status, 'unknown'))
+                    IN ('pending','open','partially_filled','unknown') LIMIT 1
+                    """,
+                    (int(active[0]),),
+                ).fetchone()
+            )
+            if capabilities.supports_reconciliation and (
+                _live_flags_satisfy_capabilities(capabilities, active[2], active[3])
+                or has_unsettled
             ):
                 connection.execute(
                     "UPDATE Job_Schedules SET enabled=1 WHERE name=?",
@@ -1644,9 +1655,9 @@ def create_order_intent(
         raise ValueError("Order intent side must be BUY or SELL")
     if has_unsettled_order_intent(position_id=position_id, side=side, symbol=symbol):
         raise RuntimeError("An unsettled order intent already exists for this action")
-    client_order_id = client_order_id or (
-        f"bec-{exchange['code']}-{secrets.token_hex(12)}"
-    )
+    # 31 alphanumeric characters satisfy the strictest supported exchange
+    # client-order limit (OKX clOrdId: max 32) without exchange-specific DB code.
+    client_order_id = client_order_id or f"bec{secrets.token_hex(14)}"
     # This is the permanent idempotency key used by reconciliation. It must be
     # valid for the active adapter before the intent becomes durable.
     from bec.exchanges import service
@@ -1797,6 +1808,65 @@ def get_unsettled_order_intents(exchange_id: int | None = None) -> list[dict]:
     )
     columns = [item[0] for item in cursor.description]
     return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+
+def record_okx_demo_validation(reconciliation_result: dict) -> dict:
+    """Persist operator-confirmed demo evidence only after a clean round trip."""
+    connection = _get_conn()
+    exchange = get_active_exchange(required=True)
+    if str(exchange["code"]) != "okx_demo" or str(
+        exchange.get("execution_environment")
+    ) != "demo":
+        raise ValueError("OKX demo validation requires the active okx_demo identity")
+    blockers = get_exchange_switch_blockers(connection)
+    if blockers["open_positions"] or blockers["unsettled_orders"]:
+        raise ValueError(
+            "Close every demo position and settle every demo intent before recording validation"
+        )
+    rows = connection.execute(
+        """
+        SELECT Side, Symbol_Normalized, Exchange_Order_Id
+        FROM Orders
+        WHERE Exchange_Id=? AND Order_Status='filled'
+          AND COALESCE(Exchange_Order_Id, '') <> ''
+        ORDER BY Id
+        """,
+        (int(exchange["id"]),),
+    ).fetchall()
+    buy_ids = [str(order_id) for side, _, order_id in rows if str(side) == "BUY"]
+    sell_ids = [str(order_id) for side, _, order_id in rows if str(side) == "SELL"]
+    if not buy_ids or not sell_ids:
+        raise ValueError("OKX demo validation requires at least one filled buy and sell")
+    symbols = sorted({str(symbol) for _, symbol, _ in rows if symbol})
+    with connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO OKX_Demo_Validation_Records (
+                Exchange_Id, Adapter_Id, Tested_Symbols_JSON, Buy_Order_Ids_JSON,
+                Sell_Order_Ids_JSON, Reconciliation_Result_JSON
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                int(exchange["id"]),
+                str(exchange.get("adapter_id") or ""),
+                json.dumps(symbols),
+                json.dumps(buy_ids),
+                json.dumps(sell_ids),
+                json.dumps(dict(reconciliation_result), sort_keys=True),
+            ),
+        )
+    return get_okx_demo_validation_record(int(cursor.lastrowid))
+
+
+def get_okx_demo_validation_record(record_id: int) -> dict:
+    connection = _get_conn()
+    cursor = connection.execute(
+        "SELECT * FROM OKX_Demo_Validation_Records WHERE Id=?", (int(record_id),)
+    )
+    row = cursor.fetchone()
+    if row is None:
+        raise ValueError(f"Unknown OKX demo validation record: {record_id}")
+    return dict(zip((item[0] for item in cursor.description), row))
 
 
 def _fill_key(fill, index: int) -> str:

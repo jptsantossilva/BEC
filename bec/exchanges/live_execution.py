@@ -16,7 +16,17 @@ def _live_exchange(side: str) -> dict:
     if not adapter.capabilities.uses_gated_live_execution:
         raise RuntimeError(f"The gated live workflow is unavailable for {name}")
     settings = config.load_settings(refresh=True)
-    if settings.run_mode == "test":
+    adapter_code = str(getattr(adapter, "code", exchange.get("code", "")))
+    exchange_code = str(exchange.get("code", ""))
+    if adapter_code == "okx":
+        raise RuntimeError("OKX production execution is unavailable until the production PR")
+    if adapter_code == "okx_demo" and exchange_code != "okx_demo":
+        raise RuntimeError("OKX demo execution requires the active okx_demo identity")
+    if adapter_code == "okx_demo" and settings.run_mode != "demo":
+        raise RuntimeError("OKX demo execution requires run_mode=demo")
+    if adapter_code != "okx_demo" and settings.run_mode == "demo":
+        raise RuntimeError("run_mode=demo is reserved for the active OKX Demo identity")
+    if adapter_code != "okx_demo" and settings.run_mode == "test":
         raise RuntimeError(f"{name} live execution is disabled while run_mode=test")
     flag = "buy_enabled" if str(side).lower() == "buy" else "sell_enabled"
     if not bool(exchange[flag]):
@@ -137,6 +147,9 @@ def create_buy_order(
         quote_amount = Decimal(str(balance.free)) * Decimal(
             str(config.load_settings().tradable_balance_ratio)
         )
+        if str(exchange["code"]) == "okx_demo":
+            reserve = Decimal(str(exchange.get("sizing_buffer_pct") or 0))
+            quote_amount *= (Decimal("100") - reserve) / Decimal("100")
     else:
         quote_amount = _stake_amount(market.quote_asset)
     validation = service.validate_order(

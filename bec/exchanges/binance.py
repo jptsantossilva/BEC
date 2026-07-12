@@ -187,8 +187,8 @@ def create_buy_order(
     settings = config.load_settings()
     
     run_mode = settings.run_mode
-    if run_mode == "test":
-        print("Exiting the function because run_mode is 'test'.")
+    if run_mode in {"test", "demo"}:
+        print("Exiting the function because run_mode does not permit Binance orders.")
         return
     
     telegram_token = telegram.get_telegram_token()
@@ -391,8 +391,8 @@ def create_sell_order(
     settings = config.load_settings()
 
     run_mode = settings.run_mode
-    if run_mode == "test":
-        print("Exiting the function because run_mode is 'test'.")
+    if run_mode in {"test", "demo"}:
+        print("Exiting the function because run_mode does not permit Binance orders.")
         return
     
     telegram_token = telegram.get_telegram_token()

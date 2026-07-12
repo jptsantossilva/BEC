@@ -1097,7 +1097,8 @@ def settings():
         )
         st.info(
             "OKX spot public data and exchange-scoped backtesting are available. "
-            "Order execution and reconciliation remain unavailable."
+            "Only the separate OKX Demo identity can submit guarded demo orders; "
+            "production execution remains unavailable."
         )
         st.caption(
             "OKX defaults to the EEA `myokx` adapter variant. It may be changed to "
@@ -1274,6 +1275,52 @@ def settings():
             f"Mode: {active_exchange['trading_mode']}"
         )
         capabilities = get_adapter_for_code(active_exchange["code"]).capabilities
+        if active_exchange["code"] == "okx_demo":
+            st.markdown("### OKX Demo Trading")
+            st.warning(
+                "This identity can use OKX Demo Trading only. Production OKX orders remain "
+                "unavailable, and both sides must be enabled explicitly."
+            )
+            demo_mode_key = "okx_demo_run_mode"
+            if demo_mode_key not in st.session_state:
+                st.session_state[demo_mode_key] = config.read_setting("run_mode") == "demo"
+            demo_mode = st.toggle(
+                "Demo run mode",
+                key=demo_mode_key,
+                help="Explicitly permits submissions to the active OKX Demo identity only.",
+            )
+            desired_mode = "demo" if demo_mode else "test"
+            if config.read_setting("run_mode") != desired_mode:
+                config.update_setting("run_mode", desired_mode)
+            if demo_mode:
+                st.error("Demo run mode is enabled. Orders can only reach OKX Demo Trading.")
+            else:
+                st.warning("Demo execution is disabled while run_mode=test.")
+            _render_trade_schedule_toggles(
+                exchange_code="okx_demo",
+                disabled=not (
+                    active_exchange["buy_enabled"] or active_exchange["sell_enabled"]
+                ),
+            )
+            if st.button("Reconcile OKX Demo Orders", icon=":material/sync:"):
+                from bec.exchanges.live_execution import reconcile_unsettled_orders
+
+                stats = reconcile_unsettled_orders()
+                st.info(f"Demo reconciliation: {stats}")
+            if st.button(
+                "Record Completed OKX Demo Validation",
+                icon=":material/verified:",
+            ):
+                try:
+                    from bec.exchanges.live_execution import reconcile_unsettled_orders
+
+                    record = database.record_okx_demo_validation(
+                        reconcile_unsettled_orders()
+                    )
+                    st.success(f"Demo validation record {record['Id']} stored.")
+                except ValueError as exc:
+                    st.error(str(exc))
+            return
         if capabilities.uses_gated_live_execution:
             exchange_name = str(active_exchange["name"])
             if active_exchange["buy_enabled"] or active_exchange["sell_enabled"]:
