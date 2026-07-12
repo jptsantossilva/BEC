@@ -15,7 +15,7 @@ class OkxAdapter(CcxtExchangeAdapter):
     code = "okx"
     name = "OKX"
     capabilities = ExchangeCapabilities(
-        supports_backtesting=False,
+        supports_backtesting=True,
         supports_live_trading=False,
         requires_explicit_live_flags=True,
         supports_signal_schedules=False,

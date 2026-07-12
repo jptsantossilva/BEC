@@ -14,6 +14,10 @@ from bec.db.backtesting_schema import (
     validate_exchange_backtesting_schema,
     validate_kraken_backtesting_defaults,
 )
+from bec.db.backtesting_context_schema import (
+    apply_backtesting_context_schema,
+    validate_backtesting_context_schema,
+)
 from bec.db.exchange_schema import (
     apply_exchange_aware_schema,
     register_kraken_public_exchange,
@@ -74,6 +78,10 @@ def _durable_order_fills(connection: sqlite3.Connection) -> None:
 
 def _okx_configuration(connection: sqlite3.Connection) -> None:
     apply_okx_configuration_schema(connection)
+
+
+def _backtesting_context(connection: sqlite3.Connection) -> None:
+    apply_backtesting_context_schema(connection)
 
 
 MIGRATIONS = (
@@ -139,5 +147,13 @@ MIGRATIONS = (
         apply=_okx_configuration,
         validate=validate_okx_configuration_schema,
         signature="bec-okx-configuration-v1",
+    ),
+    Migration(
+        version=9,
+        name="backtesting_exchange_context",
+        kind=MigrationKind.ADDITIVE,
+        apply=_backtesting_context,
+        validate=validate_backtesting_context_schema,
+        signature="bec-backtesting-exchange-context-v1",
     ),
 )

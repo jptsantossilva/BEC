@@ -79,6 +79,9 @@ def _backtesting_job():
         "id": 42,
         "exchange_id": 2,
         "exchange_code": "kraken",
+        "exchange_adapter_id": "kraken",
+        "exchange_quote_asset": "USDC",
+        "exchange_execution_environment": "production",
         "strategy_id": "ema_cross",
         "symbol": "btcusdc",
         "timeframe": "4h",
@@ -93,6 +96,9 @@ def test_backtesting_subprocess_command_carries_exchange_fee_and_fingerprint():
 
     assert command[command.index("--exchange-id") + 1] == "2"
     assert command[command.index("--exchange-code") + 1] == "kraken"
+    assert command[command.index("--exchange-adapter-id") + 1] == "kraken"
+    assert command[command.index("--exchange-quote-asset") + 1] == "USDC"
+    assert command[command.index("--exchange-execution-environment") + 1] == "production"
     assert command[command.index("--commission") + 1] == "0.0026"
     assert command[command.index("--work-fingerprint") + 1] == "kraken-work"
     assert command[-1] == "--optimize"
@@ -103,6 +109,9 @@ def test_monte_carlo_subprocess_command_carries_exchange_identity():
         {
             "exchange_id": 2,
             "exchange_code": "kraken",
+            "exchange_adapter_id": "kraken",
+            "exchange_quote_asset": "USDC",
+            "exchange_execution_environment": "production",
             "symbol": "BTC/EUR",
             "timeframe": "1h",
             "strategy_id": "ema_cross",
@@ -114,6 +123,7 @@ def test_monte_carlo_subprocess_command_carries_exchange_identity():
 
     assert command[command.index("--exchange-id") + 1] == "2"
     assert command[command.index("--exchange-code") + 1] == "kraken"
+    assert command[command.index("--exchange-adapter-id") + 1] == "kraken"
 
 
 def test_sync_backtesting_result_updates_existing_position(monkeypatch):

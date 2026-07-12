@@ -8,6 +8,7 @@ import bec.utils.database as database
 from bec.exchanges import service
 from bec.exchanges.base import MarketInfo, OrderFill, OrderResult, OrderStatus
 from bec.db.backtesting_schema import apply_exchange_backtesting_schema
+from bec.db.backtesting_context_schema import apply_backtesting_context_schema
 from bec.db.exchange_schema import apply_exchange_aware_schema
 from bec.db.live_execution_schema import apply_live_execution_schema
 from bec.db.order_fills_schema import apply_durable_order_fills_schema
@@ -50,6 +51,7 @@ def _runtime_database(tmp_path):
     )
     connection.execute("INSERT INTO Strategies (Id, Name) VALUES ('ema', 'EMA')")
     apply_exchange_backtesting_schema(connection)
+    apply_backtesting_context_schema(connection)
     apply_live_execution_schema(connection)
     apply_durable_order_fills_schema(connection)
     apply_okx_configuration_schema(connection)
@@ -615,6 +617,7 @@ def test_okx_identities_remain_configuration_only_and_lock_variant_after_activit
 
 def test_okx_public_catalog_validates_quote_enables_public_selection_and_marks_missing(
     tmp_path,
+    monkeypatch,
 ):
     connection = _runtime_database(tmp_path)
     original = _use_connection(connection)
@@ -654,8 +657,79 @@ def test_okx_public_catalog_validates_quote_enables_public_selection_and_marks_m
         assert connection.execute(
             "SELECT COUNT(*) FROM Exchange_Backtesting_Settings WHERE Exchange_Id=3"
         ).fetchone()[0] == 0
-        with pytest.raises(RuntimeError, match="Backtesting execution is unavailable"):
+        with pytest.raises(RuntimeError, match="explicit backtesting fee"):
             database.require_backtesting_execution_available()
+        database.set_exchange_backtesting_fee(0.001, exchange_id=3)
+        assert database.require_backtesting_execution_available()["code"] == "okx"
+        monkeypatch.setattr(
+            database,
+            "_exchange_symbol_metadata",
+            lambda symbol: (3, "BTC/USDC", "BTC-USDC", "BTC", "USDC"),
+        )
+        database.add_backtesting_results(
+            timeframe="1h",
+            symbol="BTC/USDC",
+            return_perc=1,
+            buy_hold_return_perc=1,
+            backtest_start_date="2026-01-01",
+            backtest_end_date="2026-01-02",
+            max_drawdown_perc=1,
+            trades=1,
+            win_rate_perc=100,
+            best_trade_perc=1,
+            worst_trade_perc=1,
+            avg_trade_perc=1,
+            max_trade_duration="1h",
+            avg_trade_duration="1h",
+            profit_factor=1,
+            expectancy_perc=1,
+            sqn=1,
+            kelly_criterion=1,
+            strategy_Id="ema",
+            backtest_work_fingerprint="okx-work",
+            backtest_commission_value=0.001,
+        )
+        assert connection.execute(
+            """
+            SELECT Backtest_Adapter_Id, Backtest_Quote_Asset,
+                   Backtest_Execution_Environment
+            FROM Backtesting_Results WHERE Exchange_Id=3
+            """
+        ).fetchone() == ("myokx", "USDC", "production")
+        queued = database.enqueue_backtesting_jobs(
+            [{"strategy_id": "ema", "symbol": "BTC/USDC", "timeframe": "1h"}]
+        )["queued"][0]
+        assert queued["exchange_adapter_id"] == "myokx"
+        assert queued["exchange_quote_asset"] == "USDC"
+        claimed = database.claim_next_backtesting_job()
+        assert claimed["exchange_code"] == "okx"
+        assert claimed["exchange_adapter_id"] == "myokx"
+        assert claimed["exchange_quote_asset"] == "USDC"
+        monkeypatch.setattr(
+            database,
+            "_exchange_symbol_metadata",
+            lambda symbol: (_ for _ in ()).throw(ValueError("Unknown OKX spot symbol")),
+        )
+        unavailable = database.enqueue_backtesting_jobs(
+            [{"strategy_id": "ema", "symbol": "NOT/USDC", "timeframe": "1h"}]
+        )
+        assert unavailable["queued"] == []
+        assert unavailable["skipped"][0]["reason"] == "unavailable_pair"
+        original_fingerprint = queued["work_fingerprint"]
+        connection.execute("UPDATE Exchanges SET Adapter_Id='okx' WHERE Id=3")
+        connection.commit()
+        assert database.build_backtesting_work_fingerprint("ema", False) != original_fingerprint
+        assert not database.backtesting_result_matches_context(
+            {
+                "Backtest_Work_Fingerprint": original_fingerprint,
+                "Backtest_Commission_Value": 0.001,
+                "Backtest_Adapter_Id": "myokx",
+                "Backtest_Quote_Asset": "USDC",
+                "Backtest_Execution_Environment": "production",
+            },
+            work_fingerprint=original_fingerprint,
+            commission_value=0.001,
+        )
         enabled_jobs = {
             row[0]
             for row in connection.execute("SELECT name FROM Job_Schedules WHERE enabled=1")

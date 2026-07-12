@@ -824,7 +824,7 @@ def build_backtesting_work_fingerprint(
 
 
 def backtesting_result_matches_context(
-    row, *, work_fingerprint: str, commission_value: float
+    row, *, work_fingerprint: str, commission_value: float, exchange_context=None
 ) -> bool:
     if str(row.get("Backtest_Work_Fingerprint", "") or "") != str(
         work_fingerprint or ""
@@ -834,7 +834,20 @@ def backtesting_result_matches_context(
         stored_commission = float(row.get("Backtest_Commission_Value"))
     except (TypeError, ValueError):
         return False
-    return abs(stored_commission - float(commission_value)) <= 1e-12
+    if abs(stored_commission - float(commission_value)) > 1e-12:
+        return False
+    exchange_context = exchange_context or get_active_exchange(required=False)
+    if not exchange_context:
+        return True
+    for result_field, exchange_field in (
+        ("Backtest_Adapter_Id", "adapter_id"),
+        ("Backtest_Quote_Asset", "quote_asset"),
+        ("Backtest_Execution_Environment", "execution_environment"),
+    ):
+        stored = str(row.get(result_field, "") or "").strip()
+        if stored and stored != str(exchange_context.get(exchange_field, "") or ""):
+            return False
+    return True
 
 
 def build_strategy_params_json(strategy_id: str, fast_value=0, slow_value=0) -> str:
@@ -3936,9 +3949,13 @@ sql_get_all_backtesting_results = f"""
            br.Backtest_Config_JSON,
            br.Backtest_Commission_Value,
            br.Backtest_Work_Fingerprint,
+           br.Backtest_Adapter_Id,
+           br.Backtest_Quote_Asset,
+           br.Backtest_Execution_Environment,
            br.Strategy_Id,
            ex.Code AS Exchange_Code,
            ex.Name AS Exchange_Name,
+           ex.Execution_Environment AS Exchange_Environment,
            st.Name as Strategy_Name
     FROM Backtesting_Results AS br
     JOIN Strategies AS st ON br.Strategy_Id = st.Id
@@ -4006,9 +4023,9 @@ sql_add_backtesting_results = """
         Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset, Quote_Asset,
         Symbol, Time_Frame, Return_Perc, BuyHold_Return_Perc, Backtest_Start_Date, Backtest_End_Date,
         Max_Drawdown_Perc, Trades, Win_Rate_Perc, Best_Trade_Perc, Worst_Trade_Perc, Avg_Trade_Perc, Max_Trade_Duration, Avg_Trade_Duration,
-        Profit_Factor, Expectancy_Perc, SQN, Kelly_Criterion, Trading_Approved, Trading_Rejection_Reasons, Quality_Score, Quality_Grade, Backtest_Config_JSON, Backtest_Work_Fingerprint, Backtest_Work_Candle, Backtest_Work_Executed_At, Backtest_Commission_Value, Strategy_Id
+        Profit_Factor, Expectancy_Perc, SQN, Kelly_Criterion, Trading_Approved, Trading_Rejection_Reasons, Quality_Score, Quality_Grade, Backtest_Config_JSON, Backtest_Work_Fingerprint, Backtest_Work_Candle, Backtest_Work_Executed_At, Backtest_Commission_Value, Backtest_Adapter_Id, Backtest_Quote_Asset, Backtest_Execution_Environment, Strategy_Id
         ) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 """
 
 
@@ -4041,8 +4058,12 @@ def add_backtesting_results(
     backtest_work_candle: str = "",
     backtest_work_executed_at: str = "",
     backtest_commission_value: float | None = None,
+    backtest_adapter_id: str = "",
+    backtest_quote_asset: str = "",
+    backtest_execution_environment: str = "",
 ):
     connection = _get_conn()
+    exchange = get_active_exchange(required=True)
     exchange_fields = _exchange_symbol_metadata(symbol)
     with connection:
         connection.execute(
@@ -4083,6 +4104,13 @@ def add_backtesting_results(
                     float(backtest_commission_value)
                     if backtest_commission_value is not None
                     else None
+                ),
+                str(backtest_adapter_id or exchange.get("adapter_id") or ""),
+                str(backtest_quote_asset or exchange.get("quote_asset") or ""),
+                str(
+                    backtest_execution_environment
+                    or exchange.get("execution_environment")
+                    or ""
                 ),
                 str(strategy_Id),
             ),
@@ -5545,6 +5573,10 @@ sql_create_backtesting_jobs_table = """
         error_message TEXT
         ,Backtest_Commission_Value REAL
         ,Backtest_Work_Fingerprint TEXT
+        ,Exchange_Code TEXT
+        ,Exchange_Adapter_Id TEXT
+        ,Exchange_Quote_Asset TEXT
+        ,Exchange_Execution_Environment TEXT
     );
 """
 
@@ -5565,6 +5597,10 @@ sql_create_monte_carlo_jobs_table = """
         return_code INTEGER,
         log_path TEXT,
         error_message TEXT
+        ,Exchange_Code TEXT
+        ,Exchange_Adapter_Id TEXT
+        ,Exchange_Quote_Asset TEXT
+        ,Exchange_Execution_Environment TEXT
     );
 """
 
@@ -6639,7 +6675,19 @@ def enqueue_backtesting_jobs(jobs, batch_id: str = ""):
                     strategy_row=strategy_row,
                 )
             )
-            exchange_fields = _exchange_symbol_metadata(symbol)
+            try:
+                exchange_fields = _exchange_symbol_metadata(symbol)
+            except ValueError as exc:
+                skipped.append(
+                    {
+                        "strategy_id": strategy_id,
+                        "symbol": symbol,
+                        "timeframe": timeframe,
+                        "reason": "unavailable_pair",
+                        "message": str(exc),
+                    }
+                )
+                continue
             cursor = connection.execute(
                 """
                 SELECT id
@@ -6670,8 +6718,9 @@ def enqueue_backtesting_jobs(jobs, batch_id: str = ""):
                 INSERT INTO Backtesting_Jobs (
                     Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset, Quote_Asset,
                     batch_id, strategy_id, symbol, timeframe, optimize, status, created_at,
-                    Backtest_Commission_Value, Backtest_Work_Fingerprint
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)
+                    Backtest_Commission_Value, Backtest_Work_Fingerprint, Exchange_Code,
+                    Exchange_Adapter_Id, Exchange_Quote_Asset, Exchange_Execution_Environment
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     *exchange_fields,
@@ -6683,6 +6732,10 @@ def enqueue_backtesting_jobs(jobs, batch_id: str = ""):
                     created_at,
                     commission_value,
                     work_fingerprint,
+                    str(exchange["code"]),
+                    str(exchange.get("adapter_id") or ""),
+                    str(exchange.get("quote_asset") or ""),
+                    str(exchange.get("execution_environment") or ""),
                 ),
             )
             queued.append(
@@ -6693,6 +6746,11 @@ def enqueue_backtesting_jobs(jobs, batch_id: str = ""):
                     "timeframe": timeframe,
                     "exchange_id": int(exchange["id"]),
                     "exchange_code": str(exchange["code"]),
+                    "exchange_adapter_id": str(exchange.get("adapter_id") or ""),
+                    "exchange_quote_asset": str(exchange.get("quote_asset") or ""),
+                    "exchange_execution_environment": str(
+                        exchange.get("execution_environment") or ""
+                    ),
                     "commission_value": commission_value,
                     "work_fingerprint": work_fingerprint,
                 }
@@ -6709,7 +6767,10 @@ def get_backtesting_jobs(limit: int = 50):
         SELECT
             id,
             Exchange_Id AS exchange_id,
-            (SELECT Code FROM Exchanges WHERE Id=Backtesting_Jobs.Exchange_Id) AS exchange_code,
+            Exchange_Code AS exchange_code,
+            Exchange_Adapter_Id AS exchange_adapter_id,
+            Exchange_Quote_Asset AS exchange_quote_asset,
+            Exchange_Execution_Environment AS exchange_execution_environment,
             batch_id,
             strategy_id,
             symbol,
@@ -6779,8 +6840,8 @@ def claim_next_backtesting_job():
     with connection:
         connection.execute(sql_create_backtesting_jobs_table)
         cursor = connection.execute("""
-            SELECT id, Exchange_Id,
-                   (SELECT Code FROM Exchanges WHERE Id=Backtesting_Jobs.Exchange_Id),
+            SELECT id, Exchange_Id, Exchange_Code, Exchange_Adapter_Id,
+                   Exchange_Quote_Asset, Exchange_Execution_Environment,
                    batch_id, strategy_id, symbol, timeframe, optimize,
                    Backtest_Commission_Value, Backtest_Work_Fingerprint
             FROM Backtesting_Jobs
@@ -6809,13 +6870,16 @@ def claim_next_backtesting_job():
         "id": row[0],
         "exchange_id": int(row[1]),
         "exchange_code": str(row[2]),
-        "batch_id": row[3],
-        "strategy_id": row[4],
-        "symbol": row[5],
-        "timeframe": row[6],
-        "optimize": bool(row[7]),
-        "commission_value": float(row[8]),
-        "work_fingerprint": str(row[9]),
+        "exchange_adapter_id": str(row[3] or ""),
+        "exchange_quote_asset": str(row[4] or ""),
+        "exchange_execution_environment": str(row[5] or ""),
+        "batch_id": row[6],
+        "strategy_id": row[7],
+        "symbol": row[8],
+        "timeframe": row[9],
+        "optimize": bool(row[10]),
+        "commission_value": float(row[11]),
+        "work_fingerprint": str(row[12]),
     }
 
 
@@ -6890,7 +6954,20 @@ def enqueue_monte_carlo_jobs(jobs, batch_id: str = ""):
             method = str(job["method"]).strip()
             scenarios = int(job["scenarios"])
             seed = int(job.get("seed", 42))
-            exchange_fields = _exchange_symbol_metadata(symbol)
+            try:
+                exchange_fields = _exchange_symbol_metadata(symbol)
+            except ValueError as exc:
+                skipped.append(
+                    {
+                        "strategy_id": strategy_id,
+                        "symbol": symbol,
+                        "timeframe": timeframe,
+                        "method": method,
+                        "reason": "unavailable_pair",
+                        "message": str(exc),
+                    }
+                )
+                continue
             cursor = connection.execute(
                 """
                 SELECT id
@@ -6922,8 +6999,10 @@ def enqueue_monte_carlo_jobs(jobs, batch_id: str = ""):
                 """
                 INSERT INTO Monte_Carlo_Jobs (
                     Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset, Quote_Asset,
-                    batch_id, strategy_id, symbol, timeframe, method, scenarios, seed, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)
+                    batch_id, strategy_id, symbol, timeframe, method, scenarios, seed, status, created_at,
+                    Exchange_Code, Exchange_Adapter_Id, Exchange_Quote_Asset,
+                    Exchange_Execution_Environment
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)
                 """,
                 (
                     *exchange_fields,
@@ -6935,6 +7014,10 @@ def enqueue_monte_carlo_jobs(jobs, batch_id: str = ""):
                     scenarios,
                     seed,
                     created_at,
+                    str(exchange["code"]),
+                    str(exchange.get("adapter_id") or ""),
+                    str(exchange.get("quote_asset") or ""),
+                    str(exchange.get("execution_environment") or ""),
                 ),
             )
             queued.append(
@@ -6946,6 +7029,11 @@ def enqueue_monte_carlo_jobs(jobs, batch_id: str = ""):
                     "method": method,
                     "exchange_id": int(exchange["id"]),
                     "exchange_code": str(exchange["code"]),
+                    "exchange_adapter_id": str(exchange.get("adapter_id") or ""),
+                    "exchange_quote_asset": str(exchange.get("quote_asset") or ""),
+                    "exchange_execution_environment": str(
+                        exchange.get("execution_environment") or ""
+                    ),
                 }
             )
 
@@ -6999,8 +7087,8 @@ def claim_next_monte_carlo_job():
     with connection:
         connection.execute(sql_create_monte_carlo_jobs_table)
         cursor = connection.execute("""
-            SELECT id, Exchange_Id,
-                   (SELECT Code FROM Exchanges WHERE Id=Monte_Carlo_Jobs.Exchange_Id),
+            SELECT id, Exchange_Id, Exchange_Code, Exchange_Adapter_Id,
+                   Exchange_Quote_Asset, Exchange_Execution_Environment,
                    batch_id, strategy_id, symbol, timeframe, method, scenarios, seed
             FROM Monte_Carlo_Jobs
             WHERE status='queued' AND Exchange_Id=(SELECT Id FROM Exchanges WHERE Enabled=1 AND Is_Default=1 LIMIT 1)
@@ -7027,13 +7115,16 @@ def claim_next_monte_carlo_job():
         "id": row[0],
         "exchange_id": int(row[1]),
         "exchange_code": str(row[2]),
-        "batch_id": row[3],
-        "strategy_id": row[4],
-        "symbol": row[5],
-        "timeframe": row[6],
-        "method": row[7],
-        "scenarios": int(row[8]),
-        "seed": int(row[9]),
+        "exchange_adapter_id": str(row[3] or ""),
+        "exchange_quote_asset": str(row[4] or ""),
+        "exchange_execution_environment": str(row[5] or ""),
+        "batch_id": row[6],
+        "strategy_id": row[7],
+        "symbol": row[8],
+        "timeframe": row[9],
+        "method": row[10],
+        "scenarios": int(row[11]),
+        "seed": int(row[12]),
     }
 
 

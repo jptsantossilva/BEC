@@ -1212,12 +1212,27 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--exchange-id", type=int)
     parser.add_argument("--exchange-code")
+    parser.add_argument("--exchange-adapter-id")
+    parser.add_argument("--exchange-quote-asset")
+    parser.add_argument("--exchange-execution-environment")
     args = parser.parse_args()
     exchange = database.require_backtesting_execution_available()
     if args.exchange_id is not None and int(args.exchange_id) != int(exchange["id"]):
         raise RuntimeError("Queued Monte Carlo exchange no longer matches the active exchange")
     if args.exchange_code and str(args.exchange_code) != str(exchange["code"]):
         raise RuntimeError("Queued Monte Carlo exchange code does not match the active exchange")
+    if args.exchange_adapter_id and str(args.exchange_adapter_id) != str(
+        exchange.get("adapter_id") or ""
+    ):
+        raise RuntimeError("Queued Monte Carlo adapter variant no longer matches the active exchange")
+    if args.exchange_quote_asset and str(args.exchange_quote_asset) != str(
+        exchange.get("quote_asset") or ""
+    ):
+        raise RuntimeError("Queued Monte Carlo quote asset no longer matches the active exchange")
+    if args.exchange_execution_environment and str(
+        args.exchange_execution_environment
+    ) != str(exchange.get("execution_environment") or ""):
+        raise RuntimeError("Queued Monte Carlo environment no longer matches the active exchange")
     result = run_monte_carlo(
         symbol=args.symbol,
         timeframe=args.timeframe,

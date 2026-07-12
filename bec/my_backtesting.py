@@ -3792,6 +3792,9 @@ def run_backtest(
     *,
     exchange_id=None,
     exchange_code=None,
+    exchange_adapter_id=None,
+    exchange_quote_asset=None,
+    exchange_execution_environment=None,
     commission_value=None,
     work_fingerprint=None,
 ):
@@ -3800,6 +3803,18 @@ def run_backtest(
         raise RuntimeError("Queued backtest exchange no longer matches the active exchange")
     if exchange_code is not None and str(exchange_code) != str(exchange["code"]):
         raise RuntimeError("Queued backtest exchange code does not match the active exchange")
+    if exchange_adapter_id is not None and str(exchange_adapter_id) != str(
+        exchange.get("adapter_id") or ""
+    ):
+        raise RuntimeError("Queued backtest adapter variant no longer matches the active exchange")
+    if exchange_quote_asset is not None and str(exchange_quote_asset) != str(
+        exchange.get("quote_asset") or ""
+    ):
+        raise RuntimeError("Queued backtest quote asset no longer matches the active exchange")
+    if exchange_execution_environment is not None and str(
+        exchange_execution_environment
+    ) != str(exchange.get("execution_environment") or ""):
+        raise RuntimeError("Queued backtest environment no longer matches the active exchange")
 
     # vars initialization
     n1 = 0
@@ -3896,6 +3911,9 @@ def run_backtest(
             "id": int(exchange["id"]),
             "code": str(exchange["code"]),
             "name": str(exchange["name"]),
+            "adapter_id": str(exchange.get("adapter_id") or ""),
+            "quote_asset": str(exchange.get("quote_asset") or ""),
+            "execution_environment": str(exchange.get("execution_environment") or ""),
         },
         "backtesting": {
             "optimize_enabled": bool(optimize),
@@ -4148,6 +4166,11 @@ def run_backtest(
         backtest_work_candle=backtest_work_candle,
         backtest_work_executed_at=database._utc_now_str(),
         backtest_commission_value=commission_value,
+        backtest_adapter_id=str(exchange.get("adapter_id") or ""),
+        backtest_quote_asset=str(exchange.get("quote_asset") or ""),
+        backtest_execution_environment=str(
+            exchange.get("execution_environment") or ""
+        ),
     )
     database.refresh_backtesting_approval_for_context(
         symbol=symbol,
@@ -4238,6 +4261,9 @@ def calc_backtesting(
     *,
     exchange_id=None,
     exchange_code=None,
+    exchange_adapter_id=None,
+    exchange_quote_asset=None,
+    exchange_execution_environment=None,
     commission_value=None,
     work_fingerprint=None,
 ):
@@ -4260,6 +4286,9 @@ def calc_backtesting(
             optimize,
             exchange_id=exchange_id,
             exchange_code=exchange_code,
+            exchange_adapter_id=exchange_adapter_id,
+            exchange_quote_asset=exchange_quote_asset,
+            exchange_execution_environment=exchange_execution_environment,
             commission_value=commission_value,
             work_fingerprint=work_fingerprint,
         )
@@ -4296,6 +4325,9 @@ def main():
     parser.add_argument("--strategy", required=True)
     parser.add_argument("--exchange-id", type=int)
     parser.add_argument("--exchange-code")
+    parser.add_argument("--exchange-adapter-id")
+    parser.add_argument("--exchange-quote-asset")
+    parser.add_argument("--exchange-execution-environment")
     parser.add_argument("--commission", type=float)
     parser.add_argument("--work-fingerprint")
     parser.add_argument("--optimize", action="store_true")
@@ -4312,6 +4344,9 @@ def main():
         optimize=args.optimize,
         exchange_id=args.exchange_id,
         exchange_code=args.exchange_code,
+        exchange_adapter_id=args.exchange_adapter_id,
+        exchange_quote_asset=args.exchange_quote_asset,
+        exchange_execution_environment=args.exchange_execution_environment,
         commission_value=args.commission,
         work_fingerprint=args.work_fingerprint,
     )

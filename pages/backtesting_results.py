@@ -1850,6 +1850,7 @@ if "Trading_Approved" in df_bt_results.columns:
 
 results_columns_order = [
     "Exchange_Code",
+    "Exchange_Environment",
     "Symbol",
     "Strategy_Name",
     "Time_Frame",
@@ -1951,6 +1952,7 @@ dataframe_event = st.dataframe(
     column_config={
         "Strategy_Id": None,
         "Exchange_Code": st.column_config.TextColumn("Exchange", pinned=True),
+        "Exchange_Environment": st.column_config.TextColumn("Environment"),
         "Symbol": st.column_config.TextColumn("Symbol", pinned=True),
         "Strategy_Name": st.column_config.TextColumn("Strategy", pinned=True),
         "Time_Frame": st.column_config.TextColumn("TF"),

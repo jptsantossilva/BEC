@@ -106,6 +106,7 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
         "6:gated_kraken_live_execution",
         "7:durable_order_fills",
         "8:okx_configuration",
+        "9:backtesting_exchange_context",
     ]
     assert report.unresolved_legacy_symbols == ["UNKNOWNPAIR"]
 
@@ -118,6 +119,7 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
         "6:gated_kraken_live_execution",
         "7:durable_order_fills",
         "8:okx_configuration",
+        "9:backtesting_exchange_context",
     ]
     assert applied.unresolved_legacy_symbols == ["UNKNOWNPAIR"]
 
@@ -182,6 +184,23 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
         assert {row[1] for row in connection.execute("PRAGMA table_info(Orders)")} >= {
             "Executed_Cost",
             "Fees_JSON",
+        }
+        assert {row[1] for row in connection.execute("PRAGMA table_info(Backtesting_Jobs)")} >= {
+            "Exchange_Code",
+            "Exchange_Adapter_Id",
+            "Exchange_Quote_Asset",
+            "Exchange_Execution_Environment",
+        }
+        assert {row[1] for row in connection.execute("PRAGMA table_info(Backtesting_Results)")} >= {
+            "Backtest_Adapter_Id",
+            "Backtest_Quote_Asset",
+            "Backtest_Execution_Environment",
+        }
+        assert {row[1] for row in connection.execute("PRAGMA table_info(Monte_Carlo_Jobs)")} >= {
+            "Exchange_Code",
+            "Exchange_Adapter_Id",
+            "Exchange_Quote_Asset",
+            "Exchange_Execution_Environment",
         }
         assert connection.execute(
             "SELECT Exchange_Id FROM Balances"
@@ -370,6 +389,7 @@ def test_kraken_metadata_migration_applies_automatically_after_version_two(tmp_p
             "gated_kraken_live_execution",
             "durable_order_fills",
             "okx_configuration",
+            "backtesting_exchange_context",
         ]
         assert connection.execute(
             "SELECT Enabled, Is_Default FROM Exchanges WHERE Code='kraken'"
@@ -418,6 +438,7 @@ def test_kraken_defaults_migration_preserves_existing_fee(tmp_path):
             "gated_kraken_live_execution",
             "durable_order_fills",
             "okx_configuration",
+            "backtesting_exchange_context",
         ]
         assert connection.execute(
             "SELECT Commission_Value FROM Exchange_Backtesting_Settings "
