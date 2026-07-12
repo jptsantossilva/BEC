@@ -738,7 +738,7 @@ def unrealized_pnl():
         # print(result_open_positions)
 
         if positions_df_1d.empty and positions_df_4h.empty and positions_df_1h.empty:
-            st.info("There are no open positions 🤞")
+            st.info("There are no open positions")
 
         st.header("Unrealized PnL - Total")
 
@@ -1096,8 +1096,8 @@ def settings():
             "fee used by backtesting."
         )
         st.info(
-            "OKX Production and Demo are configuration-only identities in this release. "
-            "They cannot be enabled, selected, queried, backtested, or used for orders yet."
+            "OKX spot public data and exchange-scoped backtesting are available. "
+            "Order execution and reconciliation remain unavailable."
         )
         st.caption(
             "OKX defaults to the EEA `myokx` adapter variant. It may be changed to "
@@ -1205,6 +1205,27 @@ def settings():
                 st.rerun()
             except ValueError as exc:
                 st.error(str(exc))
+
+        st.markdown("#### OKX Private Read-Only Checks")
+        st.caption(
+            "These checks read the selected spot/cash quote balance only. They require "
+            "run_mode=test, do not enable OKX, and never submit, query, or cancel orders."
+        )
+        st.warning(
+            "Create a dedicated OKX key with read and trade permissions only, no withdrawal "
+            "permission, and an IP allowlist. The dashboard cannot verify withdrawal permission; "
+            "the operator must attest that it is disabled."
+        )
+        okx_rows = exchanges[exchanges["Code"].isin(["okx", "okx_demo"])]
+        for _, okx_row in okx_rows.iterrows():
+            label = f"Check {okx_row['Name']} Read-Only API"
+            if st.button(label, icon=":material/key:", key=f"{okx_row['Code']}_readonly_api"):
+                from bec.exchanges.okx_private_status import check_okx_private_access
+
+                status = check_okx_private_access(
+                    okx_row.to_dict(), run_mode=config.read_setting("run_mode")
+                )
+                (st.success if status.available else st.error)(status.message)
 
         exchanges = database.get_exchanges()
         exchanges = exchanges[exchanges["Enabled"].astype(int) == 1]

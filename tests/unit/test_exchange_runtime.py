@@ -612,6 +612,23 @@ def test_okx_identities_remain_configuration_only_and_lock_variant_after_activit
             database.set_active_exchange(3)
     finally:
         connection.close()
+
+
+def test_okx_live_flags_remain_disabled_while_private_checks_are_read_only(tmp_path):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        with pytest.raises(ValueError, match="order execution is unavailable"):
+            database.update_exchange_settings(
+                [{"Id": 3, "Enabled": False, "Quote_Asset": "USDC", "Taker_Fee": None,
+                  "Buy_Enabled": True, "Sell_Enabled": False}]
+            )
+        row = connection.execute(
+            "SELECT Buy_Enabled, Sell_Enabled FROM Exchanges WHERE Id=3"
+        ).fetchone()
+        assert row == (0, 0)
+    finally:
+        connection.close()
         _restore_connection(original)
 
 

@@ -186,6 +186,10 @@ def update_exchange_settings(rows) -> None:
             raise ValueError("Invalid partial-sell policy")
         if not math.isfinite(sizing_buffer_pct) or not 0 <= sizing_buffer_pct < 100:
             raise ValueError("Sizing buffer must be between 0 and 100 percent")
+        if code in {"okx", "okx_demo"} and (buy_enabled or sell_enabled):
+            raise ValueError(
+                "OKX order execution is unavailable; Buy Enabled and Sell Enabled must remain off"
+            )
         if (buy_enabled or sell_enabled) and not enabled:
             raise ValueError("Enable the exchange before enabling live operations")
         if enabled and not _is_registered_exchange_code(code):

@@ -70,6 +70,7 @@ class CcxtExchangeAdapter(ExchangeAdapter):
         market_cache_ttl_seconds: float = 900,
         api_key: str = "",
         api_secret: str = "",
+        api_password: str = "",
         private_enabled: bool = False,
         sizing_buffer_pct: Decimal = Decimal("1"),
         clock=time.monotonic,
@@ -77,7 +78,10 @@ class CcxtExchangeAdapter(ExchangeAdapter):
         self.code = str(exchange_id).lower()
         self.name = name or self.code.title()
         self._client = client or self._create_client(
-            self.code, api_key=api_key, api_secret=api_secret
+            self.code,
+            api_key=api_key,
+            api_secret=api_secret,
+            api_password=api_password,
         )
         self._private_enabled = bool(private_enabled)
         self._sizing_buffer_pct = _decimal(sizing_buffer_pct)
@@ -88,7 +92,13 @@ class CcxtExchangeAdapter(ExchangeAdapter):
         self._markets_loaded_at = 0.0
 
     @staticmethod
-    def _create_client(exchange_id: str, *, api_key: str = "", api_secret: str = ""):
+    def _create_client(
+        exchange_id: str,
+        *,
+        api_key: str = "",
+        api_secret: str = "",
+        api_password: str = "",
+    ):
         try:
             exchange_class = getattr(ccxt, exchange_id)
         except AttributeError as exc:
@@ -101,6 +111,9 @@ class CcxtExchangeAdapter(ExchangeAdapter):
             config["apiKey"] = api_key
         if api_secret:
             config["secret"] = api_secret
+        if api_password:
+            # CCXT maps this field to an exchange-specific API passphrase.
+            config["password"] = api_password
         return exchange_class(config)
 
     @property
