@@ -4,6 +4,7 @@ import os
 import calendar
 import json
 from datetime import datetime, timedelta
+from decimal import Decimal
 
 import streamlit as st
 from millify import millify
@@ -1017,7 +1018,12 @@ def _check_exchange_public_apis(exchanges: pd.DataFrame) -> tuple[dict, dict]:
     return statuses, quote_assets
 
 
-def _save_exchange_editor(edited: pd.DataFrame, quote_assets: dict) -> None:
+def _save_exchange_editor(
+    edited: pd.DataFrame,
+    quote_assets: dict,
+    *,
+    confirm_okx_production_live_flags: bool = False,
+) -> None:
     current = database.get_exchange_settings_table().set_index("Code")
     records = []
     for _, row in edited.iterrows():
@@ -1049,7 +1055,12 @@ def _save_exchange_editor(edited: pd.DataFrame, quote_assets: dict) -> None:
         if adapter_id:
             record["Adapter_Id"] = adapter_id
         records.append(record)
-    database.update_exchange_settings(records)
+    if confirm_okx_production_live_flags:
+        database.update_exchange_settings(
+            records, confirm_okx_production_live_flags=True
+        )
+    else:
+        database.update_exchange_settings(records)
 
 
 def _render_trade_schedule_toggles(*, exchange_code: str, disabled: bool = False):
@@ -1080,6 +1091,28 @@ def _render_trade_schedule_toggles(*, exchange_code: str, disabled: bool = False
                 "sell operations remain independently controlled by exchange flags."
             ),
         )
+
+
+def _manual_demo_submission_feedback(outcome, success_message: str) -> tuple[str, str]:
+    """Return safe UI feedback for a durable manual-demo submission result."""
+    if outcome is None:
+        return (
+            "error",
+            "The exchange rejected the order before submission. No replacement was "
+            "submitted; review the operational log.",
+        )
+    if outcome.get("skipped"):
+        return "error", str(outcome["reason"])
+    return "success", success_message
+
+
+def _available_balance_for_settings(asset: str) -> tuple[float | None, str | None]:
+    """Read the active exchange balance without hiding the shared settings UI."""
+    try:
+        balance = binance.fetch_balance(asset)
+        return float(balance.free), None
+    except Exception as exc:
+        return None, type(exc).__name__
 
 
 def settings():
@@ -1199,9 +1232,29 @@ def settings():
                 "A zero spot taker fee is configured. Backtest results will not "
                 "include exchange trading costs for that exchange."
             )
+        st.markdown("#### OKX Production Arming Confirmation")
+        st.caption(
+            "Required only when enabling an OKX production buy or sell side. It does not "
+            "enable run mode, a schedule, or any order by itself."
+        )
+        confirm_okx_live_flags = st.checkbox(
+            "I understand that an enabled OKX production side can submit real spot orders only after all other gates pass.",
+            key="okx_production_live_flags_confirm",
+        )
+        okx_live_phrase = st.text_input(
+            "Type ENABLE OKX SPOT to confirm production side changes",
+            key="okx_production_live_flags_phrase",
+        )
         if st.button("Save Exchange Settings", icon=":material/save:"):
             try:
-                _save_exchange_editor(edited, quote_assets)
+                _save_exchange_editor(
+                    edited,
+                    quote_assets,
+                    confirm_okx_production_live_flags=(
+                        confirm_okx_live_flags
+                        and okx_live_phrase.strip() == "ENABLE OKX SPOT"
+                    ),
+                )
                 st.success("Exchange settings updated.")
                 st.rerun()
             except ValueError as exc:
@@ -1209,8 +1262,9 @@ def settings():
 
         st.markdown("#### OKX Private Read-Only Checks")
         st.caption(
-            "These checks read the selected spot/cash quote balance only. They require "
-            "run_mode=test, do not enable OKX, and never submit, query, or cancel orders."
+            "These checks read the selected trading/cash quote balance and a funding-balance "
+            "diagnostic only. They require run_mode=test (or run_mode=demo for OKX Demo), "
+            "do not enable OKX, and never submit, query, or cancel orders."
         )
         st.warning(
             "Create a dedicated OKX key with read and trade permissions only, no withdrawal "
@@ -1275,6 +1329,7 @@ def settings():
             f"Mode: {active_exchange['trading_mode']}"
         )
         capabilities = get_adapter_for_code(active_exchange["code"]).capabilities
+        trade_schedule_rendered = False
         if active_exchange["code"] == "okx_demo":
             st.markdown("### OKX Demo Trading")
             st.warning(
@@ -1296,12 +1351,148 @@ def settings():
                 st.error("Demo run mode is enabled. Orders can only reach OKX Demo Trading.")
             else:
                 st.warning("Demo execution is disabled while run_mode=test.")
+            st.markdown("#### Controlled Manual Demo Orders")
+            st.caption(
+                "For PR 7 validation only. These actions use the same durable intent, "
+                "balance, market-limit, fill, and reconciliation workflow as a strategy order."
+            )
+            with st.form("okx_demo_manual_buy_form", clear_on_submit=False):
+                manual_buy_symbol = st.text_input(
+                    "Spot symbol", value="BTC/USDC", key="okx_demo_manual_buy_symbol"
+                )
+                manual_buy_quote = st.number_input(
+                    "Quote amount",
+                    min_value=0.0,
+                    value=10.0,
+                    step=1.0,
+                    key="okx_demo_manual_buy_quote",
+                )
+                confirm_manual_buy = st.checkbox(
+                    "I confirm this is an OKX Demo Trading buy for controlled validation.",
+                    key="okx_demo_manual_buy_confirm",
+                )
+                submit_manual_buy = st.form_submit_button(
+                    "Submit Manual Demo Buy", icon=":material/shopping_cart:"
+                )
+            if submit_manual_buy:
+                if not confirm_manual_buy:
+                    st.error("Confirm the controlled demo buy before submitting it.")
+                else:
+                    try:
+                        from bec.exchanges.live_execution import create_okx_demo_manual_buy
+
+                        outcome = create_okx_demo_manual_buy(
+                            symbol=manual_buy_symbol,
+                            quote_amount=Decimal(str(manual_buy_quote)),
+                        )
+                        feedback_level, feedback = _manual_demo_submission_feedback(
+                            outcome,
+                            "Manual demo buy submitted through the durable order workflow.",
+                        )
+                        getattr(st, feedback_level)(feedback)
+                    except (RuntimeError, ValueError) as exc:
+                        st.error(str(exc))
+
+            open_demo_positions = database.get_positions_by_position(1)
+            if open_demo_positions.empty:
+                st.info("No open OKX demo position is available for a manual sell.")
+            else:
+                position_options = {
+                    int(row["Id"]): (
+                        f"{row['Symbol']} · qty {row['Qty']} · {row['Bot']} · position {row['Id']}"
+                    )
+                    for _, row in open_demo_positions.iterrows()
+                }
+                manual_sell_quote = None
+                with st.form("okx_demo_manual_sell_form", clear_on_submit=False):
+                    manual_sell_position_id = st.selectbox(
+                        "Open demo position to close",
+                        list(position_options),
+                        format_func=lambda value: position_options[int(value)],
+                        key="okx_demo_manual_sell_position",
+                    )
+                    try:
+                        from bec.exchanges.live_execution import get_okx_demo_manual_sell_quote
+
+                        selected_symbol = str(
+                            open_demo_positions.loc[
+                                open_demo_positions["Id"] == int(manual_sell_position_id),
+                                "Symbol",
+                            ].iloc[0]
+                        )
+                        manual_sell_quote = get_okx_demo_manual_sell_quote(
+                            symbol=selected_symbol
+                        )
+                        best_bid = Decimal(str(manual_sell_quote["best_bid"]))
+                        best_ask = manual_sell_quote["best_ask"]
+                        st.caption(
+                            f"Suggested current best bid: {best_bid}. "
+                            + (
+                                f"Best ask: {best_ask}."
+                                if best_ask is not None
+                                else "Best ask is unavailable."
+                            )
+                        )
+                    except Exception as exc:
+                        st.warning(f"Limit price is unavailable: {exc}")
+                        best_bid = Decimal("0")
+                    manual_sell_limit_price = st.number_input(
+                        "Explicit limit price",
+                        min_value=0.0,
+                        value=float(best_bid),
+                        step=0.1,
+                        disabled=manual_sell_quote is None,
+                        key="okx_demo_manual_sell_limit_price",
+                        help=(
+                            "The order is a genuine spot limit IOC. It is never converted "
+                            "to a market sell by BEC. The selected price must not be above "
+                            "the latest best bid when submitted."
+                        ),
+                    )
+                    confirm_manual_sell = st.checkbox(
+                        "I confirm an explicit-price immediate-or-cancel sell for this OKX Demo position.",
+                        key="okx_demo_manual_sell_confirm",
+                    )
+                    submit_manual_sell = st.form_submit_button(
+                        "Submit Explicit-Limit IOC Demo Sell",
+                        icon=":material/sell:",
+                        disabled=manual_sell_quote is None,
+                    )
+                if submit_manual_sell:
+                    if not confirm_manual_sell:
+                        st.error("Confirm the controlled explicit-limit IOC demo sell before submitting it.")
+                    else:
+                        try:
+                            from bec.exchanges.live_execution import create_okx_demo_manual_sell
+
+                            outcome = create_okx_demo_manual_sell(
+                                position_id=int(manual_sell_position_id),
+                                limit_price=Decimal(str(manual_sell_limit_price)),
+                            )
+                            feedback_level, feedback = _manual_demo_submission_feedback(
+                                outcome,
+                                "Explicit-limit IOC demo sell submitted through the durable order workflow.",
+                            )
+                            getattr(st, feedback_level)(feedback)
+                        except (RuntimeError, ValueError) as exc:
+                            st.error(str(exc))
+                        except Exception as exc:
+                            print(
+                                database.exchange_log_prefix(),
+                                "Manual OKX demo sell could not be prepared "
+                                f"({type(exc).__name__})",
+                            )
+                            st.error(
+                                "The manual demo sell was not submitted. Refresh market data "
+                                "and try again only after reviewing the operational log."
+                            )
             _render_trade_schedule_toggles(
                 exchange_code="okx_demo",
                 disabled=not (
                     active_exchange["buy_enabled"] or active_exchange["sell_enabled"]
                 ),
             )
+            trade_schedule_rendered = True
             if st.button("Reconcile OKX Demo Orders", icon=":material/sync:"):
                 from bec.exchanges.live_execution import reconcile_unsettled_orders
 
@@ -1320,9 +1511,9 @@ def settings():
                     st.success(f"Demo validation record {record['Id']} stored.")
                 except ValueError as exc:
                     st.error(str(exc))
-            return
-        if capabilities.uses_gated_live_execution:
+        elif capabilities.uses_gated_live_execution:
             exchange_name = str(active_exchange["name"])
+            is_okx_production = active_exchange["code"] == "okx"
             if active_exchange["buy_enabled"] or active_exchange["sell_enabled"]:
                 st.error(
                     f"{exchange_name} live operations are armed. They still require run_mode=live, "
@@ -1342,21 +1533,74 @@ def settings():
 
                 available, message = private_api_status()
                 (st.success if available else st.error)(message)
-            live_mode_key = f"{active_exchange['code']}_live_run_mode"
-            if live_mode_key not in st.session_state:
-                st.session_state[live_mode_key] = (
-                    config.read_setting("run_mode") == "live"
+            if is_okx_production:
+                demo_record = database.get_compatible_okx_demo_validation(active_exchange)
+                if demo_record is None:
+                    st.error(
+                        "Production execution remains blocked: no compatible completed OKX Demo validation record exists."
+                    )
+                else:
+                    st.success(
+                        f"Compatible OKX Demo validation record {demo_record['Id']} is available for this adapter and quote asset."
+                    )
+                if config.read_setting("run_mode") == "live":
+                    st.error(
+                        "OKX production live run mode is enabled. Real spot orders are possible only when every runtime gate passes."
+                    )
+                    if st.button(
+                        "Disable OKX Production Live Mode",
+                        icon=":material/pause_circle:",
+                    ):
+                        config.update_setting("run_mode", "test")
+                        st.rerun()
+                else:
+                    st.markdown("#### Enable OKX Production Live Mode")
+                    st.caption(
+                        "This is the second production confirmation. It changes only run_mode; "
+                        "it does not arm a buy/sell side or enable a schedule."
+                    )
+                    with st.form("okx_production_live_mode_form", clear_on_submit=True):
+                        confirm_live_mode = st.checkbox(
+                            "I confirm this is a controlled OKX production spot operation.",
+                            key="okx_production_live_mode_confirm",
+                        )
+                        live_phrase = st.text_input(
+                            "Type ENABLE OKX LIVE to enable run mode",
+                            key="okx_production_live_mode_phrase",
+                        )
+                        submit_live_mode = st.form_submit_button(
+                            "Enable OKX Production Live Mode",
+                            icon=":material/play_circle:",
+                        )
+                    if submit_live_mode:
+                        if not confirm_live_mode or live_phrase.strip() != "ENABLE OKX LIVE":
+                            st.error("Confirm the operation and type ENABLE OKX LIVE exactly.")
+                        else:
+                            config.update_setting("run_mode", "live")
+                            st.rerun()
+                if st.button(
+                    "Reconcile OKX Production Orders",
+                    icon=":material/sync:",
+                ):
+                    from bec.exchanges.live_execution import reconcile_unsettled_orders
+
+                    st.info(f"Production reconciliation: {reconcile_unsettled_orders()}")
+            else:
+                live_mode_key = f"{active_exchange['code']}_live_run_mode"
+                if live_mode_key not in st.session_state:
+                    st.session_state[live_mode_key] = (
+                        config.read_setting("run_mode") == "live"
+                    )
+                live_mode = st.toggle(
+                    "Live run mode",
+                    key=live_mode_key,
+                    help="Master execution gate. Keep disabled except during controlled live operation.",
                 )
-            live_mode = st.toggle(
-                "Live run mode",
-                key=live_mode_key,
-                help="Master execution gate. Keep disabled except during controlled live operation.",
-            )
-            desired_mode = "live" if live_mode else "test"
-            if config.read_setting("run_mode") != desired_mode:
-                config.update_setting("run_mode", desired_mode)
-            if live_mode:
-                st.error(f"Live run mode is enabled. Real {exchange_name} orders are possible.")
+                desired_mode = "live" if live_mode else "test"
+                if config.read_setting("run_mode") != desired_mode:
+                    config.update_setting("run_mode", desired_mode)
+                if live_mode:
+                    st.error(f"Live run mode is enabled. Real {exchange_name} orders are possible.")
             st.markdown("### Trade Execution by Timeframe")
             _render_trade_schedule_toggles(
                 exchange_code=active_exchange["code"],
@@ -1365,26 +1609,31 @@ def settings():
                     or active_exchange["sell_enabled"]
                 ),
             )
-            return
+            trade_schedule_rendered = True
         st.divider()
         st.markdown("### Overview")
         # Compact header card
         ta = config.read_setting("trade_against")
         max_pos = config.read_setting("max_number_of_open_positions")
+        balance_asset = (
+            str(active_exchange.get("quote_asset") or ta)
+            if capabilities.uses_gated_live_execution
+            else ta
+        )
 
         def _format_overview_value(value: float) -> str:
-            if ta == "BTC":
+            if balance_asset == "BTC":
                 if float(value) == 0:
                     return "0"
                 return f"{float(value):.8f}".rstrip("0").rstrip(".")
             return millify(value, precision=2)
 
         total_locked = float(database.get_total_locked_values())
-        cur_bal = float(binance.get_symbol_balance(ta))
-        avail = max(cur_bal - total_locked, 0)
+        cur_bal, balance_error = _available_balance_for_settings(balance_asset)
+        avail = None if cur_bal is None else max(cur_bal - total_locked, 0)
         open_now = database.get_num_open_positions()
         rem = max(max_pos - open_now, 0)
-        next_pos = 0 if rem == 0 else (avail / rem)
+        next_pos = None if avail is None else (0 if rem == 0 else (avail / rem))
         # c1, c2, c3, c4, c5 = st.columns(5)
         # c1.metric("Trade Against", ta)
         # c2.metric("Max Open", max_pos)
@@ -1393,10 +1642,21 @@ def settings():
         # c5.metric(f"Next Pos Size {ta}", millify(next_pos, precision=2))
 
         c6, c7, c8, c9 = st.columns(4)
-        c6.metric(f"Balance {ta}", _format_overview_value(avail))
-        c7.metric(f"Locked {ta}", _format_overview_value(total_locked))
+        c6.metric(
+            f"Balance {balance_asset}",
+            "Unavailable" if avail is None else _format_overview_value(avail),
+        )
+        c7.metric(f"Locked {balance_asset}", _format_overview_value(total_locked))
         c8.metric("Available Positions", rem)
-        c9.metric(f"Next Position Size {ta}", _format_overview_value(next_pos))
+        c9.metric(
+            f"Next Position Size {balance_asset}",
+            "Unavailable" if next_pos is None else _format_overview_value(next_pos),
+        )
+        if balance_error:
+            st.caption(
+                f"The private {active_exchange['name']} balance is unavailable "
+                f"({balance_error}). Shared trading settings remain editable."
+            )
 
         # st.space("medium")
         # st.space("small")
@@ -1518,9 +1778,12 @@ def settings():
 
         st.space()
 
-        st.markdown("### Trade Execution by Timeframe")
-        with st.container():
-            _render_trade_schedule_toggles(exchange_code="binance")
+        if not trade_schedule_rendered:
+            st.markdown("### Trade Execution by Timeframe")
+            with st.container():
+                _render_trade_schedule_toggles(
+                    exchange_code=active_exchange["code"]
+                )
 
         # st.space()
         st.divider()
@@ -1901,14 +2164,16 @@ def calculate_realized_rolling_periods(
         )
 
     trades = _numeric_realized_trades(trades)
-    trades["Sell_Date"] = pd.to_datetime(trades["Sell_Date"], errors="coerce")
+    trades["Sell_Date"] = pd.to_datetime(
+        trades["Sell_Date"], errors="coerce", utc=True
+    )
     trades = trades.dropna(subset=["Sell_Date"])
     if trades.empty:
         return pd.DataFrame(
             columns=["Period", "PnL_Perc", "PnL_Value", "Positions"]
         )
 
-    now = pd.Timestamp(datetime.now())
+    now = pd.Timestamp.now(tz="UTC")
     records = []
     for label, offset in REALIZED_PNL_ROLLING_PERIODS:
         start_date = now - offset
@@ -1931,7 +2196,9 @@ def calculate_monthly_realized_returns(
         trades = _get_realized_trades_for_year(str(year), strategy_filter)
         if not trades.empty and "Sell_Date" in trades.columns:
             trades = trades.copy()
-            trades["Sell_Date"] = pd.to_datetime(trades["Sell_Date"], errors="coerce")
+            trades["Sell_Date"] = pd.to_datetime(
+                trades["Sell_Date"], errors="coerce", utc=True
+            )
             trades = trades.dropna(subset=["Sell_Date"])
 
         for month in MONTHLY_RETURNS_MONTHS:
@@ -2533,6 +2800,22 @@ def _format_realized_detail(df: pd.DataFrame) -> pd.DataFrame:
             return ""
         return raw.rstrip("0").rstrip(".")
 
+    def _fmt2(value) -> str:
+        try:
+            if pd.isna(value):
+                return ""
+            return f"{float(value):.2f}"
+        except (TypeError, ValueError):
+            return ""
+
+    def _fmt_pnl_value(value) -> str:
+        try:
+            if pd.isna(value):
+                return ""
+            return f"{float(value):.{num_decimals}f}"
+        except (TypeError, ValueError):
+            return ""
+
     def _parse_atr_params(raw_params: str):
         if not raw_params:
             return None
@@ -2586,13 +2869,11 @@ def _format_realized_detail(df: pd.DataFrame) -> pd.DataFrame:
 
     for column in ("Buy_Price", "Sell_Price", "Sell_Position_Value", "Buy_Position_Value"):
         if column in df.columns:
-            df[column] = df[column].apply(lambda x: f"{float(x):.8f}")
+            df[column] = df[column].apply(_fmt8)
     if "PnL_Perc" in df.columns:
-        df["PnL_Perc"] = df["PnL_Perc"].apply(lambda x: "{:.2f}".format(float(x)))
+        df["PnL_Perc"] = df["PnL_Perc"].apply(_fmt2)
     if "PnL_Value" in df.columns:
-        df["PnL_Value"] = df["PnL_Value"].apply(
-            lambda x: f"{{:.{num_decimals}f}}".format(float(x))
-        )
+        df["PnL_Value"] = df["PnL_Value"].apply(_fmt_pnl_value)
 
     if "Stop_Type" in df.columns:
         df["Stop_Details"] = df.apply(_build_stop_details, axis=1)
@@ -2956,10 +3237,14 @@ def _format_position_signal_setup(row):
 
 # define a function to set the background color of the rows based on pnl_value
 def set_pnl_color(val):
-    if val is not None:
-        val = float(val)
-        color = "#E9967A" if val < 0 else "#8FBC8F" if val > 0 else ""
-        return f"background-color: {color}"
+    try:
+        numeric = float(val)
+    except (TypeError, ValueError):
+        return ""
+    if pd.isna(numeric):
+        return ""
+    color = "#E9967A" if numeric < 0 else "#8FBC8F" if numeric > 0 else ""
+    return f"background-color: {color}"
 
 
 def format_func_strategies_main(option):

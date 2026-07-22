@@ -37,6 +37,7 @@ def get_adapter_for_code(
     *,
     sizing_buffer_pct: Decimal = Decimal("1"),
     adapter_id: str | None = None,
+    private_enabled: bool = False,
 ) -> ExchangeAdapter:
     code = str(code or "").strip().lower()
     if code == "binance":
@@ -55,7 +56,7 @@ def get_adapter_for_code(
             adapter_id=adapter_id or "myokx",
             execution_environment="demo" if demo else "production",
             execution_code=code,
-            private_enabled=demo,
+            private_enabled=private_enabled,
             sizing_buffer_pct=sizing_buffer_pct,
         )
     raise RuntimeError(f"No adapter is available for exchange: {code}")
@@ -76,6 +77,10 @@ def get_default_adapter() -> ExchangeAdapter:
         code,
         sizing_buffer_pct=Decimal(str(exchange.get("sizing_buffer_pct", 1.0))),
         adapter_id=str(exchange.get("adapter_id") or ""),
+        # The app-wide adapter is the only adapter used by the durable private
+        # execution and reconciliation workflow. Public callers use the
+        # factory default above, which remains credential-free.
+        private_enabled=code in {"okx", "okx_demo"},
     )
     return _default_adapter
 

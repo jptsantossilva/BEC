@@ -43,6 +43,11 @@ def _strategy_params():
     return json.dumps({"parameters": {"fast": 20, "slow": 60}})
 
 
+def test_manual_demo_notifications_have_a_distinct_valid_prefix():
+    assert telegram.get_telegram_prefix("manual_demo") == "DEMO "
+    assert telegram.get_telegram_prefix("manual_demo", multi_line=True) == "DEMO\n"
+
+
 def _auto_switch_settings(trade_against="USDC", btc_strategy="wema20"):
     return SimpleNamespace(
         trade_against_switch=True,

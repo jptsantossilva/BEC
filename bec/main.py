@@ -991,7 +991,9 @@ def run(timeframe, run_mode=None):
     # calculate execution time
     stop = timeit.default_timer()
     total_seconds = stop - start
-    duration = " ".join(str(database.calc_duration(total_seconds)).split())
+    duration = " ".join(
+        str(database.calc_duration(total_seconds, decimal_places=2)).split()
+    )
 
     summary_msg = (
         "Report\n"

@@ -539,9 +539,8 @@ class CcxtExchangeAdapter(ExchangeAdapter):
             raw=raw,
         )
 
-    def fetch_balance(self, asset: str | None = None) -> Balance | Mapping[str, Balance]:
-        self._private_disabled("balances")
-        raw = self.client.fetch_balance()
+    def _parse_balance_response(self, raw: Mapping[str, Any]) -> dict[str, Balance]:
+        """Convert a CCXT balance response into the application balance model."""
         free = raw.get("free") or {}
         used = raw.get("used") or {}
         balances = {}
@@ -557,6 +556,11 @@ class CcxtExchangeAdapter(ExchangeAdapter):
                 free=previous.free + _decimal(free.get(source)),
                 locked=previous.locked + _decimal(used.get(source)),
             )
+        return balances
+
+    def fetch_balance(self, asset: str | None = None) -> Balance | Mapping[str, Balance]:
+        self._private_disabled("balances")
+        balances = self._parse_balance_response(self.client.fetch_balance())
         if asset is not None:
             canonical = self._canonical_asset(asset)
             return balances.get(canonical, Balance(canonical, Decimal("0")))

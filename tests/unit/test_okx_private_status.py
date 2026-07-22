@@ -18,8 +18,8 @@ class ReadOnlyOkxClient:
     def set_sandbox_mode(self, enabled):
         self.calls.append(("sandbox", enabled))
 
-    def fetch_balance(self):
-        self.calls.append(("balance",))
+    def fetch_balance(self, params=None):
+        self.calls.append(("balance", params))
         if self.fail_with:
             raise self.fail_with
         return {"free": {"USDC": "12.5"}, "used": {"USDC": "1.5"}}
@@ -139,7 +139,40 @@ def test_okx_demo_selects_sandbox_before_the_first_private_balance_call():
     balance = adapter.fetch_balance("USDC")
 
     assert balance.free == Decimal("12.5")
-    assert client.calls == [("sandbox", True), ("balance",)]
+    assert client.calls == [("sandbox", True), ("balance", None)]
+
+
+def test_okx_uses_cash_availability_when_ccxt_reports_zero_unified_equity():
+    class UnifiedAccountClient(ReadOnlyOkxClient):
+        def fetch_balance(self, params=None):
+            self.calls.append(("balance", params))
+            return {
+                "free": {"USDC": "0"},
+                "used": {"USDC": "0"},
+                "info": {
+                    "data": [
+                        {
+                            "details": [
+                                {
+                                    "ccy": "USDC",
+                                    "availEq": "0",
+                                    "availBal": "5000",
+                                    "frozenBal": "0",
+                                }
+                            ]
+                        }
+                    ]
+                },
+            }
+
+    client = UnifiedAccountClient()
+    adapter = _private_adapter(client=client, environment="demo")
+
+    balance = adapter.fetch_balance("USDC")
+
+    assert balance.free == Decimal("5000")
+    assert balance.locked == Decimal("0")
+    assert client.calls == [("sandbox", True), ("balance", None)]
 
 
 def test_okx_private_status_is_read_only_and_never_exposes_credential_values():
@@ -153,8 +186,8 @@ def test_okx_private_status_is_read_only_and_never_exposes_credential_values():
     )
 
     assert status.available is True
-    assert "spot/cash balance access succeeded" in status.message
-    assert client.calls == [("balance",)]
+    assert "trading/cash balance access succeeded" in status.message
+    assert client.calls == [("balance", None), ("balance", {"type": "funding"})]
     assert "key-value" not in status.message
     assert "secret-value" not in status.message
     assert "passphrase-value" not in status.message
@@ -174,6 +207,39 @@ def test_okx_private_status_requires_test_mode_without_creating_an_adapter():
     assert called == []
 
 
+def test_okx_demo_private_status_allows_demo_mode_for_balance_validation():
+    client = ReadOnlyOkxClient()
+    adapter = _private_adapter(client=client, environment="demo")
+
+    status = check_okx_private_access(
+        _exchange("demo"),
+        run_mode="demo",
+        adapter_factory=lambda **kwargs: adapter,
+    )
+
+    assert status.available is True
+    assert "OKX demo" in status.message
+    assert client.calls == [
+        ("sandbox", True),
+        ("balance", None),
+        ("balance", {"type": "funding"}),
+    ]
+
+
+def test_okx_demo_private_status_rejects_live_mode_without_creating_an_adapter():
+    called = []
+
+    status = check_okx_private_access(
+        _exchange("demo"),
+        run_mode="live",
+        adapter_factory=lambda **kwargs: called.append(kwargs),
+    )
+
+    assert status.available is False
+    assert "run_mode=test or run_mode=demo" in status.message
+    assert called == []
+
+
 def test_okx_private_status_sanitizes_authentication_errors():
     client = ReadOnlyOkxClient(
         fail_with=ccxt.AuthenticationError("secret-value must never be shown")
@@ -189,7 +255,7 @@ def test_okx_private_status_sanitizes_authentication_errors():
     assert status.available is False
     assert "authentication or permission" in status.message.lower()
     assert "secret-value" not in status.message
-    assert client.calls == [("balance",)]
+    assert client.calls == [("balance", None)]
 
 
 def test_okx_private_status_reports_clock_and_network_errors_without_request_details():
@@ -214,8 +280,13 @@ def test_okx_private_status_reports_clock_and_network_errors_without_request_det
     assert "request context" not in clock_status.message + network_status.message
 
 
-def test_okx_private_adapter_keeps_all_order_operations_disabled():
-    adapter = _private_adapter()
+def test_okx_public_adapter_keeps_all_private_order_operations_disabled():
+    adapter = OkxAdapter(
+        client=ReadOnlyOkxClient(),
+        adapter_id="myokx",
+        execution_environment="production",
+        private_enabled=False,
+    )
 
     for operation in (
         lambda: adapter.create_market_buy("BTC/USDC", quote_amount=Decimal("10")),
@@ -224,5 +295,5 @@ def test_okx_private_adapter_keeps_all_order_operations_disabled():
         lambda: adapter.fetch_order_by_client_id("client-1", "BTC/USDC"),
         lambda: adapter.cancel_order("1", "BTC/USDC"),
     ):
-        with pytest.raises(PrivateExchangeOperationDisabled, match="mandatory demo identity"):
+        with pytest.raises(PrivateExchangeOperationDisabled, match="requires configured private credentials"):
             operation()

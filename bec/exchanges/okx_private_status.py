@@ -32,10 +32,15 @@ def check_okx_private_access(
     code = str(exchange.get("Code") or exchange.get("code") or "").lower()
     if code not in {"okx", "okx_demo"}:
         return OkxPrivateStatus(False, "The selected configuration is not an OKX identity.")
-    if str(run_mode or "").strip().lower() != "test":
+    mode = str(run_mode or "").strip().lower()
+    # The demo identity can be checked while it is armed for its controlled
+    # demo workflow.  This operation remains balance-only in either mode.
+    allowed_modes = {"test", "demo"} if code == "okx_demo" else {"test"}
+    if mode not in allowed_modes:
+        required_mode = "run_mode=test or run_mode=demo" if code == "okx_demo" else "run_mode=test"
         return OkxPrivateStatus(
             False,
-            "OKX read-only checks require run_mode=test; no setting was changed.",
+            f"OKX read-only checks require {required_mode}; no setting was changed.",
         )
 
     environment = str(
@@ -60,6 +65,7 @@ def check_okx_private_access(
     ).upper()
     try:
         balance = adapter.fetch_balance(quote_asset)
+        funding_balance = adapter.fetch_funding_balance(quote_asset)
     except ccxt.InvalidNonce:
         return OkxPrivateStatus(
             False,
@@ -92,6 +98,9 @@ def check_okx_private_access(
 
     return OkxPrivateStatus(
         True,
-        f"OKX {environment} ({adapter.adapter_id}) spot/cash balance access succeeded for {quote_asset} "
-        f"(free={balance.free}, locked={balance.locked}). No order endpoint was used.",
+        f"OKX {environment} ({adapter.adapter_id}) trading/cash balance access succeeded for "
+        f"{quote_asset} (free={balance.free}, locked={balance.locked}). Funding balance is "
+        f"free={funding_balance.free}, locked={funding_balance.locked}; it is diagnostic only "
+        f"and cannot fund an order until manually transferred by the operator. No order endpoint "
+        f"was used.",
     )

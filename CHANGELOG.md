@@ -2,6 +2,10 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-07-22]
+- Trading Settings - Shared strategy, position sizing, locked-value, overview and Telegram settings are now shown for every active exchange, including Kraken, while unavailable private balances no longer hide the configuration controls.
+- Telegram - Trading cycle reports now show execution duration with two decimal places, making sub-second executions visible instead of reporting them as `0s`.
+
 ## [2026-07-05]
 - Kraken Live Execution - Added explicitly gated private balances and spot market orders through CCXT, with buy/sell flags disabled by default and no withdrawal support.
 - Order Safety - Added durable pre-submission intents, unique client order IDs, uncertain-outcome protection, startup/scheduled reconciliation, partial-fill accounting, fee/net quantity persistence and idempotent position updates.

@@ -1,4 +1,4 @@
-"""OKX spot adapter with an explicit read-only private boundary."""
+"""OKX spot adapter with explicitly gated private spot operations."""
 
 from __future__ import annotations
 
@@ -7,20 +7,22 @@ import re
 from decimal import Decimal
 from typing import Any
 
-from bec.exchanges.base import ExchangeCapabilities, OrderRequest
+from bec.exchanges.base import Balance, ExchangeCapabilities, OrderRequest
 from bec.exchanges.ccxt_adapter import (
     CcxtExchangeAdapter,
     PrivateExchangeOperationDisabled,
+    _decimal,
 )
 from bec.utils.env_loader import load_env_file
 
 
 class OkxAdapter(CcxtExchangeAdapter):
-    """OKX spot data with opt-in, balance-only private access.
+    """OKX spot data with opt-in private access.
 
     Constructing the public adapter never reads credentials.  Callers must set
-    ``private_enabled=True`` to opt into loading a complete credential triplet
-    for an explicitly requested read-only status check.
+    ``private_enabled=True`` to opt into loading a complete credential triplet.
+    The application-level production gate remains responsible for deciding
+    whether an authenticated production adapter may submit an order.
     """
 
     code = "okx"
@@ -122,10 +124,11 @@ class OkxAdapter(CcxtExchangeAdapter):
             )
         set_sandbox_mode(True)
 
-    def _require_demo_execution(self, operation: str) -> None:
-        if self.code != "okx_demo" or self.execution_environment != "demo":
+    def _require_private_execution(self, operation: str) -> None:
+        expected_environment = "demo" if self.code == "okx_demo" else "production"
+        if self.code not in {"okx", "okx_demo"} or self.execution_environment != expected_environment:
             raise PrivateExchangeOperationDisabled(
-                f"OKX {operation} is unavailable outside the mandatory demo identity"
+                f"OKX {operation} is unavailable for the configured execution identity"
             )
         self._private_disabled(operation)
 
@@ -137,6 +140,48 @@ class OkxAdapter(CcxtExchangeAdapter):
                 "OKX client order ID must be 1-32 ASCII letters or digits"
             )
         return value
+
+    def fetch_balance(self, asset: str | None = None):
+        """Read OKX cash availability without losing ``availBal`` in CCXT parsing.
+
+        For a spot order with ``tdMode=cash``, OKX's authoritative available
+        amount is ``availBal`` in the trading-account balance details.  Some
+        unified-account responses also include ``availEq=0``; CCXT then exposes
+        that equity value as ``free`` even when the cash balance is available.
+        Preserve the generic result for every other asset/response, but prefer
+        the explicit cash fields when OKX provided them.
+        """
+        self._private_disabled("balances")
+        raw = self.client.fetch_balance()
+        balances = self._parse_balance_response(raw)
+        info = raw.get("info") if isinstance(raw, dict) else None
+        data = info.get("data") if isinstance(info, dict) else None
+        account = data[0] if isinstance(data, list) and data else None
+        details = account.get("details") if isinstance(account, dict) else None
+        if isinstance(details, list):
+            for detail in details:
+                if not isinstance(detail, dict) or detail.get("availBal") in (None, ""):
+                    continue
+                canonical = self._canonical_asset(detail.get("ccy"))
+                if not canonical:
+                    continue
+                balances[canonical] = Balance(
+                    asset=canonical,
+                    free=_decimal(detail.get("availBal")),
+                    locked=_decimal(detail.get("frozenBal")),
+                )
+        if asset is not None:
+            canonical = self._canonical_asset(asset)
+            return balances.get(canonical, Balance(canonical, Decimal("0")))
+        return balances
+
+    def fetch_funding_balance(self, asset: str) -> Balance:
+        """Read a funding balance for diagnostics; it is never used for orders."""
+        self._private_disabled("funding balances")
+        raw = self.client.fetch_balance({"type": "funding"})
+        balances = self._parse_balance_response(raw)
+        canonical = self._canonical_asset(asset)
+        return balances.get(canonical, Balance(canonical, Decimal("0")))
 
     @staticmethod
     def _okx_order_params(client_order_id: str | None = None) -> dict[str, str]:
@@ -176,7 +221,7 @@ class OkxAdapter(CcxtExchangeAdapter):
         quote_amount: Decimal | None = None,
         client_order_id: str | None = None,
     ):
-        self._require_demo_execution("market buys")
+        self._require_private_execution("market buys")
         if amount is not None or quote_amount is None:
             raise ValueError("OKX market buys require an explicit quote_amount only")
         canonical = self.normalize_symbol(symbol)
@@ -205,7 +250,7 @@ class OkxAdapter(CcxtExchangeAdapter):
         *,
         client_order_id: str | None = None,
     ):
-        self._require_demo_execution("market sells")
+        self._require_private_execution("market sells")
         canonical = self.normalize_symbol(symbol)
         amount = self.normalize_amount(canonical, Decimal(str(amount)))
         ticker = self.fetch_ticker(canonical)
@@ -224,8 +269,43 @@ class OkxAdapter(CcxtExchangeAdapter):
         )
         return self._parse_order(raw, canonical)
 
+    def create_limit_sell_ioc(
+        self,
+        symbol: str,
+        amount: Decimal,
+        price: Decimal,
+        *,
+        client_order_id: str | None = None,
+    ):
+        """Submit a demo-only spot limit sell with immediate-or-cancel semantics.
+
+        CCXT maps ``optimal_limit_ioc`` to a market order for spot instruments,
+        so it must not be used here.  A regular limit order plus ``IOC`` is
+        retained as a genuine price-bounded spot submission.
+        """
+        self._require_private_execution("limit IOC sells")
+        canonical = self.normalize_symbol(symbol)
+        amount = self.normalize_amount(canonical, Decimal(str(amount)))
+        price = self.normalize_price(canonical, Decimal(str(price)))
+        validation = self.validate_order(
+            OrderRequest(canonical, "sell", amount=amount, price=price)
+        )
+        if not validation.valid:
+            raise ValueError("; ".join(validation.errors))
+        params = self._okx_order_params(client_order_id)
+        params["timeInForce"] = "IOC"
+        raw = self.client.create_order(
+            canonical,
+            "limit",
+            "sell",
+            float(amount),
+            float(price),
+            params,
+        )
+        return self._parse_order(raw, canonical)
+
     def fetch_order(self, exchange_order_id: str, symbol: str):
-        self._require_demo_execution("order lookup")
+        self._require_private_execution("order lookup")
         canonical = self.normalize_symbol(symbol)
         raw = self.client.fetch_order(
             str(exchange_order_id), canonical, self._okx_order_params()
@@ -233,7 +313,7 @@ class OkxAdapter(CcxtExchangeAdapter):
         return self._parse_order(raw, canonical)
 
     def fetch_order_by_client_id(self, client_order_id: str, symbol: str):
-        self._require_demo_execution("order lookup")
+        self._require_private_execution("order lookup")
         canonical = self.normalize_symbol(symbol)
         client_order_id = self.validate_client_order_id(client_order_id)
         params = self._okx_order_params(client_order_id)
@@ -242,17 +322,26 @@ class OkxAdapter(CcxtExchangeAdapter):
             raw = direct_lookup(client_order_id, canonical, params)
             if raw:
                 return self._parse_order(raw, canonical)
-        for method_name in ("fetch_open_orders", "fetch_closed_orders", "fetch_orders"):
-            method = getattr(self.client, method_name, None)
+        methods = [
+            getattr(self.client, "fetch_open_orders", None),
+            getattr(self.client, "fetch_closed_orders", None),
+        ]
+        if not any(callable(method) for method in methods):
+            methods.append(getattr(self.client, "fetch_orders", None))
+        for method in methods:
             if not callable(method):
                 continue
-            for raw in method(canonical, params=params) or ():
+            try:
+                orders = method(canonical, params=params)
+            except ccxt.NotSupported:
+                continue
+            for raw in orders or ():
                 if str(raw.get("clientOrderId") or raw.get("clOrdId") or "") == client_order_id:
                     return self._parse_order(raw, canonical)
         return None
 
     def cancel_order(self, exchange_order_id: str, symbol: str):
-        self._require_demo_execution("order cancellation")
+        self._require_private_execution("order cancellation")
         canonical = self.normalize_symbol(symbol)
         raw = self.client.cancel_order(
             str(exchange_order_id), canonical, self._okx_order_params()

@@ -130,7 +130,9 @@ def clear_active_exchange() -> None:
     set_default_adapter(None)
 
 
-def update_exchange_settings(rows) -> None:
+def update_exchange_settings(
+    rows, *, confirm_okx_production_live_flags: bool = False
+) -> None:
     connection = _get_conn()
     current = get_active_exchange(required=False)
     existing_settings = {
@@ -186,10 +188,19 @@ def update_exchange_settings(rows) -> None:
             raise ValueError("Invalid partial-sell policy")
         if not math.isfinite(sizing_buffer_pct) or not 0 <= sizing_buffer_pct < 100:
             raise ValueError("Sizing buffer must be between 0 and 100 percent")
-        if code == "okx" and (buy_enabled or sell_enabled):
-            raise ValueError(
-                "OKX order execution is unavailable; Buy Enabled and Sell Enabled must remain off"
+        if code == "okx":
+            enabling_a_side = (
+                (buy_enabled and not existing.get("Buy_Enabled", False))
+                or (sell_enabled and not existing.get("Sell_Enabled", False))
             )
+            if enabling_a_side and not confirm_okx_production_live_flags:
+                raise ValueError(
+                    "Enable OKX production buy or sell only after the typed production confirmation"
+                )
+            if enabling_a_side and fee is None:
+                raise ValueError(
+                    "Configure an explicit OKX production spot taker fee before enabling a live side"
+                )
         if (buy_enabled or sell_enabled) and not enabled:
             raise ValueError("Enable the exchange before enabling live operations")
         if enabled and not _is_registered_exchange_code(code):
@@ -1858,6 +1869,84 @@ def record_okx_demo_validation(reconciliation_result: dict) -> dict:
     return get_okx_demo_validation_record(int(cursor.lastrowid))
 
 
+def get_compatible_okx_demo_validation(
+    production_exchange: dict | None = None,
+) -> dict | None:
+    """Return the newest demo record compatible with one OKX production identity.
+
+    Compatibility is deliberately narrow: the adapter variant must match and
+    at least one completed demo symbol must use the current production quote
+    asset.  The record is evidence only; it never arms a side or run mode.
+    """
+    connection = _get_conn()
+    exchange = production_exchange or get_active_exchange(required=True)
+    if (
+        str(exchange.get("code") or "") != "okx"
+        or str(exchange.get("execution_environment") or "") != "production"
+    ):
+        return None
+    rows = connection.execute(
+        """
+        SELECT r.*
+        FROM OKX_Demo_Validation_Records r
+        JOIN Exchanges d ON d.Id=r.Exchange_Id
+        WHERE d.Code='okx_demo' AND r.Adapter_Id=?
+        ORDER BY r.Completed_At DESC, r.Id DESC
+        """,
+        (str(exchange.get("adapter_id") or ""),),
+    ).fetchall()
+    columns = [item[0] for item in connection.execute(
+        "SELECT * FROM OKX_Demo_Validation_Records LIMIT 0"
+    ).description]
+    expected_quote = str(exchange.get("quote_asset") or "").upper()
+    for row in rows:
+        record = dict(zip(columns, row))
+        try:
+            symbols = json.loads(str(record.get("Tested_Symbols_JSON") or "[]"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if any(str(symbol).upper().endswith(f"/{expected_quote}") for symbol in symbols):
+            return record
+    return None
+
+
+def is_active_backtest_approved_for_live_buy(
+    *, symbol: str, time_frame: str, strategy_id: str
+) -> bool:
+    """Require an approved, current, exchange-scoped backtest for a live buy."""
+    strategy_id = str(strategy_id or "").strip()
+    if not strategy_id:
+        return False
+    try:
+        settings = get_backtesting_settings(require_explicit_fee=True)
+        results = get_backtesting_results_by_symbol_timeframe_strategy(
+            symbol=str(symbol), time_frame=str(time_frame), strategy_id=strategy_id
+        )
+        if results.empty:
+            return False
+        strategy_df = get_strategy_by_id(strategy_id)
+        strategy_row = strategy_df.iloc[0] if not strategy_df.empty else None
+        optimize = bool(
+            int(strategy_row.get("Backtest_Optimize", 0))
+            if strategy_row is not None
+            else 0
+        )
+        fingerprint = build_backtesting_work_fingerprint(
+            strategy_id, optimize, settings, strategy_row=strategy_row
+        )
+        result = results.iloc[0]
+        if not backtesting_result_matches_context(
+            result,
+            work_fingerprint=fingerprint,
+            commission_value=float(settings["Commission_Value"]),
+        ):
+            return False
+        approved, _ = is_backtest_approved(str(time_frame), result)
+        return bool(approved)
+    except (RuntimeError, TypeError, ValueError, KeyError):
+        return False
+
+
 def get_okx_demo_validation_record(record_id: int) -> dict:
     connection = _get_conn()
     cursor = connection.execute(
@@ -2458,6 +2547,52 @@ def insert_position(
             sql_insert_position,
             (*exchange_fields, bot, symbol, rank, strategy_id, strategy_name, strategy_params_json),
         )
+
+
+def create_okx_demo_manual_position_candidate(symbol: str) -> int:
+    """Create the inactive position row required by the guarded demo buy flow."""
+    connection = _get_conn()
+    exchange = get_active_exchange(required=True)
+    if str(exchange["code"]) != "okx_demo" or str(
+        exchange.get("execution_environment")
+    ) != "demo":
+        raise ValueError("Manual demo positions require the active okx_demo identity")
+    exchange_fields = _exchange_symbol_metadata(symbol)
+    existing = connection.execute(
+        """
+        SELECT 1 FROM Positions
+        WHERE Exchange_Id=? AND Symbol_Normalized=? AND Position=1 LIMIT 1
+        """,
+        (int(exchange["id"]), str(exchange_fields[1])),
+    ).fetchone()
+    if existing is not None:
+        raise ValueError("An open OKX demo position already exists for this symbol")
+    unsettled_buy = connection.execute(
+        """
+        SELECT 1 FROM Orders
+        WHERE Exchange_Id=? AND Symbol_Normalized=? AND Bot='manual_demo' AND Side='BUY'
+          AND lower(COALESCE(Order_Status, 'unknown'))
+              IN ('pending','open','partially_filled','unknown')
+        LIMIT 1
+        """,
+        (int(exchange["id"]), str(exchange_fields[1])),
+    ).fetchone()
+    if unsettled_buy is not None:
+        raise ValueError(
+            "An unsettled manual OKX demo buy already exists for this symbol; reconcile it before retrying"
+        )
+    with connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO Positions (
+                Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset, Quote_Asset,
+                Bot, Symbol, Position, Rank, Strategy_Id, Strategy_Name, Strategy_Params_JSON
+            ) VALUES (?, ?, ?, ?, ?, 'manual_demo', ?, 0, 0,
+                      'okx_demo_manual', 'OKX Demo Manual Validation', '{}')
+            """,
+            (*exchange_fields, str(symbol)),
+        )
+    return int(cursor.lastrowid)
 
 
 sql_get_positions_by_position = f"""
@@ -6534,7 +6669,10 @@ def apply_database_scripts_updates():
 
 
 # convert 123456 seconds to 1d 2h 3m 4s format
-def calc_duration(seconds):
+def calc_duration(seconds, decimal_places: int = 0):
+    decimal_places = max(0, int(decimal_places))
+    if decimal_places:
+        seconds = round(float(seconds), decimal_places)
     days, remainder = divmod(seconds, 3600 * 24)
     hours, remainder = divmod(remainder, 3600)
     minutes, seconds = divmod(remainder, 60)
@@ -6547,7 +6685,9 @@ def calc_duration(seconds):
         time_format += "{:2d}h ".format(int(hours))
     if minutes > 0 or (hours > 0 and seconds > 0) or (days > 0 and seconds > 0):
         time_format += "{:2d}m ".format(int(minutes))
-    if seconds > 0 or (days == 0 and hours == 0 and minutes == 0):
+    if decimal_places:
+        time_format += f"{seconds:.{decimal_places}f}s"
+    elif seconds > 0 or (days == 0 and hours == 0 and minutes == 0):
         time_format += "{:2d}s".format(int(seconds))
 
     # msg = f'Execution Time: {time_format}'

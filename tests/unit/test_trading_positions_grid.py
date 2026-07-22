@@ -40,6 +40,14 @@ def _exchange_editor(
     )
 
 
+def test_manual_demo_submission_feedback_handles_exchange_rejection():
+    assert trading._manual_demo_submission_feedback(None, "submitted") == (
+        "error",
+        "The exchange rejected the order before submission. No replacement was "
+        "submitted; review the operational log.",
+    )
+
+
 def test_exchange_quote_change_requires_loaded_public_markets(monkeypatch):
     monkeypatch.setattr(
         trading.database,
@@ -394,6 +402,35 @@ def test_realized_all_time_period_loads_without_year_filter(monkeypatch):
 
     assert calls == [("SELL", trading.ALL_TIME_FILTER, "13")]
     assert len(trades) == len(sample)
+
+
+def test_realized_rolling_periods_accept_utc_sell_dates(monkeypatch):
+    recent = pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=1)
+    trades = pd.DataFrame(
+        [
+            {
+                "Bot": "manual_demo",
+                "Sell_Date": recent.isoformat(),
+                "PnL_Perc": 0.0,
+                "PnL_Value": 0.0,
+                "Sell_Position_Value": 0.0,
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        trading,
+        "_get_realized_trades_for_period",
+        lambda year, month: trades,
+    )
+
+    periods = trading.calculate_realized_rolling_periods()
+
+    assert int(periods.loc[periods["Period"] == "24h", "Positions"].iloc[0]) == 1
+
+
+@pytest.mark.parametrize("value", [None, "", float("nan"), "not-a-number"])
+def test_pnl_color_skips_missing_or_non_numeric_values(value):
+    assert trading.set_pnl_color(value) == ""
 
 
 def test_monthly_realized_returns_respects_strategy_filter(monkeypatch):

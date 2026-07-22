@@ -73,6 +73,11 @@ telegram_prefix_bot_4h_ml = "4h\n"
 telegram_prefix_bot_1h_sl = "1h "
 telegram_prefix_bot_1h_ml = "1h\n"
 
+# Controlled OKX demo validations are not strategy timeframes. Keep their
+# notifications explicit without pretending they came from a scheduled bot.
+telegram_prefix_bot_manual_demo_sl = "DEMO "
+telegram_prefix_bot_manual_demo_ml = "DEMO\n"
+
 # Message classes used by callers to keep Telegram channels focused:
 # routine: per-cycle status and summaries, action: order attempts/executions,
 # warning/error: exceptional conditions, signal: actionable signal alerts,
@@ -125,6 +130,12 @@ def get_telegram_prefix(bot, multi_line=False):
         result = telegram_prefix_bot_4h_ml if multi_line else telegram_prefix_bot_4h_sl
     elif bot == "1d":
         result = telegram_prefix_bot_1d_ml if multi_line else telegram_prefix_bot_1d_sl
+    elif bot == "manual_demo":
+        result = (
+            telegram_prefix_bot_manual_demo_ml
+            if multi_line
+            else telegram_prefix_bot_manual_demo_sl
+        )
     else:
         raise ValueError(f"Invalid bot type: {bot}")
     
@@ -153,6 +164,12 @@ def format_trade_event(
     entry_price=None,
     duration: str = "",
     open_positions: str = "",
+    exchange: str = "",
+    environment: str = "",
+    client_order_id: str = "",
+    order_status: str = "",
+    fees: str = "",
+    reconciliation: str = "",
 ):
     action = str(action or "").upper()
     lines = [
@@ -171,6 +188,12 @@ def format_trade_event(
                 (f"PnL {trade_against}", pnl_value),
                 ("Held", duration),
                 ("Open positions", open_positions),
+                ("Exchange", exchange),
+                ("Environment", environment),
+                ("Client order", client_order_id),
+                ("Order status", order_status),
+                ("Fees", fees),
+                ("Reconciliation", reconciliation),
             ]
         )
     )
@@ -194,6 +217,12 @@ def send_trade_event(
     entry_price=None,
     duration: str = "",
     open_positions: str = "",
+    exchange: str = "",
+    environment: str = "",
+    client_order_id: str = "",
+    order_status: str = "",
+    fees: str = "",
+    reconciliation: str = "",
 ):
     prefix_label = str(telegram_prefix or "").strip()
     timeframe_label = str(timeframe or "").strip()
@@ -212,6 +241,12 @@ def send_trade_event(
         entry_price=entry_price,
         duration=duration,
         open_positions=open_positions,
+        exchange=exchange,
+        environment=environment,
+        client_order_id=client_order_id,
+        order_status=order_status,
+        fees=fees,
+        reconciliation=reconciliation,
     )
     print(msg)
     send_telegram_message(telegram_token, emoji, msg)

@@ -125,6 +125,29 @@ def test_okx_demo_uses_quote_cost_buys_base_amount_sells_and_cash_mode():
     assert client.calls[2][-1] == {"tdMode": "cash", "clOrdId": "BECDEMO2"}
 
 
+def test_okx_demo_limit_ioc_sell_uses_an_explicit_spot_limit_price():
+    client = DemoOkxClient()
+    adapter = _adapter(client)
+
+    result = adapter.create_limit_sell_ioc(
+        "BTC/USDC",
+        Decimal("0.1"),
+        Decimal("99"),
+        client_order_id="BECDEMO3",
+    )
+
+    assert result.status.value == "filled"
+    assert client.calls[1] == (
+        "sell",
+        "BTC/USDC",
+        "limit",
+        "sell",
+        0.1,
+        99.0,
+        {"tdMode": "cash", "clOrdId": "BECDEMO3", "timeInForce": "IOC"},
+    )
+
+
 def test_okx_demo_reconciliation_and_cancel_use_client_id_and_cash_mode():
     client = DemoOkxClient()
     adapter = _adapter(client)
@@ -138,6 +161,30 @@ def test_okx_demo_reconciliation_and_cancel_use_client_id_and_cash_mode():
         "lookup", "BECDEMO1", "BTC/USDC", {"tdMode": "cash", "clOrdId": "BECDEMO1"}
     )
     assert client.calls[2][-1] == {"tdMode": "cash"}
+
+
+def test_okx_demo_client_id_lookup_does_not_call_unsupported_fetch_orders():
+    class CancelledOrderClient(DemoOkxClient):
+        def fetch_order_by_client_order_id(self, client_order_id, symbol, params):
+            self.calls.append(("lookup", client_order_id, symbol, params))
+            return None
+
+        def fetch_open_orders(self, symbol, params):
+            self.calls.append(("open", symbol, params))
+            return []
+
+        def fetch_closed_orders(self, symbol, params):
+            self.calls.append(("closed", symbol, params))
+            return []
+
+        def fetch_orders(self, symbol, params):
+            raise ccxt.NotSupported("myokx fetchOrders() is not supported")
+
+    client = CancelledOrderClient()
+    adapter = _adapter(client)
+
+    assert adapter.fetch_order_by_client_id("BECDEMO1", "BTC/USDC") is None
+    assert [call[0] for call in client.calls] == ["sandbox", "lookup", "open", "closed"]
 
 
 def test_okx_demo_parses_native_client_order_ids():
@@ -159,14 +206,21 @@ def test_okx_demo_rejects_invalid_client_order_ids_before_submission(client_orde
         adapter.validate_client_order_id(client_order_id)
 
 
-def test_okx_production_adapter_cannot_submit_even_with_credentials():
+def test_okx_production_adapter_uses_the_same_cash_spot_primitives_when_gated():
+    client = DemoOkxClient()
     adapter = OkxAdapter(
-        client=DemoOkxClient(),
+        client=client,
         api_key="key",
         api_secret="secret",
         api_passphrase="passphrase",
         private_enabled=True,
     )
 
-    with pytest.raises(PrivateExchangeOperationDisabled, match="mandatory demo identity"):
-        adapter.create_market_buy("BTC/USDC", quote_amount=Decimal("10"))
+    result = adapter.create_market_buy(
+        "BTC/USDC", quote_amount=Decimal("10"), client_order_id="BECPROD1"
+    )
+
+    assert result.status.value == "filled"
+    assert client.calls == [
+        ("buy", "BTC/USDC", 10.0, {"tdMode": "cash", "clOrdId": "BECPROD1"})
+    ]
