@@ -410,6 +410,13 @@ def get_active_exchange_log_identity() -> str:
     return f"{exchange['id']}:{exchange['code']}" if exchange else "unselected"
 
 
+def get_active_exchange_display_name(default: str = "Unselected") -> str:
+    exchange = get_active_exchange(required=False)
+    if not exchange:
+        return default
+    return str(exchange.get("name") or exchange.get("code") or default)
+
+
 def exchange_log_prefix() -> str:
     return f"[exchange_id={get_active_exchange_log_identity()}]"
 

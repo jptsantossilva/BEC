@@ -721,7 +721,7 @@ def test_warning_sent_to_errors_token_is_not_duplicated(monkeypatch):
     assert "boterrors-token/sendMessage" in posts[0][0]
 
 
-def test_telegram_messages_include_active_exchange_identity(monkeypatch):
+def test_telegram_messages_include_readable_active_exchange_name(monkeypatch):
     posts = []
 
     class FakeResponse:
@@ -739,14 +739,15 @@ def test_telegram_messages_include_active_exchange_identity(monkeypatch):
     monkeypatch.setattr(telegram, "bot_prefix", "BEC")
     monkeypatch.setattr(
         telegram.database,
-        "get_active_exchange_log_identity",
-        lambda: "1:binance",
+        "get_active_exchange_display_name",
+        lambda: "Kraken",
     )
 
     telegram.send_telegram_message("main-token", None, "healthy")
 
     assert len(posts) == 1
-    assert "[exchange_id=1:binance] healthy" in posts[0][1]["text"]
+    assert "BEC - Kraken healthy" in posts[0][1]["text"]
+    assert "exchange_id=" not in posts[0][1]["text"]
 
 
 def test_closed_position_alert_is_copied_to_closed_position_bot(monkeypatch):

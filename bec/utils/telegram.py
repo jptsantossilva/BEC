@@ -341,7 +341,8 @@ def send_telegram_message(
     """
 
     if include_prefix:
-        msg = f"[exchange_id={database.get_active_exchange_log_identity()}] {msg}"
+        exchange_name = database.get_active_exchange_display_name()
+        msg = f"{exchange_name} {msg}"
 
     if sanitize:
         msg = remove_chars_exceptions(msg, parse_mode=parse_mode)
