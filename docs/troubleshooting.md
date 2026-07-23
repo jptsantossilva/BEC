@@ -61,4 +61,15 @@ SQLite web is available at:
 http://localhost:8081
 ```
 
-Change the default `SQLITE_WEB_PASSWORD` in `docker-compose.yml` before exposing the service to any network.
+Docker Compose requires a non-empty `SQLITE_WEB_PASSWORD` in `.env`. Generate a
+strong value with `openssl rand -base64 32` if the service fails to start
+because the variable is missing.
+
+The port is bound only to `127.0.0.1` on the Docker host. For remote access,
+create an SSH tunnel:
+
+```bash
+ssh -L 8081:127.0.0.1:8081 user@your-server
+```
+
+Keep the tunnel open and browse to `http://127.0.0.1:8081` locally.

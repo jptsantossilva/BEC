@@ -8,6 +8,20 @@ Use this page to update BEC without losing the persistent database volume.
 
 From the folder that contains `docker-compose.yml`:
 
+Before deploying a Compose file that requires the SQLite web password, add a
+strong, unique value to the existing `.env`:
+
+```bash
+openssl rand -base64 32
+```
+
+```ini
+SQLITE_WEB_PASSWORD=""
+```
+
+Paste the generated value between the quotes. The deployment fails safely when
+the variable is missing or empty.
+
 ```bash
 docker compose pull
 docker compose up -d

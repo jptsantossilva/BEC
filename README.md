@@ -16,14 +16,20 @@ cd /opt/bec
 curl -fsSL https://raw.githubusercontent.com/jptsantossilva/BEC/main/docker-compose.yml -o docker-compose.yml
 curl -fsSL https://raw.githubusercontent.com/jptsantossilva/BEC/main/.env.example -o .env
 
+openssl rand -base64 32
 nano .env
 ```
-Fill `.env` with your Binance, Telegram, and OpenAI credentials.
+Copy the generated password into `SQLITE_WEB_PASSWORD`, then fill `.env` with
+your exchange, Telegram, and OpenAI credentials. Docker Compose refuses to
+start when `SQLITE_WEB_PASSWORD` is missing or empty.
 
 ```ini
 # Binance API
 binance_api=
 binance_secret=
+
+# SQLite web admin
+SQLITE_WEB_PASSWORD=
 
 # Telegram
 telegram_chat_id=
@@ -45,7 +51,16 @@ sudo docker compose up -d
 
 What you get:
 - **Dashboard**: web UI at `http://localhost:8080` for monitoring PnL, balances, open positions, scheduled jobs, backtesting results, and settings
-- **SQLite web**: admin interface at `http://localhost:8081` to inspect the database.
+- **SQLite web**: password-protected admin interface at `http://localhost:8081`, bound only to the Docker host.
+
+To access SQLite web from another computer, use an SSH tunnel instead of
+publishing port 8081:
+
+```bash
+ssh -L 8081:127.0.0.1:8081 user@your-server
+```
+
+Keep the tunnel open and browse to `http://127.0.0.1:8081` on your computer.
 
 Useful commands:
 - `docker compose ps` — show running containers and their status.

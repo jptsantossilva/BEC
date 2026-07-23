@@ -33,14 +33,20 @@ mkdir -p /opt/bec
 cd /opt/bec
 curl -fsSL https://raw.githubusercontent.com/jptsantossilva/BEC/main/docker-compose.yml -o docker-compose.yml
 curl -fsSL https://raw.githubusercontent.com/jptsantossilva/BEC/main/.env.example -o .env
+openssl rand -base64 32
 ```
 
-Edit `.env` and add your credentials:
+Copy the generated password into `SQLITE_WEB_PASSWORD`, then edit `.env` and
+add your credentials. Docker Compose refuses to start when the SQLite web
+password is missing or empty.
 
 ```ini
 # Binance API
 binance_api="..."
 binance_secret="..."
+
+# SQLite web admin
+SQLITE_WEB_PASSWORD=""
 
 # Telegram
 telegram_chat_id="..."
@@ -56,8 +62,6 @@ BEC_OPENAI_MODEL="gpt-5.5"
 
 OpenAI is only needed for AI analysis in Backtesting Results. If you do not use AI analysis, leave `OPENAI_API_KEY` empty and keep the default `BEC_OPENAI_MODEL`.
 
-The SQLite web password is configured in `docker-compose.yml` with `SQLITE_WEB_PASSWORD`. Change the default value before exposing SQLite web to any network.
-
 Start BEC:
 
 ```bash
@@ -68,9 +72,18 @@ sudo docker compose up -d
 ## Open The Apps
 
 - Dashboard: `http://localhost:8080`
-- SQLite web: `http://localhost:8081`
+- SQLite web: `http://localhost:8081` on the Docker host
 
 On a fresh install, use the default admin login shown in the project release notes or change it immediately after first login.
+
+SQLite web is intentionally bound to `127.0.0.1`. To open it from another
+computer, create an SSH tunnel:
+
+```bash
+ssh -L 8081:127.0.0.1:8081 user@your-server
+```
+
+Keep the tunnel open and browse to `http://127.0.0.1:8081` locally.
 
 ## First Checks
 
