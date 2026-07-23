@@ -193,6 +193,48 @@ def test_kraken_adapter_implements_contract_and_maps_aliases_and_limits():
     assert "cost is below the exchange minimum" in invalid.errors
 
 
+@pytest.mark.parametrize("legacy_first", [False, True])
+def test_kraken_canonical_market_wins_over_legacy_display_alias(legacy_first):
+    class RepAliasClient(FakeKrakenClient):
+        def load_markets(self, reload=False):
+            self.load_calls.append(bool(reload))
+            current = {
+                "id": "XREPZEUR",
+                "symbol": "REP/EUR",
+                "base": "REP",
+                "quote": "EUR",
+                "spot": True,
+                "type": "spot",
+                "active": True,
+                "precision": {},
+                "limits": {},
+                "info": {"altname": "REPEUR", "wsname": "REP/EUR"},
+            }
+            legacy = {
+                "id": "XREPV1ZEUR",
+                "symbol": "REP/EUR",
+                "base": "REPV1",
+                "quote": "EUR",
+                "spot": True,
+                "type": "spot",
+                "active": True,
+                "precision": {},
+                "limits": {},
+                "info": {"altname": "REPV1EUR", "wsname": "REP/EUR"},
+            }
+            rows = [("REPV1/EUR", legacy), ("REP/EUR", current)]
+            if not legacy_first:
+                rows.reverse()
+            return dict(rows)
+
+    adapter = KrakenAdapter(client=RepAliasClient())
+
+    assert set(adapter.load_markets()) == {"REP/EUR", "REPV1/EUR"}
+    assert adapter.normalize_symbol("REP/EUR") == "REP/EUR"
+    assert adapter.normalize_symbol("XREPZEUR") == "REP/EUR"
+    assert adapter.normalize_symbol("XREPV1ZEUR") == "REPV1/EUR"
+
+
 def test_ccxt_market_metadata_cache_honors_ttl_and_force_refresh():
     client = FakeKrakenClient()
     now = [100.0]

@@ -176,6 +176,14 @@ class CcxtExchangeAdapter(ExchangeAdapter):
                 return
             existing = lookup.get(value)
             if existing is not None and existing != canonical:
+                # Some exchanges retain legacy markets whose display alias is
+                # also the canonical symbol of a newer market (Kraken exposes
+                # REP/EUR for both REP/EUR and legacy REPV1/EUR).  Keep the
+                # real canonical market addressable and leave the legacy
+                # market available through its own canonical/native symbols.
+                if value in markets:
+                    lookup[value] = value
+                    return
                 raise ValueError(
                     f"{self.name} market alias collision for {value}: "
                     f"{existing} and {canonical}"
