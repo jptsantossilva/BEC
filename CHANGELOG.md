@@ -3,6 +3,9 @@
 All notable changes to this project will be documented in this file.
 
 ## [2026-07-23]
+- Kraken Public Data - Added a shared cross-process throttle for dashboard, manual commands and scheduled jobs, serializing public requests with a 1.1-second minimum interval and coordinating cooldowns before `load_markets` and every OHLCV page.
+- Kraken Reliability - Added transient-only retries for rate limits, DDoS protection, request timeouts and temporary exchange unavailability, using seven retries with exponential backoff, a 60-second cap and jitter while leaving private requests and orders untouched.
+- Backtesting Safety - Exhausted transient Kraken failures now stop manual and top-performer processing without changing prior trading approvals, recording `Backtest_Failed` or marking pending symbols as completed; Telegram alerts are sent only after all retries are exhausted.
 - Runtime Logging - Centralized the root and package CLI entrypoints and replaced silent fatal-Telegram notification catches with token-safe secondary-failure logging while preserving exit codes.
 - Docker Security - Removed the hardcoded SQLite web admin password, made `SQLITE_WEB_PASSWORD` mandatory at Compose validation time, and restricted port 8081 to the Docker host loopback interface.
 - Telegram - Consolidated duplicated HTTP request/error handling across messages, trade alerts, photos and files into one shared helper while preserving each payload type and the configured timeout.

@@ -25,6 +25,7 @@ from backtesting.lib import crossover
 
 import bec.utils.telegram as telegram
 import bec.utils.database as database
+from bec.exchanges.ccxt_adapter import TransientPublicMarketDataError
 from bec.utils.strategy_quality_score import calculate_strategy_quality_score
 
 # import bec.utils.config as config
@@ -4304,6 +4305,11 @@ def calc_backtesting(
         result = True
         return result
 
+    except TransientPublicMarketDataError:
+        logging.exception(
+            "Backtest stopped because public market data remained unavailable"
+        )
+        raise
     except Exception as e:
         msg = sys._getframe().f_code.co_name + f" - " + repr(e)
         msg = telegram.telegram_prefix_market_phases_sl + msg
@@ -4337,19 +4343,34 @@ def main():
     if strategy is None:
         raise ValueError(f"Strategy '{args.strategy}' is not available.")
 
-    result = calc_backtesting(
-        symbol=args.symbol,
-        time_frame=args.timeframe,
-        strategy=strategy,
-        optimize=args.optimize,
-        exchange_id=args.exchange_id,
-        exchange_code=args.exchange_code,
-        exchange_adapter_id=args.exchange_adapter_id,
-        exchange_quote_asset=args.exchange_quote_asset,
-        exchange_execution_environment=args.exchange_execution_environment,
-        commission_value=args.commission,
-        work_fingerprint=args.work_fingerprint,
-    )
+    try:
+        result = calc_backtesting(
+            symbol=args.symbol,
+            time_frame=args.timeframe,
+            strategy=strategy,
+            optimize=args.optimize,
+            exchange_id=args.exchange_id,
+            exchange_code=args.exchange_code,
+            exchange_adapter_id=args.exchange_adapter_id,
+            exchange_quote_asset=args.exchange_quote_asset,
+            exchange_execution_environment=args.exchange_execution_environment,
+            commission_value=args.commission,
+            work_fingerprint=args.work_fingerprint,
+        )
+    except TransientPublicMarketDataError as exc:
+        msg = (
+            telegram.telegram_prefix_market_phases_sl
+            + "Public market data remained unavailable after retries; "
+            + f"the backtest was stopped without changing its approval: {exc}"
+        )
+        print(msg)
+        logging.exception(msg)
+        telegram.send_telegram_message(
+            telegram.telegram_token_main,
+            telegram.EMOJI_WARNING,
+            msg,
+        )
+        raise SystemExit(1) from exc
     raise SystemExit(0 if result else 1)
 
 

@@ -11,6 +11,7 @@ import bec.main as main
 import bec.symbol_by_market_phase as market_phase
 import bec.signals.bb_width as bb_width
 import bec.utils.telegram as telegram
+from bec.exchanges.ccxt_adapter import TransientPublicMarketDataError
 from bec.strategy_builder.templates import get_builtin_template
 from bec.utils import telegram_reporting
 
@@ -117,6 +118,77 @@ def test_backtesting_full_history_omits_start_date(monkeypatch):
 
     assert not df.empty
     assert "start_date" not in calls[0]
+
+
+def test_manual_backtest_propagates_transient_market_failure_without_telegram_spam(
+    monkeypatch,
+):
+    import bec.my_backtesting as my_backtesting
+
+    strategy = object()
+    telegram_calls = []
+    monkeypatch.setattr(
+        my_backtesting,
+        "get_strategy_id",
+        lambda _strategy: "selected_strategy",
+    )
+    monkeypatch.setattr(
+        my_backtesting,
+        "run_backtest",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            TransientPublicMarketDataError("Kraken unavailable")
+        ),
+    )
+    monkeypatch.setattr(
+        my_backtesting,
+        "set_declarative_strategy_data_cache",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        my_backtesting.telegram,
+        "send_telegram_message",
+        lambda *args, **kwargs: telegram_calls.append((args, kwargs)),
+    )
+
+    with pytest.raises(
+        TransientPublicMarketDataError,
+        match="Kraken unavailable",
+    ):
+        my_backtesting.calc_backtesting(
+            "BTC/USDC",
+            "1h",
+            strategy,
+            optimize=False,
+        )
+
+    assert telegram_calls == []
+
+
+def test_market_phase_cli_notifies_once_after_transient_retries_are_exhausted(
+    monkeypatch,
+):
+    telegram_calls = []
+    monkeypatch.setattr(
+        market_phase,
+        "read_arguments",
+        lambda: ("1d", "USDC"),
+    )
+    monkeypatch.setattr(
+        market_phase,
+        "main",
+        lambda timeframe: (_ for _ in ()).throw(
+            TransientPublicMarketDataError("Kraken unavailable after 8 attempts")
+        ),
+    )
+    monkeypatch.setattr(
+        market_phase.telegram,
+        "send_telegram_message",
+        lambda *args, **kwargs: telegram_calls.append((args, kwargs)),
+    )
+
+    assert market_phase.cli_main() == 1
+    assert len(telegram_calls) == 1
+    assert "approvals were preserved" in telegram_calls[0][0][2]
 
 
 def test_auto_switch_signal_timeframe_prefers_largest_fixed_timeframe(monkeypatch):
@@ -1613,6 +1685,108 @@ def test_add_symbol_does_not_checkpoint_failed_backtest(monkeypatch):
     assert stats["backtest_runs"] == 1
     assert stats["approved_candidates"] == 0
     assert stats["rejected_candidates"] == 1
+
+
+def test_add_symbol_transient_market_failure_preserves_approval_and_pending_work(
+    monkeypatch,
+):
+    settings = SimpleNamespace(main_strategies=["selected_strategy"])
+    pending = pd.DataFrame([{"Symbol": "AAAUSDC"}])
+    strategies = pd.DataFrame(
+        [
+            {
+                "Id": "selected_strategy",
+                "Name": "Selected Strategy",
+                "Backtest_Optimize": False,
+            }
+        ]
+    )
+    previous_result = pd.DataFrame(
+        [
+            {
+                "Trading_Approved": 1,
+                "Backtest_Work_Fingerprint": "old-fingerprint",
+                "Backtest_Work_Executed_At": "2026-05-01T00:00:00Z",
+            }
+        ]
+    )
+    approval_calls = []
+    completed_calls = []
+    monkeypatch.setattr(
+        add_symbol.database,
+        "get_active_exchange_code",
+        lambda: "kraken",
+    )
+    monkeypatch.setattr(
+        add_symbol.database,
+        "get_symbols_to_calc_by_calc_completed",
+        lambda completed: pending,
+    )
+    monkeypatch.setattr(
+        add_symbol.database,
+        "get_strategies_for_main",
+        lambda: strategies,
+    )
+    monkeypatch.setattr(
+        add_symbol.database,
+        "get_backtesting_settings",
+        lambda: {
+            "Commission_Value": 0.004,
+            "Candidate_Backtest_Refresh_Days": 7,
+        },
+    )
+    monkeypatch.setattr(
+        add_symbol.database,
+        "build_backtesting_work_fingerprint",
+        lambda *args, **kwargs: "new-fingerprint",
+    )
+    monkeypatch.setattr(
+        add_symbol.database,
+        "get_backtesting_results_by_symbol_timeframe_strategy",
+        lambda **kwargs: previous_result,
+    )
+    monkeypatch.setattr(
+        add_symbol.database,
+        "set_backtesting_approval",
+        lambda **kwargs: approval_calls.append(kwargs),
+    )
+    monkeypatch.setattr(
+        add_symbol.database,
+        "set_symbols_to_calc_completed",
+        lambda symbol: completed_calls.append(symbol),
+    )
+    monkeypatch.setattr(
+        add_symbol.importlib,
+        "import_module",
+        lambda name: SimpleNamespace(selected_strategy=object()),
+    )
+    monkeypatch.setattr(
+        add_symbol,
+        "_backtest_timeframes_for_trading",
+        lambda: ["1h"],
+    )
+    monkeypatch.setattr(
+        add_symbol,
+        "_latest_backtest_candle",
+        lambda *args, **kwargs: "new-candle",
+    )
+    monkeypatch.setattr(
+        add_symbol,
+        "calc_backtesting",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            TransientPublicMarketDataError("Kraken unavailable")
+        ),
+    )
+
+    with pytest.raises(
+        TransientPublicMarketDataError,
+        match="Kraken unavailable",
+    ):
+        add_symbol.run(settings=settings)
+
+    assert approval_calls == []
+    assert completed_calls == []
+    assert int(previous_result.iloc[0]["Trading_Approved"]) == 1
 
 
 @pytest.mark.parametrize("exchange_code", ["binance", "kraken"])

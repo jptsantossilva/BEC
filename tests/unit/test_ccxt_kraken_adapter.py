@@ -5,7 +5,10 @@ import pandas as pd
 import pytest
 
 from bec.exchanges.base import ExchangeAdapter, OrderRequest, OrderStatus
-from bec.exchanges.ccxt_adapter import PrivateExchangeOperationDisabled
+from bec.exchanges.ccxt_adapter import (
+    PrivateExchangeOperationDisabled,
+    TransientPublicMarketDataError,
+)
 from bec.exchanges.kraken_adapter import KrakenAdapter
 from bec.exchanges import service
 
@@ -278,6 +281,105 @@ def test_kraken_public_ohlcv_ticker_order_book_and_health():
     assert book.asks == ((Decimal("60001"), Decimal("0.1")),)
     assert health.available is True
     assert health.message == "operational"
+
+
+def test_kraken_ohlcv_retries_rate_limit_per_page_without_duplicate_candles():
+    class RateLimitedPageClient(FakeKrakenClient):
+        def __init__(self):
+            super().__init__()
+            self.ohlcv_calls = []
+            self.failed_second_page = False
+
+        def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
+            self.ohlcv_calls.append(since)
+            if (
+                since == 1_700_000_120_000
+                and not self.failed_second_page
+            ):
+                self.failed_second_page = True
+                raise ccxt.RateLimitExceeded("EGeneral:Too many requests")
+            return super().fetch_ohlcv(symbol, timeframe, since, limit, params)
+
+    client = RateLimitedPageClient()
+    sleeps = []
+    adapter = KrakenAdapter(
+        client=client,
+        sleeper=sleeps.append,
+        random_uniform=lambda _start, _end: 0.0,
+    )
+
+    frame = adapter.fetch_ohlcv(
+        "BTC/EUR",
+        "1m",
+        start_date=1_700_000_000_000,
+        limit=2,
+        keep_time_col=False,
+        max_retries=2,
+        backoff_sec=2,
+    )
+
+    assert frame["Close"].tolist() == [11, 12, 13]
+    assert client.ohlcv_calls == [
+        1_700_000_000_000,
+        1_700_000_120_000,
+        1_700_000_120_000,
+    ]
+    assert sleeps == [2.0]
+
+
+def test_kraken_ohlcv_exhaustion_raises_typed_transient_error():
+    class UnavailableClient(FakeKrakenClient):
+        def __init__(self):
+            super().__init__()
+            self.ohlcv_calls = 0
+
+        def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
+            self.ohlcv_calls += 1
+            raise ccxt.DDoSProtection("EGeneral:Too many requests")
+
+    client = UnavailableClient()
+    sleeps = []
+    adapter = KrakenAdapter(
+        client=client,
+        sleeper=sleeps.append,
+        random_uniform=lambda _start, _end: 0.0,
+    )
+
+    with pytest.raises(
+        TransientPublicMarketDataError,
+        match="failed after 3 attempts",
+    ):
+        adapter.fetch_ohlcv(
+            "BTC/EUR",
+            "1m",
+            max_retries=2,
+            backoff_sec=2,
+            max_backoff_sec=3,
+        )
+
+    assert client.ohlcv_calls == 3
+    assert sleeps == [2.0, 3.0]
+
+
+def test_kraken_ohlcv_does_not_retry_non_transient_errors():
+    class InvalidSymbolClient(FakeKrakenClient):
+        def __init__(self):
+            super().__init__()
+            self.ohlcv_calls = 0
+
+        def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
+            self.ohlcv_calls += 1
+            raise ccxt.BadSymbol("invalid symbol")
+
+    client = InvalidSymbolClient()
+    sleeps = []
+    adapter = KrakenAdapter(client=client, sleeper=sleeps.append)
+
+    with pytest.raises(ccxt.BadSymbol, match="invalid symbol"):
+        adapter.fetch_ohlcv("BTC/EUR", "1m")
+
+    assert client.ohlcv_calls == 1
+    assert sleeps == []
 
 
 def test_exchange_service_close_frame_uses_active_public_adapter():

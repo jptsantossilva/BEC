@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+import random
 import time
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 import ccxt
 import pandas as pd
@@ -24,6 +27,21 @@ from bec.exchanges.base import (
     OrderValidation,
     Ticker,
 )
+from bec.exchanges.public_rate_limit import SharedPublicRequestThrottle
+
+
+logger = logging.getLogger(__name__)
+
+TRANSIENT_PUBLIC_READ_ERRORS = (
+    ccxt.RateLimitExceeded,
+    ccxt.DDoSProtection,
+    ccxt.RequestTimeout,
+    ccxt.ExchangeNotAvailable,
+)
+
+
+class TransientPublicMarketDataError(RuntimeError):
+    """Raised after retry-safe public market-data reads exhaust their budget."""
 
 
 class PrivateExchangeOperationDisabled(NotImplementedError):
@@ -74,6 +92,10 @@ class CcxtExchangeAdapter(ExchangeAdapter):
         private_enabled: bool = False,
         sizing_buffer_pct: Decimal = Decimal("1"),
         clock=time.monotonic,
+        public_request_throttle: SharedPublicRequestThrottle | None = None,
+        public_read_retry_enabled: bool = False,
+        sleeper: Callable[[float], None] = time.sleep,
+        random_uniform: Callable[[float, float], float] = random.uniform,
     ):
         self.code = str(exchange_id).lower()
         self.name = name or self.code.title()
@@ -90,6 +112,10 @@ class CcxtExchangeAdapter(ExchangeAdapter):
         self._markets: dict[str, MarketInfo] | None = None
         self._market_lookup: dict[str, str] = {}
         self._markets_loaded_at = 0.0
+        self._public_request_throttle = public_request_throttle
+        self._public_read_retry_enabled = bool(public_read_retry_enabled)
+        self._sleep = sleeper
+        self._random_uniform = random_uniform
 
     @staticmethod
     def _create_client(
@@ -123,6 +149,72 @@ class CcxtExchangeAdapter(ExchangeAdapter):
     @property
     def private_enabled(self) -> bool:
         return self._private_enabled
+
+    def _call_public_read(
+        self,
+        operation: str,
+        callback: Callable[[], Any],
+        *,
+        max_retries: int = 7,
+        backoff_sec: float = 2.0,
+        max_backoff_sec: float = 60.0,
+        context: str = "",
+    ):
+        if (
+            not self._public_read_retry_enabled
+            and self._public_request_throttle is None
+        ):
+            return callback()
+
+        retries = max(int(max_retries), 0) if self._public_read_retry_enabled else 0
+        initial_backoff = max(float(backoff_sec), 0.0)
+        maximum_backoff = max(float(max_backoff_sec), initial_backoff)
+
+        for retry_index in range(retries + 1):
+            throttle_context = (
+                self._public_request_throttle.request_slot()
+                if self._public_request_throttle is not None
+                else nullcontext(None)
+            )
+            retry_delay = 0.0
+            caught: Exception | None = None
+            with throttle_context as lease:
+                try:
+                    return callback()
+                except TRANSIENT_PUBLIC_READ_ERRORS as exc:
+                    caught = exc
+                    base_delay = min(
+                        initial_backoff * (2**retry_index),
+                        maximum_backoff,
+                    )
+                    jitter = self._random_uniform(0.0, base_delay * 0.25)
+                    retry_delay = min(base_delay + jitter, maximum_backoff)
+                    if lease is not None:
+                        lease.defer(retry_delay)
+
+            if caught is None:
+                continue
+
+            attempts = retry_index + 1
+            detail = f" ({context})" if context else ""
+            if retry_index >= retries:
+                raise TransientPublicMarketDataError(
+                    f"{self.name} public {operation}{detail} failed after "
+                    f"{attempts} attempts: {caught!r}"
+                ) from caught
+
+            logger.warning(
+                "%s public %s%s retry %s/%s in %.2fs after %s",
+                self.name,
+                operation,
+                detail,
+                attempts,
+                retries,
+                retry_delay,
+                type(caught).__name__,
+            )
+            if self._public_request_throttle is None and retry_delay:
+                self._sleep(retry_delay)
 
     def is_known_submission_rejection(self, exc: Exception) -> bool:
         return isinstance(
@@ -161,8 +253,11 @@ class CcxtExchangeAdapter(ExchangeAdapter):
         if cache_valid:
             return self._markets
 
-        raw_markets = self.client.load_markets(
-            reload=bool(force or self._markets is not None)
+        raw_markets = self._call_public_read(
+            "load_markets",
+            lambda: self.client.load_markets(
+                reload=bool(force or self._markets is not None)
+            ),
         )
         quote_market_buy = bool(
             getattr(self.client, "has", {}).get("createMarketBuyOrderWithCost", False)
@@ -339,8 +434,9 @@ class CcxtExchangeAdapter(ExchangeAdapter):
         include_symbol = bool(kwargs.pop("include_symbol", False))
         set_index = bool(kwargs.pop("set_index", True))
         keep_time_col = bool(kwargs.pop("keep_time_col", True))
-        kwargs.pop("max_retries", None)
-        kwargs.pop("backoff_sec", None)
+        max_retries = int(kwargs.pop("max_retries", 7))
+        backoff_sec = float(kwargs.pop("backoff_sec", 2.0))
+        max_backoff_sec = float(kwargs.pop("max_backoff_sec", 60.0))
         params = dict(kwargs.pop("params", {}))
         if kwargs:
             raise TypeError(f"Unsupported OHLCV options: {', '.join(sorted(kwargs))}")
@@ -349,12 +445,19 @@ class CcxtExchangeAdapter(ExchangeAdapter):
         cursor = start_ms
         rows: dict[int, list[Any]] = {}
         for _ in range(1000):
-            batch = self.client.fetch_ohlcv(
-                canonical,
-                timeframe=interval,
-                since=cursor,
-                limit=limit,
-                params=params,
+            batch = self._call_public_read(
+                "fetch_ohlcv",
+                lambda: self.client.fetch_ohlcv(
+                    canonical,
+                    timeframe=interval,
+                    since=cursor,
+                    limit=limit,
+                    params=params,
+                ),
+                max_retries=max_retries,
+                backoff_sec=backoff_sec,
+                max_backoff_sec=max_backoff_sec,
+                context=f"{canonical} {interval}",
             )
             if not batch:
                 break
@@ -397,7 +500,11 @@ class CcxtExchangeAdapter(ExchangeAdapter):
 
     def fetch_ticker(self, symbol: str) -> Ticker:
         canonical = self.normalize_symbol(symbol)
-        raw = self.client.fetch_ticker(canonical)
+        raw = self._call_public_read(
+            "fetch_ticker",
+            lambda: self.client.fetch_ticker(canonical),
+            context=canonical,
+        )
         return Ticker(
             symbol=canonical,
             last=_decimal(raw.get("last") or raw.get("close")),
@@ -408,7 +515,11 @@ class CcxtExchangeAdapter(ExchangeAdapter):
 
     def fetch_order_book(self, symbol: str, limit: int | None = None) -> OrderBook:
         canonical = self.normalize_symbol(symbol)
-        raw = self.client.fetch_order_book(canonical, limit=limit)
+        raw = self._call_public_read(
+            "fetch_order_book",
+            lambda: self.client.fetch_order_book(canonical, limit=limit),
+            context=canonical,
+        )
         return OrderBook(
             symbol=canonical,
             bids=tuple(
@@ -426,7 +537,10 @@ class CcxtExchangeAdapter(ExchangeAdapter):
         checked_at = datetime.now(timezone.utc)
         try:
             if getattr(self.client, "has", {}).get("fetchStatus"):
-                status = self.client.fetch_status() or {}
+                status = self._call_public_read(
+                    "fetch_status",
+                    self.client.fetch_status,
+                ) or {}
                 state = str(status.get("status", "ok")).lower()
                 available = state not in {"error", "maintenance", "shutdown"}
                 message = str(status.get("updated") or status.get("status") or "ok")

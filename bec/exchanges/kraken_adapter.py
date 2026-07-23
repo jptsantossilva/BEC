@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import os
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 from bec.exchanges.ccxt_adapter import CcxtExchangeAdapter
+from bec.exchanges.public_rate_limit import SharedPublicRequestThrottle
 from bec.utils.env_loader import load_env_file
 
 
@@ -28,6 +30,9 @@ class KrakenAdapter(CcxtExchangeAdapter):
         private_enabled: bool | None = None,
         sizing_buffer_pct: Decimal = Decimal("1"),
         clock=None,
+        public_request_throttle: SharedPublicRequestThrottle | None = None,
+        sleeper=None,
+        random_uniform=None,
     ):
         # An injected client is a test/integration boundary. Do not silently
         # import process credentials into it unless the caller explicitly asks.
@@ -46,6 +51,16 @@ class KrakenAdapter(CcxtExchangeAdapter):
         )
         if private_enabled is None:
             private_enabled = bool(api_key and api_secret)
+        if public_request_throttle is None and client is None:
+            project_root = Path(__file__).resolve().parents[2]
+            public_request_throttle = SharedPublicRequestThrottle(
+                project_root
+                / "static"
+                / "backtest_results"
+                / "rate_limits"
+                / "kraken-public.lock",
+                min_interval_seconds=1.1,
+            )
         kwargs = {
             "client": client,
             "name": self.name,
@@ -54,7 +69,13 @@ class KrakenAdapter(CcxtExchangeAdapter):
             "api_secret": api_secret,
             "private_enabled": private_enabled,
             "sizing_buffer_pct": sizing_buffer_pct,
+            "public_request_throttle": public_request_throttle,
+            "public_read_retry_enabled": True,
         }
         if clock is not None:
             kwargs["clock"] = clock
+        if sleeper is not None:
+            kwargs["sleeper"] = sleeper
+        if random_uniform is not None:
+            kwargs["random_uniform"] = random_uniform
         super().__init__(self.code, **kwargs)

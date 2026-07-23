@@ -32,3 +32,23 @@ CCXT is pinned in `requirements.in`; `requirements.txt` is generated with
 Automated tests mock CCXT HTTP behavior. A release candidate should also verify
 Kraken market loading, `BTC/USDC` ticker, order book and recent OHLCV against the
 public API without credentials.
+
+## Public Rate-Limit Resilience
+
+Kraken public reads are serialized across dashboard, jobs-runner and manual
+processes through a shared lock under `static/backtest_results/rate_limits/`.
+Normal requests are spaced by at least 1.1 seconds. The directory is backed by
+the shared persistence volume in Docker, so coordination also applies across
+the dashboard and jobs-runner containers.
+
+Read-only CCXT failures classified as rate limiting, DDoS protection, request
+timeout or temporary exchange unavailability are retried with exponential
+backoff, a 60-second cap and jitter. OHLCV calls accept `max_retries`,
+`backoff_sec` and `max_backoff_sec` overrides; the defaults are seven retries,
+two seconds initial backoff and a 60-second cap.
+
+After retry exhaustion, market-phase processing stops without replacing a
+previous backtest result, revoking its approval, or marking remaining symbols
+complete. Rerunning resumes through the normal current-result cache. Invalid
+symbols, authentication failures and other non-transient exchange errors are
+not retried.

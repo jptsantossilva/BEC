@@ -13,6 +13,7 @@ import bec.exchanges.service as binance
 import bec.utils.telegram as telegram
 import bec.utils.telegram_reporting as telegram_reporting
 import bec.add_symbol as add_symbol
+from bec.exchanges.ccxt_adapter import TransientPublicMarketDataError
 from bec.my_backtesting import calc_backtesting
 from bec.strategy_builder import engine as strategy_engine
 
@@ -686,6 +687,28 @@ def main(timeframe):
     print(msg)
     telegram.send_telegram_message(telegram.telegram_token_main, "", msg)
 
+
+def cli_main():
+    time_frame, _trade_against_value = read_arguments()
+    try:
+        main(timeframe=time_frame)
+    except TransientPublicMarketDataError as exc:
+        msg = (
+            telegram.telegram_prefix_market_phases_sl
+            + "Public Kraken market data remained unavailable after retries; "
+            + "market-phase processing stopped and existing backtest approvals "
+            + f"were preserved: {exc}"
+        )
+        print(msg)
+        logging.exception(msg)
+        telegram.send_telegram_message(
+            telegram.telegram_token_main,
+            telegram.EMOJI_WARNING,
+            msg,
+        )
+        return 1
+    return 0
+
+
 if __name__ == "__main__":
-    time_frame, trade_against_value = read_arguments()
-    main(timeframe=time_frame)
+    raise SystemExit(cli_main())
