@@ -978,7 +978,7 @@ def send_daily_summary(settings=None):
 
 
 def run(timeframe, run_mode=None):
-    del run_mode  # Kept for compatibility with the root main.py wrapper.
+    del run_mode  # Kept for compatibility with existing callers.
     settings = config.load_settings(refresh=True)
 
     # calculate program run time
@@ -1007,34 +1007,53 @@ def run(timeframe, run_mode=None):
     telegram.send_telegram_message(telegram_token, "", msg)
 
 
-if __name__ == "__main__":
+def _send_fatal_notification(message: str, context: str) -> None:
+    """Best-effort fatal alert that cannot hide or replace the primary failure."""
+    try:
+        telegram.send_telegram_message(
+            telegram_token,
+            telegram.EMOJI_WARNING,
+            message,
+        )
+    except Exception as error:
+        # Log only fixed context and the exception type. An unexpected sender
+        # exception may contain a token-bearing Telegram URL in its message.
+        logging.error(
+            "Failed to send fatal Telegram notification (%s): %s",
+            context,
+            type(error).__name__,
+        )
+
+
+def cli_main() -> int:
+    """Run the command-line entrypoint and return its process exit code."""
     time_frame = read_arguments()
 
     try:
         # Validate timeframe and prefixes first
         apply_arguments(time_frame)
-    except ValueError as e:
+    except ValueError as error:
         # Cron-friendly: log error and exit with code 2 (usage/config error)
-        logging.error(str(e))
-        try:
-            telegram.send_telegram_message(
-                telegram_token, telegram.EMOJI_WARNING, f"[FATAL] {e}"
-            )
-        except Exception:
-            pass
-        sys.exit(2)
+        logging.error(str(error))
+        _send_fatal_notification(
+            f"[FATAL] {error}",
+            "timeframe validation",
+        )
+        return 2
 
     try:
         run(timeframe=time_frame)
-    except Exception as e:
+    except Exception as error:
         # Unexpected runtime error: keep stacktrace in logs and notify
         logging.exception("Unhandled exception during bot run")
-        try:
-            telegram.send_telegram_message(
-                telegram_token,
-                telegram.EMOJI_WARNING,
-                f"[FATAL] Unhandled exception: {e}",
-            )
-        except Exception:
-            pass
-        sys.exit(1)
+        _send_fatal_notification(
+            f"[FATAL] Unhandled exception: {error}",
+            "bot run",
+        )
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(cli_main())

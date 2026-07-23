@@ -3,6 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [2026-07-23]
+- Runtime Logging - Centralized the root and package CLI entrypoints and replaced silent fatal-Telegram notification catches with token-safe secondary-failure logging while preserving exit codes.
 - Docker Security - Removed the hardcoded SQLite web admin password, made `SQLITE_WEB_PASSWORD` mandatory at Compose validation time, and restricted port 8081 to the Docker host loopback interface.
 - Telegram - Consolidated duplicated HTTP request/error handling across messages, trade alerts, photos and files into one shared helper while preserving each payload type and the configured timeout.
 - Telegram - Isolated multi-destination delivery failures, prevented token-bearing request URLs from appearing in error logs, fixed multipart delivery to the Errors bot and ensured uploaded media files are always closed.
