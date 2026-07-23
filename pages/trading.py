@@ -1063,23 +1063,27 @@ def _save_exchange_editor(
         database.update_exchange_settings(records)
 
 
-def _render_trade_schedule_toggles(*, exchange_code: str, disabled: bool = False):
-    marker = "_job_toggle_exchange"
-    if st.session_state.get(marker) != exchange_code:
-        for schedule_name in ("main_1d", "main_4h", "main_1h"):
-            st.session_state[f"job_{schedule_name}_enabled"] = (
-                database.get_job_schedule_enabled(schedule_name)
-            )
-        st.session_state[marker] = exchange_code
-    for schedule_name, label in (
+def _render_trade_schedule_toggles(*, disabled: bool = False):
+    st.session_state.pop("_job_toggle_exchange", None)
+    schedules = (
         ("main_1d", "Enable 1d"),
         ("main_4h", "Enable 4h"),
         ("main_1h", "Enable 1h"),
-    ):
+    )
+    for schedule_name, _ in schedules:
+        st.session_state[f"job_{schedule_name}_enabled"] = (
+            database.get_job_schedule_enabled(schedule_name)
+        )
+
+    for schedule_name, label in schedules:
         state_key = f"job_{schedule_name}_enabled"
 
         def _toggle(name=schedule_name, key=state_key):
-            database.set_job_schedule_enabled(name, bool(st.session_state[key]))
+            try:
+                database.set_job_schedule_enabled(name, bool(st.session_state[key]))
+            except ValueError as exc:
+                st.session_state[key] = database.get_job_schedule_enabled(name)
+                st.error(str(exc))
 
         st.toggle(
             label,
@@ -1487,7 +1491,6 @@ def settings():
                                 "and try again only after reviewing the operational log."
                             )
             _render_trade_schedule_toggles(
-                exchange_code="okx_demo",
                 disabled=not (
                     active_exchange["buy_enabled"] or active_exchange["sell_enabled"]
                 ),
@@ -1603,7 +1606,6 @@ def settings():
                     st.error(f"Live run mode is enabled. Real {exchange_name} orders are possible.")
             st.markdown("### Trade Execution by Timeframe")
             _render_trade_schedule_toggles(
-                exchange_code=active_exchange["code"],
                 disabled=not (
                     active_exchange["buy_enabled"]
                     or active_exchange["sell_enabled"]
@@ -1781,9 +1783,7 @@ def settings():
         if not trade_schedule_rendered:
             st.markdown("### Trade Execution by Timeframe")
             with st.container():
-                _render_trade_schedule_toggles(
-                    exchange_code=active_exchange["code"]
-                )
+                _render_trade_schedule_toggles()
 
         # st.space()
         st.divider()

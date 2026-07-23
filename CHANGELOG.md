@@ -3,6 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [2026-07-23]
+- Trading Settings - Synchronized the 1d, 4h and 1h execution toggles with persisted job schedules on every render, preventing stale Streamlit session state from showing incorrect values after page navigation.
 - Kraken Public Data - Added a shared cross-process throttle for dashboard, manual commands and scheduled jobs, serializing public requests with a 1.1-second minimum interval and coordinating cooldowns before `load_markets` and every OHLCV page.
 - Kraken Reliability - Added transient-only retries for rate limits, DDoS protection, request timeouts and temporary exchange unavailability, using seven retries with exponential backoff, a 60-second cap and jitter while leaving private requests and orders untouched.
 - Backtesting Safety - Exhausted transient Kraken failures now stop manual and top-performer processing without changing prior trading approvals, recording `Backtest_Failed` or marking pending symbols as completed; Telegram alerts are sent only after all retries are exhausted.
