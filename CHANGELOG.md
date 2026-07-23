@@ -2,6 +2,10 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-07-23]
+- Telegram - Consolidated duplicated HTTP request/error handling across messages, trade alerts, photos and files into one shared helper while preserving each payload type and the configured timeout.
+- Telegram - Isolated multi-destination delivery failures, prevented token-bearing request URLs from appearing in error logs, fixed multipart delivery to the Errors bot and ensured uploaded media files are always closed.
+
 ## [2026-07-22]
 - Trading Settings - Shared strategy, position sizing, locked-value, overview and Telegram settings are now shown for every active exchange, including Kraken, while unavailable private balances no longer hide the configuration controls.
 - Telegram - Trading cycle reports now show execution duration with two decimal places, making sub-second executions visible instead of reporting them as `0s`.
