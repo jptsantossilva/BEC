@@ -108,6 +108,7 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
         "8:okx_configuration",
         "9:backtesting_exchange_context",
         "10:okx_demo_execution",
+        "11:repair_backtesting_exchange_context",
     ]
     assert report.unresolved_legacy_symbols == ["UNKNOWNPAIR"]
 
@@ -122,6 +123,7 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
         "8:okx_configuration",
         "9:backtesting_exchange_context",
         "10:okx_demo_execution",
+        "11:repair_backtesting_exchange_context",
     ]
     assert applied.unresolved_legacy_symbols == ["UNKNOWNPAIR"]
 
@@ -400,6 +402,7 @@ def test_kraken_metadata_migration_applies_automatically_after_version_two(tmp_p
             "okx_configuration",
             "backtesting_exchange_context",
             "okx_demo_execution",
+            "repair_backtesting_exchange_context",
         ]
         assert connection.execute(
             "SELECT Enabled, Is_Default FROM Exchanges WHERE Code='kraken'"
@@ -450,9 +453,59 @@ def test_kraken_defaults_migration_preserves_existing_fee(tmp_path):
             "okx_configuration",
             "backtesting_exchange_context",
             "okx_demo_execution",
+            "repair_backtesting_exchange_context",
         ]
         assert connection.execute(
             "SELECT Commission_Value FROM Exchange_Backtesting_Settings "
             "WHERE Exchange_Id=?",
             (kraken_id,),
         ).fetchone()[0] == pytest.approx(0.0026)
+
+
+def test_context_repair_restores_missing_monte_carlo_columns(tmp_path):
+    database = tmp_path / "missing-monte-carlo-context.db"
+    _create_legacy_database(database)
+
+    with sqlite3.connect(database) as connection:
+        apply_pending_migrations(connection, MIGRATIONS[:10], allow_rebuild=True)
+        for column in (
+            "Exchange_Code",
+            "Exchange_Adapter_Id",
+            "Exchange_Quote_Asset",
+            "Exchange_Execution_Environment",
+        ):
+            connection.execute(
+                f'ALTER TABLE "Monte_Carlo_Jobs" DROP COLUMN "{column}"'
+            )
+        exchange = connection.execute(
+            "SELECT Id, Code, Adapter_Id, Quote_Asset, Execution_Environment "
+            "FROM Exchanges WHERE Code='binance'"
+        ).fetchone()
+        connection.execute(
+            "INSERT INTO Monte_Carlo_Jobs (id, symbol, Exchange_Id) "
+            "VALUES (1, 'BTC/USDT', ?)",
+            (exchange[0],),
+        )
+        connection.commit()
+
+        applied = apply_pending_migrations(
+            connection, MIGRATIONS, allow_rebuild=False
+        )
+
+        assert [migration.name for migration in applied] == [
+            "repair_backtesting_exchange_context"
+        ]
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(Monte_Carlo_Jobs)")
+        }
+        assert {
+            "Exchange_Code",
+            "Exchange_Adapter_Id",
+            "Exchange_Quote_Asset",
+            "Exchange_Execution_Environment",
+        } <= columns
+        assert connection.execute(
+            "SELECT Exchange_Code, Exchange_Adapter_Id, Exchange_Quote_Asset, "
+            "Exchange_Execution_Environment FROM Monte_Carlo_Jobs WHERE id=1"
+        ).fetchone() == exchange[1:]

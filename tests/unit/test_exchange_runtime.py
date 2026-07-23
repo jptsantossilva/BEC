@@ -272,6 +272,59 @@ def test_backtesting_fingerprint_and_fee_context_are_exchange_specific(tmp_path)
         _restore_connection(original)
 
 
+def test_approved_strategy_fingerprint_stays_current_for_both_backtest_flows(
+    tmp_path, monkeypatch
+):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        database.set_active_exchange(2)
+        database.set_exchange_backtesting_fee(0.004, exchange_id=2)
+        connection.execute(
+            """
+            UPDATE Strategies
+            SET Type='custom', Status='approved', Updated_At='2026-07-23T10:00:00Z'
+            WHERE Id='ema'
+            """
+        )
+        connection.commit()
+        monkeypatch.setattr(
+            database,
+            "_exchange_symbol_metadata",
+            lambda symbol: (2, "BTC/USDC", "XBT/USDC", "BTC", "USDC"),
+        )
+
+        settings = database.get_backtesting_settings(require_explicit_fee=True)
+        strategy_row = database.get_strategy_by_id("ema").iloc[0]
+        top_performer_fingerprint = database.build_backtesting_work_fingerprint(
+            "ema", True, settings, strategy_row=strategy_row
+        )
+        manual_job = database.enqueue_backtesting_jobs(
+            [
+                {
+                    "strategy_id": "ema",
+                    "symbol": "BTC/USDC",
+                    "timeframe": "1h",
+                    "optimize": True,
+                }
+            ]
+        )["queued"][0]
+
+        database.mark_strategy_backtested("ema")
+
+        current_strategy = database.get_strategy_by_id("ema").iloc[0]
+        current_fingerprint = database.build_backtesting_work_fingerprint(
+            "ema", True, settings, strategy_row=current_strategy
+        )
+        assert manual_job["work_fingerprint"] == top_performer_fingerprint
+        assert current_fingerprint == top_performer_fingerprint
+        assert current_strategy["Status"] == "approved"
+        assert current_strategy["Updated_At"] == "2026-07-23T10:00:00Z"
+    finally:
+        connection.close()
+        _restore_connection(original)
+
+
 def test_kraken_persistence_uses_canonical_and_native_symbols(tmp_path, monkeypatch):
     connection = _runtime_database(tmp_path)
     original = _use_connection(connection)

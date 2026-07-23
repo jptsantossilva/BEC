@@ -519,6 +519,11 @@ def test_trade_calls_exchange_adapter_even_in_test_mode(monkeypatch):
     monkeypatch.setattr(main.database, "get_strategy_by_id", lambda strategy_id: pd.DataFrame([{"Backtest_Optimize": 0}]))
     monkeypatch.setattr(main.database, "build_backtesting_work_fingerprint", lambda *args, **kwargs: "work")
     monkeypatch.setattr(main.database, "backtesting_result_matches_context", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        main.database,
+        "is_active_backtest_approved_for_live_buy",
+        lambda **kwargs: True,
+    )
     monkeypatch.setattr(main, "get_current_pnl", lambda *args, **kwargs: 0.0)
     monkeypatch.setattr(main, "get_runtime_risk_settings", lambda *args, **kwargs: {"atr_trailing_enabled": False, "atr_period": 14, "atr_multiplier": 1.8, "atr_activation_pnl": 2.0, "stop_loss": 0.0, "take_profit_enabled": False, "take_profits": []})
     monkeypatch.setattr(main, "get_data", lambda symbol, timeframe: _market_data())
@@ -556,6 +561,11 @@ def test_trade_prod_mode_calls_exchange_orders(monkeypatch):
     monkeypatch.setattr(main.database, "get_strategy_by_id", lambda strategy_id: pd.DataFrame([{"Backtest_Optimize": 0}]))
     monkeypatch.setattr(main.database, "build_backtesting_work_fingerprint", lambda *args, **kwargs: "work")
     monkeypatch.setattr(main.database, "backtesting_result_matches_context", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        main.database,
+        "is_active_backtest_approved_for_live_buy",
+        lambda **kwargs: True,
+    )
     monkeypatch.setattr(main, "get_current_pnl", lambda *args, **kwargs: 0.0)
     monkeypatch.setattr(main, "get_runtime_risk_settings", lambda *args, **kwargs: {"atr_trailing_enabled": False, "atr_period": 14, "atr_multiplier": 1.8, "atr_activation_pnl": 2.0, "stop_loss": 0.0, "take_profit_enabled": False, "take_profits": []})
     monkeypatch.setattr(main, "get_data", lambda symbol, timeframe: _market_data())
@@ -623,6 +633,11 @@ def test_trade_skips_buy_without_approved_backtest(monkeypatch):
         lambda **kwargs: pd.DataFrame([{"Backtest_Config_JSON": "{}"}]),
     )
     monkeypatch.setattr(main.database, "is_backtest_approved", lambda timeframe, row: (False, ["Quality_Grade_Min"]))
+    monkeypatch.setattr(
+        main.database,
+        "is_active_backtest_approved_for_live_buy",
+        lambda **kwargs: False,
+    )
     monkeypatch.setattr(main.binance, "create_buy_order", lambda *args, **kwargs: order_calls.append(("buy", args, kwargs)))
     monkeypatch.setattr(main.telegram, "send_telegram_message", lambda *args, **kwargs: None)
 
@@ -1415,6 +1430,7 @@ def test_add_symbol_skips_current_backtesting_result(monkeypatch):
     calc_calls = []
     metadata_calls = []
     insert_calls = []
+    approval_calls = []
     selected_strategy = object()
     monkeypatch.setattr(add_symbol.database, "get_active_exchange_code", lambda: "binance")
 
@@ -1447,7 +1463,11 @@ def test_add_symbol_skips_current_backtesting_result(monkeypatch):
         lambda symbol, time_frame, strategy_id: result_row,
     )
     monkeypatch.setattr(add_symbol.database, "is_backtest_approved", lambda tf, row: (True, []))
-    monkeypatch.setattr(add_symbol.database, "set_backtesting_approval", lambda **kwargs: None)
+    monkeypatch.setattr(
+        add_symbol.database,
+        "set_backtesting_approval",
+        lambda **kwargs: approval_calls.append(kwargs),
+    )
     monkeypatch.setattr(add_symbol.database, "build_strategy_params_json_from_backtest_result", lambda *args, **kwargs: "{}")
     monkeypatch.setattr(add_symbol.database, "get_all_positions_by_bot_symbol_strategy", lambda **kwargs: False)
     monkeypatch.setattr(add_symbol.database, "insert_position", lambda **kwargs: insert_calls.append(kwargs))
@@ -1458,6 +1478,15 @@ def test_add_symbol_skips_current_backtesting_result(monkeypatch):
     assert calc_calls == []
     assert metadata_calls == []
     assert len(insert_calls) == 1
+    assert approval_calls == [
+        {
+            "symbol": "AAAUSDC",
+            "time_frame": "1d",
+            "strategy_id": "selected_strategy",
+            "trading_approved": True,
+            "trading_rejection_reasons": "",
+        }
+    ]
     assert stats["backtest_runs"] == 0
     assert stats["approved_candidates"] == 1
 

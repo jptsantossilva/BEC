@@ -467,6 +467,7 @@ def test_cli_dry_run_and_backup_apply(tmp_path, capsys):
         "8:okx_configuration",
         "9:backtesting_exchange_context",
         "10:okx_demo_execution",
+        "11:repair_backtesting_exchange_context",
     ]
 
     assert migration_cli(["--database", str(database), "--apply"]) == 2

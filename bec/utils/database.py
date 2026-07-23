@@ -3933,9 +3933,11 @@ def mark_strategy_backtested(strategy_id: str):
         connection.execute(
             """
             UPDATE Strategies
-            SET Status = CASE WHEN Status = 'approved' THEN Status ELSE 'backtested' END,
+            SET Status = 'backtested',
                 Updated_At = ?
-            WHERE Id = ? AND Type = 'custom'
+            WHERE Id = ?
+              AND Type = 'custom'
+              AND COALESCE(Status, 'draft') != 'approved'
             """,
             (_utc_now_str(), strategy_id),
         )

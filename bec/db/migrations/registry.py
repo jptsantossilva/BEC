@@ -92,6 +92,10 @@ def _okx_demo_execution(connection: sqlite3.Connection) -> None:
     apply_okx_demo_execution_schema(connection)
 
 
+def _repair_backtesting_exchange_context(connection: sqlite3.Connection) -> None:
+    apply_backtesting_context_schema(connection)
+
+
 MIGRATIONS = (
     Migration(
         version=1,
@@ -171,5 +175,13 @@ MIGRATIONS = (
         apply=_okx_demo_execution,
         validate=validate_okx_demo_execution_schema,
         signature="bec-okx-demo-execution-v1",
+    ),
+    Migration(
+        version=11,
+        name="repair_backtesting_exchange_context",
+        kind=MigrationKind.ADDITIVE,
+        apply=_repair_backtesting_exchange_context,
+        validate=validate_backtesting_context_schema,
+        signature="bec-repair-backtesting-exchange-context-v1",
     ),
 )

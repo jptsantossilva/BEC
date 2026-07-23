@@ -107,6 +107,15 @@ installation with active Binance, its buy/sell flags are initialized enabled
 to preserve existing behavior. New installations keep Binance live flags off.
 No credentials are stored in SQLite.
 
+## Backtesting Exchange Context Repair (Version 11)
+
+Migration `11:repair_backtesting_exchange_context` is additive and idempotently
+repairs immutable exchange-context columns on backtesting jobs, Monte Carlo
+jobs, and backtesting results. It covers databases where migration 9 was
+recorded while one of those optional queue tables did not yet exist or had an
+older development schema. Existing rows are backfilled from their
+`Exchange_Id`; no jobs are requeued and no trading settings are changed.
+
 ## Rollback
 
 Migration steps run in explicit SQLite transactions. A failed step rolls back
