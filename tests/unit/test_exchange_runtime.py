@@ -999,6 +999,53 @@ def test_kraken_manual_live_candidate_is_reused_and_rejects_open_symbol(
         _restore_connection(original)
 
 
+def test_latest_manual_live_validation_is_exchange_scoped_and_settled(
+    tmp_path, monkeypatch
+):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        database.set_active_exchange(2)
+        monkeypatch.setattr(
+            database,
+            "_exchange_symbol_metadata",
+            lambda symbol: (2, "BTC/USDC", "XBTUSDC", "BTC", "USDC"),
+        )
+        intent = database.create_order_intent(
+            side="BUY",
+            symbol="BTC/USDC",
+            bot="manual_live",
+            requested_quote_qty=50,
+            strategy_id="kraken_manual_live",
+        )
+        assert database.get_latest_manual_live_validation(2) is None
+
+        connection.execute(
+            """
+            UPDATE Orders
+            SET Order_Status='filled', Intent_State='settled',
+                Exchange_Order_Id='KRAKEN-LIVE-1', Executed_Cost=49.99
+            WHERE Id=?
+            """,
+            (intent["Id"],),
+        )
+        connection.commit()
+
+        validation = database.get_latest_manual_live_validation(2)
+
+        assert validation["Id"] == intent["Id"]
+        assert validation["Symbol"] == "BTC/USDC"
+        assert validation["Requested_Quote_Qty"] == 50
+        assert validation["Executed_Cost"] == pytest.approx(49.99)
+        assert validation["Order_Status"] == "filled"
+        assert validation["Intent_State"] == "settled"
+        assert validation["Exchange_Order_Id"] == "KRAKEN-LIVE-1"
+        assert database.get_latest_manual_live_validation(1) is None
+    finally:
+        connection.close()
+        _restore_connection(original)
+
+
 def test_okx_demo_reconciliation_stays_scheduled_after_sides_are_disarmed(
     tmp_path, monkeypatch
 ):

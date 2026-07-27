@@ -115,6 +115,109 @@ def test_exchange_editor_persists_explicit_live_gates(monkeypatch):
     assert saved[0]["Sizing_Buffer_Pct"] == pytest.approx(1.5)
 
 
+def test_okx_arming_confirmation_is_requested_only_for_new_production_side():
+    persisted = pd.DataFrame(
+        [
+            {
+                "Code": "okx",
+                "Buy_Enabled": False,
+                "Sell_Enabled": False,
+            },
+            {
+                "Code": "kraken",
+                "Buy_Enabled": False,
+                "Sell_Enabled": False,
+            },
+        ]
+    )
+    unchanged = pd.DataFrame(
+        [
+            {"Code": "okx", "Buy Enabled": False, "Sell Enabled": False},
+            {"Code": "kraken", "Buy Enabled": True, "Sell Enabled": True},
+        ]
+    )
+    arming_okx = unchanged.copy()
+    arming_okx.loc[arming_okx["Code"] == "okx", "Buy Enabled"] = True
+
+    assert (
+        trading._okx_production_arming_requested(unchanged, persisted) is False
+    )
+    assert (
+        trading._okx_production_arming_requested(arming_okx, persisted) is True
+    )
+
+
+def test_okx_disarming_does_not_require_production_confirmation():
+    persisted = pd.DataFrame(
+        [{"Code": "okx", "Buy_Enabled": True, "Sell_Enabled": True}]
+    )
+    edited = pd.DataFrame(
+        [{"Code": "okx", "Buy Enabled": False, "Sell Enabled": False}]
+    )
+
+    assert trading._okx_production_arming_requested(edited, persisted) is False
+
+
+def test_exchange_summary_safe_state_has_no_alerts(monkeypatch):
+    captions = []
+    errors = []
+    warnings = []
+    monkeypatch.setattr(trading.config, "read_setting", lambda key: "test")
+    monkeypatch.setattr(
+        trading.database, "get_job_schedule_enabled", lambda name: True
+    )
+    monkeypatch.setattr(trading.st, "caption", captions.append)
+    monkeypatch.setattr(trading.st, "error", errors.append)
+    monkeypatch.setattr(trading.st, "warning", warnings.append)
+
+    trading._render_active_exchange_summary(
+        {
+            "name": "Kraken",
+            "execution_environment": "production",
+            "quote_asset": "USDC",
+            "buy_enabled": True,
+            "sell_enabled": False,
+        },
+        SimpleNamespace(uses_gated_live_execution=True),
+        [],
+    )
+
+    assert len(captions) == 1
+    assert "Run mode TEST" in captions[0]
+    assert errors == []
+    assert warnings == []
+
+
+def test_exchange_summary_live_state_has_one_clear_error(monkeypatch):
+    errors = []
+    warnings = []
+    monkeypatch.setattr(trading.config, "read_setting", lambda key: "live")
+    monkeypatch.setattr(
+        trading.database, "get_job_schedule_enabled", lambda name: True
+    )
+    monkeypatch.setattr(trading.st, "caption", lambda message: None)
+    monkeypatch.setattr(trading.st, "error", errors.append)
+    monkeypatch.setattr(trading.st, "warning", warnings.append)
+
+    trading._render_active_exchange_summary(
+        {
+            "name": "Kraken",
+            "execution_environment": "production",
+            "quote_asset": "USDC",
+            "buy_enabled": True,
+            "sell_enabled": True,
+        },
+        SimpleNamespace(uses_gated_live_execution=True),
+        [],
+    )
+
+    assert errors == [
+        "Live run mode is enabled and Kraken order sides are armed. "
+        "Real orders are possible."
+    ]
+    assert warnings == []
+
+
 def test_okx_public_health_check_syncs_catalog_without_touching_demo(monkeypatch):
     synced = []
     exchanges = pd.DataFrame(

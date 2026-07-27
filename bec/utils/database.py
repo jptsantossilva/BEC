@@ -1742,6 +1742,30 @@ def get_order_intent(intent_id: int) -> dict:
     )
 
 
+def get_latest_manual_live_validation(exchange_id: int | None = None) -> dict | None:
+    """Return the latest settled manual-live buy for production UI evidence."""
+    connection = _get_conn()
+    exchange_id = int(exchange_id or get_active_exchange_id(required=True))
+    cursor = connection.execute(
+        """
+        SELECT Id, Date, Symbol, Requested_Quote_Qty, Executed_Cost,
+               Order_Status, Intent_State, Exchange_Order_Id, Client_Order_Id
+        FROM Orders
+        WHERE Exchange_Id=? AND Bot='manual_live' AND Side='BUY'
+          AND lower(COALESCE(Order_Status, ''))='filled'
+          AND lower(COALESCE(Intent_State, ''))='settled'
+        ORDER BY Id DESC
+        LIMIT 1
+        """,
+        (exchange_id,),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    columns = [item[0] for item in cursor.description]
+    return dict(zip(columns, row))
+
+
 def has_unsettled_order_intent(
     *, position_id: int | None, side: str, symbol: str
 ) -> bool:

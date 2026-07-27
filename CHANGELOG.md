@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [2026-07-27]
 - Kraken Live Execution - Generate Kraken-compatible 32-character client order IDs, validate unsupported IDs before intent persistence, classify Kraken `cl_ord_id` validation errors as definitive rejections, and settle previously misclassified intents during reconciliation without resubmitting an order.
+- Trading Settings - Reorganized exchange controls into a production-first summary with collapsed management and diagnostics sections, contextual OKX confirmation, on-demand reconciliation, and hidden-by-default Kraken/OKX validation tools.
 
 ## [2026-07-23]
 - Trading Settings - Synchronized the 1d, 4h and 1h execution toggles with persisted job schedules on every render, preventing stale Streamlit session state from showing incorrect values after page navigation.
