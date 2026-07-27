@@ -196,6 +196,45 @@ def test_kraken_adapter_implements_contract_and_maps_aliases_and_limits():
     assert "cost is below the exchange minimum" in invalid.errors
 
 
+@pytest.mark.parametrize(
+    "client_order_id",
+    [
+        "bec-buy",
+        "0123456789abcdef0123456789abcdef",
+        "01234567-89ab-cdef-0123-456789abcdef",
+    ],
+)
+def test_kraken_accepts_supported_client_order_id_formats(client_order_id):
+    adapter = KrakenAdapter(client=FakeKrakenClient())
+
+    assert adapter.validate_client_order_id(client_order_id) == client_order_id
+
+
+@pytest.mark.parametrize(
+    "client_order_id",
+    [
+        "bec" + ("0" * 28),
+        "client-order-id-that-is-too-long",
+        "not-ascii-\N{SNOWMAN}",
+    ],
+)
+def test_kraken_rejects_invalid_client_order_id_before_submission(client_order_id):
+    adapter = KrakenAdapter(client=FakeKrakenClient())
+
+    with pytest.raises(ValueError, match="Kraken client order ID"):
+        adapter.validate_client_order_id(client_order_id)
+
+
+def test_kraken_invalid_client_order_id_exchange_error_is_definitive_rejection():
+    adapter = KrakenAdapter(client=FakeKrakenClient())
+    error = ccxt.ExchangeError(
+        'kraken {"error":["EGeneral:Invalid arguments:cl_ord_id"]}'
+    )
+
+    assert adapter.is_known_submission_rejection(error) is True
+    assert adapter.is_known_persisted_submission_rejection(repr(error)) is True
+
+
 @pytest.mark.parametrize("legacy_first", [False, True])
 def test_kraken_canonical_market_wins_over_legacy_display_alias(legacy_first):
     class RepAliasClient(FakeKrakenClient):
@@ -454,6 +493,45 @@ def test_kraken_private_balance_orders_fills_and_reconciliation():
     assert fetched.status is OrderStatus.PARTIALLY_FILLED
     assert resolved.status is OrderStatus.PARTIALLY_FILLED
     assert canceled.status is OrderStatus.CANCELED
+
+
+def test_kraken_order_lookup_ignores_empty_trade_placeholder_and_keeps_order_fee():
+    class KrakenOrderLookupClient(FakeKrakenClient):
+        def fetch_order(self, order_id, symbol):
+            assert (order_id, symbol) == ("KRAKEN-1", "BTC/EUR")
+            return {
+                "id": order_id,
+                "clientOrderId": "0123456789abcdef0123456789abcdef",
+                "symbol": symbol,
+                "side": "buy",
+                "status": "closed",
+                "amount": 50,
+                "filled": 0.00077525,
+                "average": 64495.32,
+                "cost": 49.99999683,
+                "fee": {"cost": "0.40000", "currency": "EUR"},
+                "fees": [{"cost": 0.4, "currency": "EUR"}],
+                "trades": [
+                    {
+                        "id": "trade-placeholder",
+                        "amount": None,
+                        "price": None,
+                        "fee": {"cost": None, "currency": None},
+                    }
+                ],
+            }
+
+    adapter = KrakenAdapter(client=KrakenOrderLookupClient(), private_enabled=True)
+
+    result = adapter.fetch_order("KRAKEN-1", "BTC/EUR")
+
+    assert result.status is OrderStatus.FILLED
+    assert result.executed_quantity == Decimal("0.00077525")
+    assert len(result.fills) == 1
+    assert result.fills[0].price == Decimal("64495.32")
+    assert result.fills[0].quantity == Decimal("0.00077525")
+    assert result.fills[0].fee_asset == "EUR"
+    assert result.fills[0].fee_amount == Decimal("0.40000")
 
 
 def test_market_buy_fallback_applies_one_percent_base_quantity_buffer():

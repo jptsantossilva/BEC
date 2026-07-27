@@ -1590,18 +1590,26 @@ def settings():
                     st.info(f"Production reconciliation: {reconcile_unsettled_orders()}")
             else:
                 live_mode_key = f"{active_exchange['code']}_live_run_mode"
-                if live_mode_key not in st.session_state:
-                    st.session_state[live_mode_key] = (
-                        config.read_setting("run_mode") == "live"
+                st.session_state[live_mode_key] = (
+                    config.read_setting("run_mode") == "live"
+                )
+
+                def _set_live_run_mode():
+                    config.update_setting(
+                        "run_mode",
+                        (
+                            "live"
+                            if bool(st.session_state[live_mode_key])
+                            else "test"
+                        ),
                     )
+
                 live_mode = st.toggle(
                     "Live run mode",
                     key=live_mode_key,
+                    on_change=_set_live_run_mode,
                     help="Master execution gate. Keep disabled except during controlled live operation.",
                 )
-                desired_mode = "live" if live_mode else "test"
-                if config.read_setting("run_mode") != desired_mode:
-                    config.update_setting("run_mode", desired_mode)
                 if live_mode:
                     st.error(f"Live run mode is enabled. Real {exchange_name} orders are possible.")
             st.markdown("### Trade Execution by Timeframe")
@@ -1612,6 +1620,121 @@ def settings():
                 ),
             )
             trade_schedule_rendered = True
+            if active_exchange["code"] == "kraken":
+                from bec.exchanges.live_execution import (
+                    KRAKEN_MANUAL_TEST_CONFIRMATION,
+                    create_kraken_manual_test_buy,
+                    get_kraken_manual_test_blockers,
+                )
+
+                st.markdown("### Controlled Kraken Live Test")
+                st.error(
+                    "This operation spends exactly 50 USDC on a real BTC/USDC "
+                    "Kraken market buy. It is not a simulation."
+                )
+                st.caption(
+                    "The backend requires every automatic trade schedule to be "
+                    "disabled, order reconciliation to be enabled, no open positions "
+                    "or unsettled orders, Kraken Buy Enabled, and live run mode. "
+                    "It returns run mode to test after every submission attempt."
+                )
+                if not database.get_job_schedule_enabled(database.RECONCILIATION_JOB):
+                    if st.button(
+                        "Enable Order Reconciliation",
+                        icon=":material/sync:",
+                        key="prepare_kraken_manual_reconciliation",
+                    ):
+                        database.set_job_schedule_enabled(
+                            database.RECONCILIATION_JOB, True
+                        )
+                        st.rerun()
+                manual_live_blockers = get_kraken_manual_test_blockers()
+                if manual_live_blockers:
+                    for blocker in manual_live_blockers:
+                        st.warning(blocker)
+                else:
+                    st.success(
+                        "Every local safety gate is ready. The private balance and "
+                        "market limits will be checked again before submission."
+                    )
+                feedback = st.session_state.pop(
+                    "_kraken_manual_test_feedback", None
+                )
+                if feedback:
+                    getattr(st, feedback[0])(feedback[1])
+                with st.form(
+                    "kraken_manual_live_test_form", clear_on_submit=True
+                ):
+                    st.text_input(
+                        "Market",
+                        value="BTC/USDC",
+                        disabled=True,
+                        key="kraken_manual_live_test_symbol",
+                    )
+                    st.number_input(
+                        "Quote amount (USDC)",
+                        value=50.0,
+                        disabled=True,
+                        key="kraken_manual_live_test_quote",
+                    )
+                    confirm_manual_live = st.checkbox(
+                        "I understand this submits a real Kraken market buy using 50 USDC.",
+                        key="kraken_manual_live_test_confirm",
+                    )
+                    manual_live_phrase = st.text_input(
+                        f"Type {KRAKEN_MANUAL_TEST_CONFIRMATION}",
+                        key="kraken_manual_live_test_phrase",
+                    )
+                    submit_manual_live = st.form_submit_button(
+                        "Submit 50 USDC Kraken Live Buy",
+                        icon=":material/shopping_cart:",
+                        disabled=bool(manual_live_blockers),
+                    )
+                if submit_manual_live:
+                    try:
+                        if not confirm_manual_live:
+                            raise ValueError(
+                                "Confirm that this is a real 50 USDC Kraken market buy."
+                            )
+                        outcome = create_kraken_manual_test_buy(
+                            confirmation=manual_live_phrase
+                        )
+                        if outcome is None:
+                            feedback = (
+                                "error",
+                                "No successful Kraken order result was returned. No "
+                                "replacement was submitted; live run mode was disabled. "
+                                "Review the durable intent and reconciliation logs before "
+                                "any further action.",
+                            )
+                        elif outcome.get("skipped"):
+                            feedback = ("error", str(outcome["reason"]))
+                        else:
+                            result = outcome["result"]
+                            feedback = (
+                                "success",
+                                "Kraken live test persisted: "
+                                f"exchange order {result.exchange_order_id}, "
+                                f"client order {result.client_order_id}, "
+                                f"status {result.status.value}. Live run mode was disabled.",
+                            )
+                    except (RuntimeError, ValueError) as exc:
+                        config.update_setting("run_mode", "test")
+                        feedback = ("error", str(exc))
+                    except Exception as exc:
+                        config.update_setting("run_mode", "test")
+                        print(
+                            database.exchange_log_prefix(),
+                            "Manual Kraken live test could not be prepared "
+                            f"({type(exc).__name__})",
+                        )
+                        feedback = (
+                            "error",
+                            "The Kraken live test was not submitted. Live run mode "
+                            "was disabled; review the operational log before any retry.",
+                        )
+                    st.session_state["_kraken_manual_test_feedback"] = feedback
+                    st.rerun()
         st.divider()
         st.markdown("### Overview")
         # Compact header card

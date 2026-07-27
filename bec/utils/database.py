@@ -1673,9 +1673,9 @@ def create_order_intent(
         raise ValueError("Order intent side must be BUY or SELL")
     if has_unsettled_order_intent(position_id=position_id, side=side, symbol=symbol):
         raise RuntimeError("An unsettled order intent already exists for this action")
-    # 31 alphanumeric characters satisfy the strictest supported exchange
-    # client-order limit (OKX clOrdId: max 32) without exchange-specific DB code.
-    client_order_id = client_order_id or f"bec{secrets.token_hex(14)}"
+    # A 32-character hexadecimal UUID form satisfies Kraken cl_ord_id as well
+    # as the supported Binance and OKX client-order identifier constraints.
+    client_order_id = client_order_id or secrets.token_hex(16)
     # This is the permanent idempotency key used by reconciliation. It must be
     # valid for the active adapter before the intent becomes durable.
     from bec.exchanges import service
@@ -2596,6 +2596,67 @@ def create_okx_demo_manual_position_candidate(symbol: str) -> int:
                 Bot, Symbol, Position, Rank, Strategy_Id, Strategy_Name, Strategy_Params_JSON
             ) VALUES (?, ?, ?, ?, ?, 'manual_demo', ?, 0, 0,
                       'okx_demo_manual', 'OKX Demo Manual Validation', '{}')
+            """,
+            (*exchange_fields, str(symbol)),
+        )
+    return int(cursor.lastrowid)
+
+
+def create_kraken_manual_position_candidate(symbol: str) -> int:
+    """Create or reuse the inactive position row for one guarded live test."""
+    connection = _get_conn()
+    exchange = get_active_exchange(required=True)
+    if str(exchange["code"]) != "kraken" or str(
+        exchange.get("execution_environment")
+    ) != "production":
+        raise ValueError(
+            "Manual Kraken live positions require the active Kraken production identity"
+        )
+    exchange_fields = _exchange_symbol_metadata(symbol)
+    open_position = connection.execute(
+        """
+        SELECT 1 FROM Positions
+        WHERE Exchange_Id=? AND Symbol_Normalized=? AND Position=1 LIMIT 1
+        """,
+        (int(exchange["id"]), str(exchange_fields[1])),
+    ).fetchone()
+    if open_position is not None:
+        raise ValueError("An open Kraken position already exists for this symbol")
+    unsettled_order = connection.execute(
+        """
+        SELECT 1 FROM Orders
+        WHERE Exchange_Id=? AND Symbol_Normalized=?
+          AND lower(COALESCE(Order_Status, 'unknown'))
+              IN ('pending','open','partially_filled','unknown')
+        LIMIT 1
+        """,
+        (int(exchange["id"]), str(exchange_fields[1])),
+    ).fetchone()
+    if unsettled_order is not None:
+        raise ValueError(
+            "An unsettled Kraken order already exists for this symbol; "
+            "reconcile it before another live test"
+        )
+    reusable = connection.execute(
+        """
+        SELECT Id FROM Positions
+        WHERE Exchange_Id=? AND Symbol_Normalized=? AND Position=0
+          AND Bot='manual_live' AND Strategy_Id='kraken_manual_live'
+        ORDER BY Id LIMIT 1
+        """,
+        (int(exchange["id"]), str(exchange_fields[1])),
+    ).fetchone()
+    if reusable is not None:
+        return int(reusable[0])
+    with connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO Positions (
+                Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset, Quote_Asset,
+                Bot, Symbol, Position, Rank, Strategy_Id, Strategy_Name,
+                Strategy_Params_JSON
+            ) VALUES (?, ?, ?, ?, ?, 'manual_live', ?, 0, 0,
+                      'kraken_manual_live', 'Kraken Manual Live Validation', '{}')
             """,
             (*exchange_fields, str(symbol)),
         )

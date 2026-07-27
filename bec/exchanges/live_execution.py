@@ -9,6 +9,11 @@ from bec.exchanges.base import OrderRequest
 from bec.utils import config, database, telegram
 
 
+KRAKEN_MANUAL_TEST_SYMBOL = "BTC/USDC"
+KRAKEN_MANUAL_TEST_QUOTE_AMOUNT = Decimal("50")
+KRAKEN_MANUAL_TEST_CONFIRMATION = "BUY 50 USDC BTC/USDC LIVE"
+
+
 def _live_exchange(side: str) -> dict:
     exchange = database.get_active_exchange(required=True)
     adapter = service.get_adapter()
@@ -354,6 +359,93 @@ def create_okx_demo_manual_buy(*, symbol: str, quote_amount: Decimal):
     )
 
 
+def get_kraken_manual_test_blockers() -> tuple[str, ...]:
+    """Return every local gate that must be cleared before the live test."""
+    blockers: list[str] = []
+    exchange = database.get_active_exchange(required=False)
+    if exchange is None:
+        return ("Select Kraken as the active exchange.",)
+    if str(exchange.get("code")) != "kraken" or str(
+        exchange.get("execution_environment")
+    ) != "production":
+        blockers.append("The active exchange must be Kraken production.")
+    if str(exchange.get("quote_asset") or "").upper() != "USDC":
+        blockers.append("Kraken must use USDC as its active quote asset.")
+    if not bool(exchange.get("buy_enabled")):
+        blockers.append("Kraken Buy Enabled must be on.")
+    if config.read_setting("run_mode") != "live":
+        blockers.append("Live run mode must be enabled.")
+    enabled_jobs = [
+        job
+        for job in database.LIVE_TRADING_JOBS
+        if database.get_job_schedule_enabled(job)
+    ]
+    if enabled_jobs:
+        blockers.append(
+            "Disable every automatic trade schedule: " + ", ".join(enabled_jobs) + "."
+        )
+    if not database.get_job_schedule_enabled(database.RECONCILIATION_JOB):
+        blockers.append("Enable the order reconciliation schedule.")
+    if database.get_num_open_positions():
+        blockers.append("Close existing Kraken positions before the controlled test.")
+    if database.get_unsettled_order_intents(int(exchange["id"])):
+        blockers.append("Reconcile existing unsettled orders before the controlled test.")
+    return tuple(blockers)
+
+
+def create_kraken_manual_test_buy(*, confirmation: str):
+    """Submit the single fixed-size Kraken live validation buy and disarm live mode."""
+    try:
+        if str(confirmation).strip() != KRAKEN_MANUAL_TEST_CONFIRMATION:
+            raise ValueError(
+                f"Type {KRAKEN_MANUAL_TEST_CONFIRMATION} exactly to confirm the live order"
+            )
+        blockers = get_kraken_manual_test_blockers()
+        if blockers:
+            raise RuntimeError(
+                "Kraken manual live test is blocked: " + " ".join(blockers)
+            )
+        exchange = _live_exchange("buy")
+        if str(exchange["code"]) != "kraken" or str(
+            exchange.get("execution_environment")
+        ) != "production":
+            raise RuntimeError(
+                "Manual Kraken live orders require the active Kraken production identity"
+            )
+        canonical = service.normalize_symbol(KRAKEN_MANUAL_TEST_SYMBOL)
+        if canonical != KRAKEN_MANUAL_TEST_SYMBOL:
+            raise RuntimeError("The Kraken manual live test requires BTC/USDC")
+        market = service.load_markets()[canonical]
+        if str(market.quote_asset).upper() != "USDC":
+            raise RuntimeError("The Kraken manual live test requires a USDC quote market")
+        balance = service.fetch_balance("USDC")
+        if KRAKEN_MANUAL_TEST_QUOTE_AMOUNT > Decimal(str(balance.free)):
+            raise RuntimeError("The 50 USDC test amount exceeds the available Kraken balance")
+        validation = service.validate_order(
+            OrderRequest(
+                symbol=canonical,
+                side="buy",
+                quote_amount=KRAKEN_MANUAL_TEST_QUOTE_AMOUNT,
+            )
+        )
+        if not validation.valid:
+            raise ValueError("; ".join(validation.errors))
+        position_id = database.create_kraken_manual_position_candidate(canonical)
+        return create_buy_order(
+            symbol=canonical,
+            bot="manual_live",
+            strategy_id="kraken_manual_live",
+            strategy_name="Kraken Manual Live Validation",
+            position_id=position_id,
+            strategy_params_json="{}",
+            quote_amount=KRAKEN_MANUAL_TEST_QUOTE_AMOUNT,
+        )
+    finally:
+        # The one-shot workflow always closes the master execution gate after
+        # any invocation, regardless of validation or exchange response.
+        config.update_setting("run_mode", "test")
+
+
 def get_okx_demo_manual_sell_quote(*, symbol: str) -> dict[str, str | Decimal | None]:
     """Return the public best bid used as a suggested demo limit-IOC price."""
     canonical = service.normalize_symbol(symbol)
@@ -576,6 +668,17 @@ def reconcile_unsettled_orders() -> dict:
     for intent in database.get_unsettled_order_intents(int(exchange["id"])):
         stats["checked"] += 1
         try:
+            stored_rejection = getattr(
+                adapter, "is_known_persisted_submission_rejection", None
+            )
+            if callable(stored_rejection) and stored_rejection(
+                str(intent.get("Error_Message") or "")
+            ):
+                database.mark_order_intent_rejected(
+                    intent["Id"], str(intent.get("Error_Message") or "")
+                )
+                stats["updated"] += 1
+                continue
             resolver = getattr(adapter, "fetch_order_by_client_id", None)
             result = (
                 resolver(intent["Client_Order_Id"], intent["Symbol"])

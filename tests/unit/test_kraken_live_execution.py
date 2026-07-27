@@ -243,6 +243,126 @@ def test_okx_production_buy_requires_schedule_and_matching_backtest(monkeypatch)
         )
 
 
+def test_kraken_manual_live_test_reports_all_local_blockers(monkeypatch):
+    monkeypatch.setattr(
+        live_execution.database,
+        "get_active_exchange",
+        lambda required=False: _exchange(
+            code="kraken",
+            buy_enabled=True,
+            quote_asset="USDC",
+            execution_environment="production",
+        ),
+    )
+    monkeypatch.setattr(
+        live_execution.config, "read_setting", lambda name: "live"
+    )
+    monkeypatch.setattr(
+        live_execution.database,
+        "get_job_schedule_enabled",
+        lambda name: name == live_execution.database.RECONCILIATION_JOB
+        or name == "main_1h",
+    )
+    monkeypatch.setattr(
+        live_execution.database,
+        "get_num_open_positions",
+        lambda: 1,
+    )
+    monkeypatch.setattr(
+        live_execution.database,
+        "get_unsettled_order_intents",
+        lambda exchange_id: [{"Id": 7}],
+    )
+
+    blockers = live_execution.get_kraken_manual_test_blockers()
+
+    assert any("main_1h" in blocker for blocker in blockers)
+    assert any("Close existing Kraken positions" in blocker for blocker in blockers)
+    assert any("unsettled orders" in blocker for blocker in blockers)
+
+
+def test_kraken_manual_live_test_submits_fixed_buy_and_disarms(monkeypatch):
+    market = MarketInfo("BTC/USDC", "XBTUSDC", "BTC", "USDC", True)
+    submitted = []
+    settings_updates = []
+    exchange = _exchange(
+        code="kraken",
+        buy_enabled=True,
+        quote_asset="USDC",
+        execution_environment="production",
+    )
+    monkeypatch.setattr(
+        live_execution, "get_kraken_manual_test_blockers", lambda: ()
+    )
+    monkeypatch.setattr(live_execution, "_live_exchange", lambda side: exchange)
+    monkeypatch.setattr(
+        live_execution.service, "normalize_symbol", lambda symbol: "BTC/USDC"
+    )
+    monkeypatch.setattr(
+        live_execution.service, "load_markets", lambda: {"BTC/USDC": market}
+    )
+    monkeypatch.setattr(
+        live_execution.service,
+        "fetch_balance",
+        lambda asset: SimpleNamespace(free=Decimal("500")),
+    )
+    monkeypatch.setattr(
+        live_execution.service,
+        "validate_order",
+        lambda request: OrderValidation(True, estimated_cost=request.quote_amount),
+    )
+    monkeypatch.setattr(
+        live_execution.database,
+        "create_kraken_manual_position_candidate",
+        lambda symbol: 42,
+    )
+    monkeypatch.setattr(
+        live_execution,
+        "create_buy_order",
+        lambda **kwargs: submitted.append(kwargs) or {"result": "submitted"},
+    )
+    monkeypatch.setattr(
+        live_execution.config,
+        "update_setting",
+        lambda name, value: settings_updates.append((name, value)),
+    )
+
+    outcome = live_execution.create_kraken_manual_test_buy(
+        confirmation=live_execution.KRAKEN_MANUAL_TEST_CONFIRMATION
+    )
+
+    assert outcome == {"result": "submitted"}
+    assert submitted == [
+        {
+            "symbol": "BTC/USDC",
+            "bot": "manual_live",
+            "strategy_id": "kraken_manual_live",
+            "strategy_name": "Kraken Manual Live Validation",
+            "position_id": 42,
+            "strategy_params_json": "{}",
+            "quote_amount": Decimal("50"),
+        }
+    ]
+    assert settings_updates == [("run_mode", "test")]
+
+
+def test_kraken_manual_live_test_wrong_confirmation_disarms_without_order(monkeypatch):
+    settings_updates = []
+    monkeypatch.setattr(
+        live_execution, "_live_exchange", lambda side: pytest.fail("must not arm")
+    )
+    monkeypatch.setattr(
+        live_execution.config,
+        "update_setting",
+        lambda name, value: settings_updates.append((name, value)),
+    )
+
+    with pytest.raises(ValueError, match="Type BUY 50 USDC"):
+        live_execution.create_kraken_manual_test_buy(confirmation="wrong")
+
+    assert settings_updates == [("run_mode", "test")]
+
+
 def test_manual_okx_demo_buy_validates_before_creating_a_position_candidate(monkeypatch):
     market = MarketInfo("BTC/USDC", "BTC-USDC", "BTC", "USDC", True)
     exchange = _exchange(
@@ -702,3 +822,50 @@ def test_reconciliation_resolves_unknown_intent_by_client_id(monkeypatch):
 
     assert stats == {"checked": 1, "updated": 1, "unresolved": 0}
     assert applied == [(1, OrderStatus.FILLED)]
+
+
+def test_reconciliation_settles_stored_invalid_kraken_client_id_rejection(monkeypatch):
+    rejected = []
+
+    class Adapter:
+        code = "kraken"
+        capabilities = ExchangeCapabilities(supports_reconciliation=True)
+
+        def is_known_persisted_submission_rejection(self, error):
+            return "Invalid arguments:cl_ord_id" in error
+
+        def fetch_order_by_client_id(self, *_args):
+            pytest.fail("a definitively rejected order must not be looked up")
+
+    monkeypatch.setattr(
+        live_execution.database,
+        "get_active_exchange",
+        lambda required=False: _exchange(),
+    )
+    monkeypatch.setattr(live_execution.service, "get_adapter", lambda: Adapter())
+    monkeypatch.setattr(
+        live_execution.database,
+        "get_unsettled_order_intents",
+        lambda exchange_id: [
+            {
+                "Id": 1,
+                "Side": "BUY",
+                "Symbol": "BTC/USDC",
+                "Client_Order_Id": "bec" + ("0" * 28),
+                "Error_Message": (
+                    "ExchangeError('kraken "
+                    "{\"error\":[\"EGeneral:Invalid arguments:cl_ord_id\"]}')"
+                ),
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        live_execution.database,
+        "mark_order_intent_rejected",
+        lambda intent_id, error: rejected.append((intent_id, error)),
+    )
+
+    stats = live_execution.reconcile_unsettled_orders()
+
+    assert stats == {"checked": 1, "updated": 1, "unresolved": 0}
+    assert rejected[0][0] == 1

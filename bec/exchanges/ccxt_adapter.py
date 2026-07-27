@@ -584,11 +584,17 @@ class CcxtExchangeAdapter(ExchangeAdapter):
 
         fills = []
         for item in raw.get("trades") or raw.get("fills") or ():
+            quantity = _decimal(item.get("amount") or item.get("qty"))
+            # Kraken order lookup can return a trade identifier placeholder
+            # whose price, amount and fee are all empty. It is not an execution
+            # fill; accepting it would suppress the aggregate order fee below.
+            if quantity <= 0:
+                continue
             fee = item.get("fee") or {}
             fills.append(
                 OrderFill(
-                    price=_decimal(item.get("price")),
-                    quantity=_decimal(item.get("amount") or item.get("qty")),
+                    price=_decimal(item.get("price")) or average or Decimal("0"),
+                    quantity=quantity,
                     fee_asset=(
                         self._canonical_asset(fee.get("currency"))
                         if fee.get("currency")

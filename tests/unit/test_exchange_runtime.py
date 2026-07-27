@@ -957,6 +957,48 @@ def test_okx_demo_manual_candidate_is_exchange_scoped_and_cannot_duplicate_open_
         _restore_connection(original)
 
 
+def test_kraken_manual_live_candidate_is_reused_and_rejects_open_symbol(
+    tmp_path, monkeypatch
+):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        database.set_active_exchange(2)
+        monkeypatch.setattr(
+            database,
+            "_exchange_symbol_metadata",
+            lambda symbol: (2, "BTC/USDC", "XBTUSDC", "BTC", "USDC"),
+        )
+
+        position_id = database.create_kraken_manual_position_candidate("BTC/USDC")
+        reused_id = database.create_kraken_manual_position_candidate("BTC/USDC")
+        row = connection.execute(
+            """
+            SELECT Bot, Position, Strategy_Id, Strategy_Name
+            FROM Positions WHERE Id=?
+            """,
+            (position_id,),
+        ).fetchone()
+
+        assert reused_id == position_id
+        assert row == (
+            "manual_live",
+            0,
+            "kraken_manual_live",
+            "Kraken Manual Live Validation",
+        )
+
+        connection.execute(
+            "UPDATE Positions SET Position=1 WHERE Id=?", (position_id,)
+        )
+        connection.commit()
+        with pytest.raises(ValueError, match="open Kraken position"):
+            database.create_kraken_manual_position_candidate("BTC/USDC")
+    finally:
+        connection.close()
+        _restore_connection(original)
+
+
 def test_okx_demo_reconciliation_stays_scheduled_after_sides_are_disarmed(
     tmp_path, monkeypatch
 ):
@@ -1080,6 +1122,33 @@ def test_invalid_client_order_id_is_rejected_before_intent_persistence(tmp_path,
             )
 
         assert connection.execute("SELECT COUNT(*) FROM Orders").fetchone()[0] == 0
+    finally:
+        connection.close()
+        _restore_connection(original)
+
+
+def test_generated_client_order_id_uses_kraken_short_uuid_format(tmp_path, monkeypatch):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        database.set_active_exchange(2)
+        monkeypatch.setattr(
+            database,
+            "_exchange_symbol_metadata",
+            lambda symbol: (2, "BTC/USDC", "XBTUSDC", "BTC", "USDC"),
+        )
+        monkeypatch.setattr(
+            database.secrets, "token_hex", lambda num_bytes: "a" * (num_bytes * 2)
+        )
+
+        intent = database.create_order_intent(
+            side="BUY",
+            symbol="BTC/USDC",
+            bot="1h",
+            requested_quote_qty=100,
+        )
+
+        assert intent["Client_Order_Id"] == "a" * 32
     finally:
         connection.close()
         _restore_connection(original)

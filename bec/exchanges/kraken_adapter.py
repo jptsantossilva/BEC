@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import os
+import re
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+
+import ccxt
 
 from bec.exchanges.ccxt_adapter import CcxtExchangeAdapter
 from bec.exchanges.public_rate_limit import SharedPublicRequestThrottle
@@ -19,6 +22,7 @@ class KrakenAdapter(CcxtExchangeAdapter):
         "XBT": "BTC",
         "XDG": "DOGE",
     }
+    _INVALID_CLIENT_ORDER_ID_ERROR = "egeneral:invalid arguments:cl_ord_id"
 
     def __init__(
         self,
@@ -79,3 +83,32 @@ class KrakenAdapter(CcxtExchangeAdapter):
         if random_uniform is not None:
             kwargs["random_uniform"] = random_uniform
         super().__init__(self.code, **kwargs)
+
+    def validate_client_order_id(self, client_order_id: str) -> str:
+        """Apply Kraken's free-text and UUID ``cl_ord_id`` constraints."""
+        value = str(client_order_id or "").strip()
+        is_free_text = bool(re.fullmatch(r"[A-Za-z0-9_-]{1,18}", value))
+        is_short_uuid = bool(re.fullmatch(r"[0-9A-Fa-f]{32}", value))
+        is_long_uuid = bool(
+            re.fullmatch(
+                r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-"
+                r"[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}",
+                value,
+            )
+        )
+        if not (is_free_text or is_short_uuid or is_long_uuid):
+            raise ValueError(
+                "Kraken client order ID must be up to 18 safe ASCII characters "
+                "or a 32/36-character UUID"
+            )
+        return value
+
+    def is_known_submission_rejection(self, exc: Exception) -> bool:
+        if super().is_known_submission_rejection(exc):
+            return True
+        return isinstance(exc, ccxt.ExchangeError) and (
+            self._INVALID_CLIENT_ORDER_ID_ERROR in str(exc).lower()
+        )
+
+    def is_known_persisted_submission_rejection(self, error: str) -> bool:
+        return self._INVALID_CLIENT_ORDER_ID_ERROR in str(error).lower()

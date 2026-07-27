@@ -173,6 +173,15 @@ class ExchangeAdapter(ABC):
         """Whether an exception proves an order was never submitted."""
         return isinstance(exc, ValueError)
 
+    def is_known_persisted_submission_rejection(self, error: str) -> bool:
+        """Whether a stored submission error proves no order was accepted.
+
+        This narrowly scoped reconciliation hook lets an adapter settle a
+        previously unknown intent after support for a definitive native error
+        is added. Transport and ambiguous exchange errors must remain unknown.
+        """
+        return False
+
     @abstractmethod
     def load_markets(self, *, force: bool = False) -> Mapping[str, MarketInfo]:
         raise NotImplementedError
