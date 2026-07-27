@@ -78,6 +78,9 @@ telegram_prefix_bot_1h_ml = "1h\n"
 telegram_prefix_bot_manual_demo_sl = "DEMO "
 telegram_prefix_bot_manual_demo_ml = "DEMO\n"
 
+telegram_prefix_bot_manual_live_sl = "LIVE "
+telegram_prefix_bot_manual_live_ml = "LIVE\n"
+
 # Message classes used by callers to keep Telegram channels focused:
 # routine: per-cycle status and summaries, action: order attempts/executions,
 # warning/error: exceptional conditions, signal: actionable signal alerts,
@@ -135,6 +138,12 @@ def get_telegram_prefix(bot, multi_line=False):
             telegram_prefix_bot_manual_demo_ml
             if multi_line
             else telegram_prefix_bot_manual_demo_sl
+        )
+    elif bot == "manual_live":
+        result = (
+            telegram_prefix_bot_manual_live_ml
+            if multi_line
+            else telegram_prefix_bot_manual_live_sl
         )
     else:
         raise ValueError(f"Invalid bot type: {bot}")
@@ -223,6 +232,7 @@ def send_trade_event(
     order_status: str = "",
     fees: str = "",
     reconciliation: str = "",
+    position_opened: bool = False,
 ):
     prefix_label = str(telegram_prefix or "").strip()
     timeframe_label = str(timeframe or "").strip()
@@ -250,7 +260,10 @@ def send_trade_event(
     )
     print(msg)
     send_telegram_message(telegram_token, emoji, msg)
-    if emoji in [EMOJI_TRADE_WITH_PROFIT, EMOJI_TRADE_WITH_LOSS]:
+    if position_opened or emoji in [
+        EMOJI_TRADE_WITH_PROFIT,
+        EMOJI_TRADE_WITH_LOSS,
+    ]:
         send_telegram_message(telegram_token_closed_position, emoji, msg)
 
 def format_error_event(

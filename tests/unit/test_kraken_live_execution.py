@@ -486,6 +486,29 @@ def test_trade_notification_failure_cannot_propagate_after_persistence(monkeypat
     assert "Trade notification failed after persistence" in capsys.readouterr().out
 
 
+def test_buy_opening_is_detected_only_on_its_first_persisted_fill():
+    intent = {
+        "Side": "BUY",
+        "Position_Id": 9,
+        "Applied_Net_Qty": 0,
+    }
+
+    assert live_execution._buy_opened_position(
+        intent, {"delta_net_qty": 0.1}
+    )
+    assert not live_execution._buy_opened_position(
+        {**intent, "Applied_Net_Qty": 0.1},
+        {"delta_net_qty": 0.1},
+    )
+    assert not live_execution._buy_opened_position(
+        {**intent, "Position_Id": None},
+        {"delta_net_qty": 0.1},
+    )
+    assert not live_execution._buy_opened_position(
+        intent, {"delta_net_qty": 0}
+    )
+
+
 def test_manual_demo_ioc_sell_uses_explicit_limit_order_not_market_order(monkeypatch):
     market = MarketInfo("BTC/USDC", "BTC-USDC", "BTC", "USDC", True)
     submitted = []
@@ -822,6 +845,69 @@ def test_reconciliation_resolves_unknown_intent_by_client_id(monkeypatch):
 
     assert stats == {"checked": 1, "updated": 1, "unresolved": 0}
     assert applied == [(1, OrderStatus.FILLED)]
+
+
+def test_reconciliation_notifies_when_first_buy_fill_opens_position(monkeypatch):
+    notifications = []
+    intent = {
+        "Id": 1,
+        "Side": "BUY",
+        "Symbol": "BTC/USDC",
+        "Bot": "1h",
+        "Strategy_Id": "ema_cross",
+        "Position_Id": 9,
+        "Applied_Net_Qty": 0,
+        "Requested_Quote_Qty": 20,
+        "Exchange_Order_Id": "K-1",
+        "Client_Order_Id": "bec-test",
+    }
+
+    class Adapter:
+        capabilities = ExchangeCapabilities(supports_reconciliation=True)
+
+        def fetch_order_by_client_id(self, client_order_id, symbol):
+            return _result(side="buy")
+
+    monkeypatch.setattr(
+        live_execution.database,
+        "get_active_exchange",
+        lambda required=False: _exchange(
+            name="Kraken",
+            execution_environment="production",
+        ),
+    )
+    monkeypatch.setattr(live_execution.service, "get_adapter", lambda: Adapter())
+    monkeypatch.setattr(
+        live_execution.database,
+        "get_unsettled_order_intents",
+        lambda exchange_id: [intent],
+    )
+    monkeypatch.setattr(
+        live_execution.database,
+        "apply_order_result",
+        lambda intent_id, result: {
+            "delta_net_qty": 0.2,
+            "delta_executed_qty": 0.2,
+            "closed_position": False,
+            "terminal": True,
+        },
+    )
+    monkeypatch.setattr(
+        live_execution.database, "get_num_open_positions", lambda: 1
+    )
+    monkeypatch.setattr(
+        live_execution,
+        "_send_trade_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    stats = live_execution.reconcile_unsettled_orders()
+
+    assert stats == {"checked": 1, "updated": 1, "unresolved": 0}
+    assert len(notifications) == 1
+    assert notifications[0]["action"] == "BUY"
+    assert notifications[0]["position_opened"] is True
+    assert notifications[0]["reason"] == "Entry confirmed during reconciliation"
 
 
 def test_reconciliation_settles_stored_invalid_kraken_client_id_rejection(monkeypatch):

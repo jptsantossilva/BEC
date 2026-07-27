@@ -319,6 +319,7 @@ def create_buy_order(
                 quantity=order["executedQty"],
                 notional_value=position_size,
                 open_positions=open_positions,
+                position_opened=not convert_all_balance,
             )
             
         elif position_size == -2:

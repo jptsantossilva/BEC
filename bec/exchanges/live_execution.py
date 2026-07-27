@@ -190,6 +190,16 @@ def _send_trade_notification(*, bot: str, **event) -> None:
         )
 
 
+def _buy_opened_position(intent: dict, applied: dict) -> bool:
+    """Return true only for the first persisted fill that opens a position."""
+    return (
+        str(intent.get("Side") or "").upper() == "BUY"
+        and intent.get("Position_Id") is not None
+        and float(intent.get("Applied_Net_Qty") or 0) <= 0
+        and float(applied.get("delta_net_qty") or 0) > 0
+    )
+
+
 def _require_okx_production_strategy_gate(
     exchange: dict, *, bot: str, symbol: str, strategy_id: str, side: str
 ) -> None:
@@ -310,19 +320,21 @@ def create_buy_order(
         return None
     applied = database.apply_order_result(intent["Id"], result)
     _log_order_persistence(exchange, result)
-    _send_trade_notification(
-        bot=bot,
-        emoji=telegram.EMOJI_ENTER_TRADE,
-        action="BUY",
-        symbol=result.symbol,
-        strategy=strategy_name or strategy_id,
-        reason="Entry condition fulfilled",
-        unit_price=float(result.average_price or 0),
-        quantity=float(result.executed_quantity),
-        notional_value=float(quote_amount),
-        open_positions=str(database.get_num_open_positions()),
-        **_order_telemetry(exchange, result),
-    )
+    if float(applied.get("delta_net_qty") or 0) > 0:
+        _send_trade_notification(
+            bot=bot,
+            emoji=telegram.EMOJI_ENTER_TRADE,
+            action="BUY",
+            symbol=result.symbol,
+            strategy=strategy_name or strategy_id,
+            reason="Entry condition fulfilled",
+            unit_price=float(result.average_price or 0),
+            quantity=float(result.executed_quantity),
+            notional_value=float(quote_amount),
+            open_positions=str(database.get_num_open_positions()),
+            position_opened=_buy_opened_position(intent, applied),
+            **_order_telemetry(exchange, result),
+        )
     return {"result": result, "applied": applied, "exchange": exchange}
 
 
@@ -695,6 +707,27 @@ def reconcile_unsettled_orders() -> dict:
             applied = database.apply_order_result(intent["Id"], result)
             if str(intent["Side"]).upper() == "SELL":
                 _post_apply_sell(intent, applied, float(result.average_price or 0))
+            elif _buy_opened_position(intent, applied):
+                _send_trade_notification(
+                    bot=str(intent.get("Bot") or ""),
+                    emoji=telegram.EMOJI_ENTER_TRADE,
+                    action="BUY",
+                    symbol=result.symbol,
+                    strategy=str(intent.get("Strategy_Id") or ""),
+                    reason="Entry confirmed during reconciliation",
+                    unit_price=float(result.average_price or 0),
+                    quantity=float(result.executed_quantity),
+                    notional_value=float(
+                        intent.get("Requested_Quote_Qty")
+                        or (
+                            float(result.executed_quantity)
+                            * float(result.average_price or 0)
+                        )
+                    ),
+                    open_positions=str(database.get_num_open_positions()),
+                    position_opened=True,
+                    **_order_telemetry(exchange, result),
+                )
             stats["updated"] += 1
         except Exception as exc:
             database.mark_order_intent_unknown(intent["Id"], repr(exc))

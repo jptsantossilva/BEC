@@ -923,6 +923,62 @@ def test_trade_event_formatting_and_closed_position_copy(monkeypatch):
     assert "PnL%: 10.0" in sent[0][2]
 
 
+def test_opened_position_alert_is_copied_to_position_bot(monkeypatch):
+    sent = []
+    monkeypatch.setattr(
+        telegram,
+        "send_telegram_message",
+        lambda *args, **kwargs: sent.append(args),
+    )
+    monkeypatch.setattr(telegram, "telegram_token_closed_position", "position-token")
+    monkeypatch.setattr(telegram, "trade_against", "USDC")
+
+    telegram.send_trade_event(
+        telegram_token="main-token",
+        telegram_prefix="1h ",
+        emoji=telegram.EMOJI_ENTER_TRADE,
+        action="BUY",
+        symbol="BTCUSDC",
+        timeframe="1h",
+        strategy="20/60 EMA Cross",
+        reason="Entry condition fulfilled",
+        unit_price=100.0,
+        quantity=0.5,
+        notional_value=50.0,
+        position_opened=True,
+    )
+
+    assert [message[0] for message in sent] == [
+        "main-token",
+        "position-token",
+    ]
+    assert all("1h BUY BTCUSDC" in message[2] for message in sent)
+
+
+def test_buy_without_a_new_position_stays_on_main_bot(monkeypatch):
+    sent = []
+    monkeypatch.setattr(
+        telegram,
+        "send_telegram_message",
+        lambda *args, **kwargs: sent.append(args),
+    )
+
+    telegram.send_trade_event(
+        telegram_token="main-token",
+        telegram_prefix="1h ",
+        emoji=telegram.EMOJI_ENTER_TRADE,
+        action="BUY",
+        symbol="BTCUSDC",
+        timeframe="1h",
+        strategy="Balance conversion",
+        unit_price=100.0,
+        quantity=0.5,
+        notional_value=50.0,
+    )
+
+    assert [message[0] for message in sent] == ["main-token"]
+
+
 def test_strategy_setup_is_preserved_in_trade_event_name():
     definition = get_builtin_template("hma_rsi_linreg")
     strategy_params_json = json.dumps(
