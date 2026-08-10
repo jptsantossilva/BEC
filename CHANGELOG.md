@@ -3,6 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [2026-08-10]
+- Documentation - Reworked the README around BEC's multi-exchange spot architecture, clarified the one-active-exchange limitation, documented Binance, Kraken, OKX production and OKX Demo capabilities, and aligned Docker environment setup and safety guidance with the current application.
 - Kraken Live Execution - Classify explicit regional asset restrictions as definitive order rejections, settle affected intents without reconciliation, automatically add the restricted base asset to the BEC blacklist, and block subsequent automatic buys for blacklisted assets.
 - Telegram - Include symbol, timeframe and strategy in live submission failure alerts, with a dedicated regional-restriction message explaining the rejected intent and automatic blacklist action.
 - Market Phases - Apply base-asset blacklist entries to both Binance-style symbols such as `XMRUSDC` and canonical CCXT symbols such as `XMR/USDC`.
