@@ -23,6 +23,12 @@ class KrakenAdapter(CcxtExchangeAdapter):
         "XDG": "DOGE",
     }
     _INVALID_CLIENT_ORDER_ID_ERROR = "egeneral:invalid arguments:cl_ord_id"
+    _REGIONAL_TRADING_RESTRICTION = re.compile(
+        r"eaccount:invalid permissions:"
+        r"(?P<asset>[a-z0-9._-]+)\s+trading restricted for\s+"
+        r"(?P<region>[a-z0-9._-]+)",
+        re.IGNORECASE,
+    )
 
     def __init__(
         self,
@@ -106,9 +112,28 @@ class KrakenAdapter(CcxtExchangeAdapter):
     def is_known_submission_rejection(self, exc: Exception) -> bool:
         if super().is_known_submission_rejection(exc):
             return True
-        return isinstance(exc, ccxt.ExchangeError) and (
+        if not isinstance(exc, ccxt.ExchangeError):
+            return False
+        return (
             self._INVALID_CLIENT_ORDER_ID_ERROR in str(exc).lower()
+            or self.regional_trading_restriction(exc) is not None
         )
 
     def is_known_persisted_submission_rejection(self, error: str) -> bool:
-        return self._INVALID_CLIENT_ORDER_ID_ERROR in str(error).lower()
+        return (
+            self._INVALID_CLIENT_ORDER_ID_ERROR in str(error).lower()
+            or self.regional_trading_restriction(error) is not None
+        )
+
+    def regional_trading_restriction(
+        self, error: Exception | str
+    ) -> dict[str, str] | None:
+        """Return the asset and region from a definitive Kraken restriction."""
+        match = self._REGIONAL_TRADING_RESTRICTION.search(str(error))
+        if match is None:
+            return None
+        asset = match.group("asset").upper()
+        return {
+            "asset": self.asset_aliases.get(asset, asset),
+            "region": match.group("region").rstrip(".\"']}").upper(),
+        }

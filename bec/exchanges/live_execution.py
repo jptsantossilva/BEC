@@ -116,12 +116,76 @@ def _safe_exception_for_operator_reporting(exc: Exception) -> Exception:
     return exc
 
 
-def _record_submission_failure(intent_id: int, operation: str, exc: Exception) -> None:
+def _regional_trading_restriction(error: Exception | str) -> dict[str, str] | None:
+    try:
+        parser = getattr(service.get_adapter(), "regional_trading_restriction", None)
+        return parser(error) if callable(parser) else None
+    except Exception:
+        # Error classification must never hide the original submission failure.
+        return None
+
+
+def _blacklist_restricted_asset(asset: str) -> bool:
+    try:
+        database.ensure_symbol_blacklisted(asset)
+        return True
+    except Exception as exc:
+        print(
+            database.exchange_log_prefix(),
+            f"Failed to add restricted asset {asset} to blacklist "
+            f"({type(exc).__name__})",
+        )
+        return False
+
+
+def _record_submission_failure(
+    intent_id: int,
+    operation: str,
+    exc: Exception,
+    *,
+    symbol: str = "",
+    timeframe: str = "",
+    strategy: str = "",
+) -> None:
     reported_exception = _safe_exception_for_operator_reporting(exc)
+    restriction = _regional_trading_restriction(exc)
+    if restriction is not None:
+        database.mark_order_intent_rejected(intent_id, repr(exc))
+        asset = restriction["asset"]
+        region = restriction["region"]
+        blacklisted = _blacklist_restricted_asset(asset)
+        blacklist_impact = (
+            f"{asset} was added to the BEC blacklist to prevent new automatic entries."
+            if blacklisted
+            else f"BEC could not add {asset} to the blacklist automatically; add it manually."
+        )
+        telegram.send_error_event(
+            action=operation,
+            symbol=symbol,
+            timeframe=timeframe,
+            strategy=strategy,
+            reason=(
+                f"The exchange rejected {asset} trading for region {region}"
+            ),
+            impact=(
+                f"No order was submitted and intent {intent_id} was marked rejected. "
+                + blacklist_impact
+            ),
+            next_step=(
+                "No reconciliation or replacement order is required. Review any existing "
+                f"{asset} position separately."
+            ),
+            exception=reported_exception,
+            notify_main=False,
+        )
+        return
     if _is_known_submission_rejection(exc):
         database.mark_order_intent_rejected(intent_id, repr(exc))
         telegram.send_error_event(
             action=operation,
+            symbol=symbol,
+            timeframe=timeframe,
+            strategy=strategy,
             reason="Exchange submission was rejected",
             impact="No retry was scheduled and no replacement order was submitted.",
             next_step=(
@@ -135,6 +199,9 @@ def _record_submission_failure(intent_id: int, operation: str, exc: Exception) -
     database.mark_order_intent_unknown(intent_id, repr(exc))
     telegram.send_error_event(
         action=operation,
+        symbol=symbol,
+        timeframe=timeframe,
+        strategy=strategy,
         reason="Exchange submission outcome is uncertain",
         impact="The intent was not retried and requires reconciliation.",
         next_step="Check the exchange order and reconciliation logs before any manual action.",
@@ -267,6 +334,12 @@ def create_buy_order(
         exchange, bot=bot, symbol=symbol, strategy_id=strategy_id, side="buy"
     )
     market = service.load_markets()[service.normalize_symbol(symbol)]
+    if database.is_symbol_blacklisted(market.base_asset):
+        message = (
+            f"Buy skipped because {market.base_asset} is present in the BEC blacklist"
+        )
+        print(database.exchange_log_prefix(), f"{market.symbol}: {message}")
+        return {"skipped": True, "reason": message}
     if quote_amount is not None and convert_all_balance:
         raise ValueError("quote_amount and convert_all_balance are mutually exclusive")
     if quote_amount is not None:
@@ -316,7 +389,14 @@ def create_buy_order(
             client_order_id=intent["Client_Order_Id"],
         )
     except Exception as exc:
-        _record_submission_failure(intent["Id"], "create exchange buy order", exc)
+        _record_submission_failure(
+            intent["Id"],
+            "create exchange buy order",
+            exc,
+            symbol=market.symbol,
+            timeframe=bot,
+            strategy=strategy_name or strategy_id,
+        )
         return None
     applied = database.apply_order_result(intent["Id"], result)
     _log_order_persistence(exchange, result)
@@ -637,7 +717,14 @@ def create_sell_order(
                 client_order_id=intent["Client_Order_Id"],
             )
     except Exception as exc:
-        _record_submission_failure(intent["Id"], "create exchange sell order", exc)
+        _record_submission_failure(
+            intent["Id"],
+            "create exchange sell order",
+            exc,
+            symbol=market.symbol,
+            timeframe=bot,
+            strategy=strategy_name or strategy_id,
+        )
         return None
     applied = database.apply_order_result(intent["Id"], result)
     _post_apply_sell(intent, applied, float(result.average_price or 0))
@@ -686,6 +773,11 @@ def reconcile_unsettled_orders() -> dict:
             if callable(stored_rejection) and stored_rejection(
                 str(intent.get("Error_Message") or "")
             ):
+                restriction = _regional_trading_restriction(
+                    str(intent.get("Error_Message") or "")
+                )
+                if restriction is not None:
+                    _blacklist_restricted_asset(restriction["asset"])
                 database.mark_order_intent_rejected(
                     intent["Id"], str(intent.get("Error_Message") or "")
                 )

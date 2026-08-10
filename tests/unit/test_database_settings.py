@@ -34,6 +34,30 @@ def test_app_settings_load_without_legacy_take_profit_enabled():
             database._thread_local.conn = original_conn
 
 
+def test_blacklist_helpers_normalize_and_do_not_duplicate_base_asset():
+    original_conn = getattr(database._thread_local, "conn", None)
+    test_conn = sqlite3.connect(":memory:", check_same_thread=False)
+    test_conn.execute(database.sql_create_blacklist_table)
+    database._thread_local.conn = test_conn
+
+    try:
+        assert database.ensure_symbol_blacklisted(" xmr ") is True
+        assert database.ensure_symbol_blacklisted("XMR") is False
+        assert database.is_symbol_blacklisted("xmr") is True
+        assert test_conn.execute(
+            "SELECT Symbol FROM Blacklist ORDER BY Id"
+        ).fetchall() == [("XMR",)]
+    finally:
+        test_conn.close()
+        if original_conn is None:
+            try:
+                delattr(database._thread_local, "conn")
+            except AttributeError:
+                pass
+        else:
+            database._thread_local.conn = original_conn
+
+
 def test_backtesting_settings_include_monte_carlo_candle_perturbation(tmp_path):
     original_conn = getattr(database._thread_local, "conn", None)
     test_conn = sqlite3.connect(tmp_path / "data.db", check_same_thread=False)

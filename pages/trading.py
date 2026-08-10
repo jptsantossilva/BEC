@@ -3,6 +3,7 @@ import time
 import os
 import calendar
 import json
+from collections import Counter
 from datetime import datetime, timedelta
 from decimal import Decimal
 
@@ -15,6 +16,7 @@ import bec.utils.config as config
 import bec.utils.database as database
 import bec.exchanges.service as binance
 from bec.exchanges.registry import get_adapter_for_code, get_registered_exchange_codes
+from bec.exchanges.base import SpotMarketAvailability
 import bec.utils.trading_service as trading_service
 from bec.page_config import configure_page
 from bec.utils.take_profit import (
@@ -36,6 +38,8 @@ TRADING_TAB_OPTIONS = [
 ]
 TRADING_ACTIVE_TAB_KEY = "trading_active_tab_saved"
 TRADING_ACTIVE_TAB_WIDGET_KEY = "_trading_active_tab_widget"
+ACTIVE_EXCHANGE_SELECTOR_KEY = "active_exchange_selector"
+ACTIVE_EXCHANGE_SELECTOR_CONTEXT_KEY = "_active_exchange_selector_current"
 MAIN_STRATEGIES_WIDGET_KEY = "_main_strategies_widget"
 POSITIONS_DISPLAY_COLUMNS = [
     "Symbol",
@@ -57,6 +61,7 @@ ALL_TIME_FILTER = "__all_time__"
 ALL_STRATEGIES_FILTER = "__all_strategies__"
 MISSING_STRATEGY_FILTER = "__missing_strategy__"
 MISSING_STRATEGY_LABEL = "(Missing strategy)"
+SPOT_MARKET_DIAGNOSTIC_QUOTES = ("USDC", "USDT", "BTC")
 MONTHLY_RETURNS_MONTHS = [
     {"Month_Number": month, "Month": calendar.month_abbr[month]}
     for month in range(1, 13)
@@ -1159,6 +1164,94 @@ def _render_okx_read_only_checks(exchanges: pd.DataFrame) -> None:
             (st.success if status.available else st.error)(status.message)
 
 
+def _sync_active_exchange_selector(current_exchange_id: int | None) -> None:
+    """Reset only stale exchange-selector state without discarding a new choice."""
+    if st.session_state.get(ACTIVE_EXCHANGE_SELECTOR_CONTEXT_KEY) != current_exchange_id:
+        st.session_state[ACTIVE_EXCHANGE_SELECTOR_KEY] = current_exchange_id
+        st.session_state[ACTIVE_EXCHANGE_SELECTOR_CONTEXT_KEY] = current_exchange_id
+
+
+def _spot_market_diagnostics_grid(
+    markets: list[SpotMarketAvailability]
+    | tuple[SpotMarketAvailability, ...],
+) -> pd.DataFrame:
+    """Summarize spot availability for the quote assets supported by BEC."""
+    rows = []
+    for quote_asset in SPOT_MARKET_DIAGNOSTIC_QUOTES:
+        quote_markets = [
+            market
+            for market in markets
+            if str(market.quote_asset).upper() == quote_asset
+        ]
+        used_by_bec = [
+            market
+            for market in quote_markets
+            if market.active
+        ]
+        unavailable = Counter(
+            str(market.status or "inactive").lower()
+            for market in quote_markets
+            if not market.active
+        )
+        unavailable_text = " + ".join(
+            f"{count} {status}" for status, count in sorted(unavailable.items())
+        )
+        rows.append(
+            {
+                "Trade against": quote_asset,
+                "Spot markets": len(quote_markets),
+                "Active/online used by BEC": len(used_by_bec),
+                "Not normally tradable": unavailable_text or "None",
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _load_spot_market_diagnostics(active_exchange: dict) -> pd.DataFrame:
+    """Load fresh public spot-market states for the active exchange."""
+    adapter = get_adapter_for_code(
+        str(active_exchange["code"]),
+        adapter_id=str(active_exchange.get("adapter_id") or ""),
+    )
+    markets = adapter.load_spot_market_availability(force=True)
+    return _spot_market_diagnostics_grid(markets)
+
+
+def _render_spot_market_diagnostics(active_exchange: dict) -> None:
+    """Render the public spot-market availability check and latest result."""
+    code = str(active_exchange["code"])
+    name = str(active_exchange.get("name") or code.upper())
+    state_key = f"spot_market_diagnostics_{code}"
+    st.caption(
+        "This public, read-only check lists direct spot markets. It does not "
+        "use credentials, balances, conversions, or submit orders."
+    )
+    if st.button(
+        f"Check {name} Spot Markets",
+        icon=":material/table_view:",
+        key=f"check_spot_markets_{code}",
+    ):
+        try:
+            with st.spinner(f"Loading {name} spot markets..."):
+                st.session_state[state_key] = _load_spot_market_diagnostics(
+                    active_exchange
+                )
+        except Exception as exc:
+            st.session_state.pop(state_key, None)
+            print(
+                database.exchange_log_prefix(),
+                f"Spot market diagnostics failed ({type(exc).__name__})",
+            )
+            st.error(
+                f"{name} spot market diagnostics are unavailable. "
+                "Review the operational log and try again."
+            )
+
+    result = st.session_state.get(state_key)
+    if isinstance(result, pd.DataFrame):
+        st.dataframe(result, hide_index=True, width="content")
+
+
 def _render_exchange_management(
     exchanges: pd.DataFrame, active_exchange: dict | None
 ) -> None:
@@ -1324,20 +1417,21 @@ def _render_exchange_management(
         int(row["Id"]): f"{row['Name']} ({row['Code']})"
         for _, row in enabled_exchanges.iterrows()
     }
+    current_exchange_id = int(active_exchange["id"]) if active_exchange else None
+    _sync_active_exchange_selector(current_exchange_id)
     selected_exchange = st.selectbox(
         "Active exchange",
         exchange_options,
         index=(
-            exchange_options.index(int(active_exchange["id"]))
-            if active_exchange and int(active_exchange["id"]) in exchange_options
+            exchange_options.index(current_exchange_id)
+            if current_exchange_id in exchange_options
             else 0
         ),
         format_func=lambda value: (
             "No active exchange" if value is None else labels[int(value)]
         ),
-        key="active_exchange_selector",
+        key=ACTIVE_EXCHANGE_SELECTOR_KEY,
     )
-    current_exchange_id = int(active_exchange["id"]) if active_exchange else None
     selection_changed = selected_exchange != current_exchange_id
     if selection_changed:
         blockers = database.get_exchange_switch_blockers()
@@ -1794,6 +1888,8 @@ def _render_diagnostics_and_validation(
         "Credential checks and validation tools are optional operational actions. "
         "API keys must never have withdrawal permission."
     )
+    _render_spot_market_diagnostics(active_exchange)
+
     if capabilities.uses_gated_live_execution:
         if code in {"okx", "okx_demo"}:
             active_rows = exchanges[exchanges["Code"].astype(str) == code]

@@ -3503,6 +3503,46 @@ def add_blacklist(symbols: list):
         connection.executemany(sql_add_blacklist, [(symbol,) for symbol in symbols])
 
 
+def ensure_symbol_blacklisted(symbol: str) -> bool:
+    """Add one normalized base asset unless it is already blacklisted."""
+    normalized = str(symbol or "").strip().upper()
+    if not normalized:
+        return False
+    connection = _get_conn()
+    with connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO Blacklist (Symbol)
+            SELECT ?
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM Blacklist
+                WHERE UPPER(TRIM(Symbol)) = ?
+            );
+            """,
+            (normalized, normalized),
+        )
+    return cursor.rowcount > 0
+
+
+def is_symbol_blacklisted(symbol: str) -> bool:
+    """Return whether a normalized base asset is present in the blacklist."""
+    normalized = str(symbol or "").strip().upper()
+    if not normalized:
+        return False
+    connection = _get_conn()
+    row = connection.execute(
+        """
+        SELECT 1
+        FROM Blacklist
+        WHERE UPPER(TRIM(Symbol)) = ?
+        LIMIT 1;
+        """,
+        (normalized,),
+    ).fetchone()
+    return row is not None
+
+
 def update_blacklist(df_blacklist):
     connection = _get_conn()
     """Efficiently update the Blacklist table without replacing it entirely."""

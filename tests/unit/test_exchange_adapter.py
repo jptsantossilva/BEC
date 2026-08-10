@@ -279,6 +279,34 @@ def test_exchange_service_returns_normalized_symbols_for_kraken(monkeypatch):
     assert service.get_tradable_symbols("USDC") == ["BTC/USDC"]
 
 
+def test_binance_spot_market_diagnostics_include_inactive_native_states():
+    class DiagnosticsClient(FakeBinanceClient):
+        def get_exchange_info(self):
+            return {
+                "symbols": [
+                    *EXCHANGE_INFO["symbols"],
+                    {
+                        "symbol": "ETHUSDC",
+                        "status": "BREAK",
+                        "baseAsset": "ETH",
+                        "quoteAsset": "USDC",
+                        "filters": [],
+                    },
+                ]
+            }
+
+    diagnostics = BinanceAdapter(
+        client=DiagnosticsClient()
+    ).load_spot_market_availability(force=True)
+
+    assert [
+        (market.symbol, market.active, market.status) for market in diagnostics
+    ] == [
+        ("BTC/USDC", True, "trading"),
+        ("ETH/USDC", False, "break"),
+    ]
+
+
 def test_adapter_capabilities_describe_existing_exchange_routing():
     assert BinanceAdapter.capabilities.uses_native_private_workflows is True
     assert BinanceAdapter.capabilities.uses_gated_live_execution is False

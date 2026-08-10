@@ -68,6 +68,29 @@ class MarketInfo:
 
 
 @dataclass(frozen=True)
+class SpotMarketAvailability:
+    """Read-only native spot-market state used by operator diagnostics."""
+
+    symbol: str
+    base_asset: str
+    quote_asset: str
+    active: bool
+    status: str
+
+
+def native_market_status(raw: Mapping[str, Any], *, active: bool) -> str:
+    """Return a compact exchange-native market status for diagnostics."""
+    info = raw.get("info")
+    sources = (info, raw) if isinstance(info, Mapping) else (raw,)
+    for source in sources:
+        for key in ("status", "state"):
+            value = str(source.get(key) or "").strip().lower()
+            if value:
+                return re.sub(r"[\s-]+", "_", value)
+    return "online" if active else "inactive"
+
+
+@dataclass(frozen=True)
 class Balance:
     asset: str
     free: Decimal
@@ -185,6 +208,28 @@ class ExchangeAdapter(ABC):
     @abstractmethod
     def load_markets(self, *, force: bool = False) -> Mapping[str, MarketInfo]:
         raise NotImplementedError
+
+    def load_spot_market_availability(
+        self, *, force: bool = False
+    ) -> Sequence[SpotMarketAvailability]:
+        """Return all known spot markets, including inactive native states."""
+        result = []
+        for market in self.load_markets(force=force).values():
+            if not market.spot or market.contract or market.market_type != "spot":
+                continue
+            result.append(
+                SpotMarketAvailability(
+                    symbol=market.symbol,
+                    base_asset=market.base_asset,
+                    quote_asset=market.quote_asset,
+                    active=bool(market.active),
+                    status=native_market_status(
+                        market.raw,
+                        active=bool(market.active),
+                    ),
+                )
+            )
+        return tuple(result)
 
     @abstractmethod
     def fetch_ohlcv(self, symbol: str, interval: str, **kwargs: Any) -> pd.DataFrame:

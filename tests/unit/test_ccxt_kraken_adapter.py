@@ -196,6 +196,51 @@ def test_kraken_adapter_implements_contract_and_maps_aliases_and_limits():
     assert "cost is below the exchange minimum" in invalid.errors
 
 
+def test_kraken_spot_market_diagnostics_include_native_inactive_states():
+    class DiagnosticsClient(FakeKrakenClient):
+        def load_markets(self, reload=False):
+            markets = super().load_markets(reload=reload)
+            markets.update(
+                {
+                    "AI16Z/USDC": {
+                        "id": "AI16ZUSDC",
+                        "symbol": "AI16Z/USDC",
+                        "base": "AI16Z",
+                        "quote": "USDC",
+                        "spot": True,
+                        "type": "spot",
+                        "active": False,
+                        "info": {"status": "cancel_only"},
+                    },
+                    "EURR/USDC": {
+                        "id": "EURRUSDC",
+                        "symbol": "EURR/USDC",
+                        "base": "EURR",
+                        "quote": "USDC",
+                        "spot": True,
+                        "type": "spot",
+                        "active": False,
+                        "info": {"status": "post_only"},
+                    },
+                }
+            )
+            return markets
+
+    adapter = KrakenAdapter(client=DiagnosticsClient())
+
+    diagnostics = adapter.load_spot_market_availability(force=True)
+
+    assert [
+        (market.symbol, market.active, market.status)
+        for market in diagnostics
+        if market.quote_asset == "USDC"
+    ] == [
+        ("AI16Z/USDC", False, "cancel_only"),
+        ("EURR/USDC", False, "post_only"),
+    ]
+    assert all(market.symbol != "BTC/EUR:EUR" for market in diagnostics)
+
+
 @pytest.mark.parametrize(
     "client_order_id",
     [
@@ -233,6 +278,38 @@ def test_kraken_invalid_client_order_id_exchange_error_is_definitive_rejection()
 
     assert adapter.is_known_submission_rejection(error) is True
     assert adapter.is_known_persisted_submission_rejection(repr(error)) is True
+
+
+def test_kraken_regional_trading_restriction_is_definitive_and_structured():
+    adapter = KrakenAdapter(client=FakeKrakenClient())
+    error = ccxt.ExchangeError(
+        'kraken {"error":["EAccount:Invalid permissions:XMR trading restricted for PT."]}'
+    )
+
+    assert adapter.regional_trading_restriction(error) == {
+        "asset": "XMR",
+        "region": "PT",
+    }
+    assert adapter.is_known_submission_rejection(error) is True
+    assert adapter.is_known_persisted_submission_rejection(repr(error)) is True
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ccxt.ExchangeError(
+            'kraken {"error":["EAccount:Invalid permissions"]}'
+        ),
+        ccxt.InsufficientFunds(
+            'kraken {"error":["EOrder:Insufficient funds"]}'
+        ),
+        TimeoutError("submission outcome unknown"),
+    ],
+)
+def test_kraken_non_regional_errors_do_not_match_regional_restriction(error):
+    adapter = KrakenAdapter(client=FakeKrakenClient())
+
+    assert adapter.regional_trading_restriction(error) is None
 
 
 @pytest.mark.parametrize("legacy_first", [False, True])

@@ -232,7 +232,7 @@ def test_auto_switch_buy_signal_records_then_skips_same_candle(monkeypatch):
     processed = {"value": False}
 
     monkeypatch.setattr(
-        market_phase.binance,
+        market_phase.exchange_service,
         "get_close_df",
         lambda *args, **kwargs: _market_data(rows=3),
     )
@@ -268,7 +268,7 @@ def test_auto_switch_buy_signal_records_then_skips_same_candle(monkeypatch):
     )
     monkeypatch.setattr(market_phase.database, "release_all_values", lambda: None)
     monkeypatch.setattr(
-        market_phase.binance,
+        market_phase.exchange_service,
         "create_buy_order",
         lambda *args, **kwargs: order_calls.append(("buy", args, kwargs)),
     )
@@ -315,7 +315,7 @@ def test_auto_switch_sell_signal_uses_exit_alert(monkeypatch):
     sent = []
 
     monkeypatch.setattr(
-        market_phase.binance,
+        market_phase.exchange_service,
         "get_close_df",
         lambda *args, **kwargs: _market_data(rows=3),
     )
@@ -343,7 +343,7 @@ def test_auto_switch_sell_signal_uses_exit_alert(monkeypatch):
     )
     monkeypatch.setattr(market_phase.database, "release_all_values", lambda: None)
     monkeypatch.setattr(
-        market_phase.binance,
+        market_phase.exchange_service,
         "create_sell_order",
         lambda *args, **kwargs: order_calls.append(("sell", args, kwargs)),
     )
@@ -741,6 +741,22 @@ def test_buy_candidates_are_limited_to_selected_main_strategies():
     filtered = main._filter_buy_candidates_for_active_strategies(candidates, settings)
 
     assert filtered["Symbol"].tolist() == ["BBBUSDC", "DDDUSDC"]
+
+
+def test_market_phase_blacklist_supports_binance_and_canonical_symbols(monkeypatch):
+    settings = SimpleNamespace(trade_against="USDC")
+    monkeypatch.setattr(
+        market_phase.database,
+        "get_symbol_blacklist",
+        lambda: pd.DataFrame([{"Symbol": "xmr"}, {"Symbol": " ADA "}]),
+    )
+
+    assert market_phase.get_blacklist(settings) == {
+        "XMRUSDC",
+        "XMR/USDC",
+        "ADAUSDC",
+        "ADA/USDC",
+    }
 
 
 @pytest.mark.parametrize("run_mode", ["test", "demo"])
@@ -1884,7 +1900,7 @@ def test_market_phase_builds_candidates_for_public_exchanges(monkeypatch, exchan
         },
     )
     monkeypatch.setattr(
-        market_phase.binance,
+        market_phase.exchange_service,
         "create_balance_snapshot",
         lambda **kwargs: balance_calls.append(kwargs),
     )
@@ -1933,7 +1949,11 @@ def test_market_phase_empty_data_is_skipped_without_error_notification(monkeypat
     main_messages = []
     warning_stats = {"warnings": 0}
 
-    monkeypatch.setattr(market_phase.binance, "get_close_df", lambda **kwargs: pd.DataFrame())
+    monkeypatch.setattr(
+        market_phase.exchange_service,
+        "get_close_df",
+        lambda **kwargs: pd.DataFrame(),
+    )
     monkeypatch.setattr(market_phase.telegram, "send_error_event", lambda **kwargs: errors.append(kwargs))
     monkeypatch.setattr(
         market_phase.telegram,
@@ -1962,7 +1982,11 @@ def test_market_phase_skips_symbols_without_enough_closed_candles(monkeypatch):
     errors = []
     warning_stats = {"warnings": 0}
 
-    monkeypatch.setattr(market_phase.binance, "get_close_df", lambda **kwargs: short_history)
+    monkeypatch.setattr(
+        market_phase.exchange_service,
+        "get_close_df",
+        lambda **kwargs: short_history,
+    )
     monkeypatch.setattr(market_phase.telegram, "send_error_event", lambda **kwargs: errors.append(kwargs))
 
     result = market_phase.set_market_phases_to_symbols(["NEWUSDC"], "1d", warning_stats=warning_stats)
@@ -1994,7 +2018,7 @@ def test_market_phase_uses_configured_candle_lookback(monkeypatch):
         "_market_phase_start_date",
         lambda timeframe: now_utc - timedelta(days=market_phase.MARKET_PHASE_LOOKBACK_CANDLES),
     )
-    monkeypatch.setattr(market_phase.binance, "get_close_df", fake_get_close_df)
+    monkeypatch.setattr(market_phase.exchange_service, "get_close_df", fake_get_close_df)
 
     result = market_phase.set_market_phases_to_symbols(["AAAUSDC"], "1d")
 

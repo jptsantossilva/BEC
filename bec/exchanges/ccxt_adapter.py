@@ -25,7 +25,9 @@ from bec.exchanges.base import (
     OrderRequest,
     OrderResult,
     OrderValidation,
+    SpotMarketAvailability,
     Ticker,
+    native_market_status,
 )
 from bec.exchanges.public_rate_limit import SharedPublicRequestThrottle
 
@@ -342,6 +344,36 @@ class CcxtExchangeAdapter(ExchangeAdapter):
         self._market_lookup = lookup
         self._markets_loaded_at = now
         return markets
+
+    def load_spot_market_availability(
+        self, *, force: bool = False
+    ) -> tuple[SpotMarketAvailability, ...]:
+        """Return every CCXT spot market before active-state filtering."""
+        raw_markets = self._call_public_read(
+            "load spot market diagnostics",
+            lambda: self.client.load_markets(reload=bool(force)),
+        )
+        result = []
+        for raw in raw_markets.values():
+            spot = bool(raw.get("spot") or raw.get("type") == "spot")
+            contract = bool(raw.get("contract", False))
+            if not spot or contract:
+                continue
+            base = self._canonical_asset(raw.get("base"))
+            quote = self._canonical_asset(raw.get("quote"))
+            if not base or not quote:
+                continue
+            active = bool(raw.get("active", False))
+            result.append(
+                SpotMarketAvailability(
+                    symbol=f"{base}/{quote}",
+                    base_asset=base,
+                    quote_asset=quote,
+                    active=active,
+                    status=native_market_status(raw, active=active),
+                )
+            )
+        return tuple(result)
 
     def normalize_symbol(self, symbol: str) -> str:
         value = str(symbol or "").strip().upper()

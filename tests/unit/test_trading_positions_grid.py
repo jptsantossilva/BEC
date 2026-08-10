@@ -1,11 +1,12 @@
 import json
 import importlib
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pandas as pd
 import pytest
 
-from bec.exchanges.base import MarketInfo
+from bec.exchanges.base import MarketInfo, SpotMarketAvailability
 
 trading = importlib.import_module("pages.trading")
 
@@ -247,6 +248,150 @@ def test_okx_public_health_check_syncs_catalog_without_touching_demo(monkeypatch
     }
     assert quotes == {"okx": ["USDC"], "okx_demo": []}
     assert synced == [(3, {"BTC/USDC": market})]
+
+
+def test_spot_market_diagnostics_grid_summarizes_supported_quote_assets():
+    markets = [
+        SpotMarketAvailability(
+            "BTC/USDC", "BTC", "USDC", True, "online"
+        ),
+        SpotMarketAvailability(
+            "AI16Z/USDC", "AI16Z", "USDC", False, "cancel_only"
+        ),
+        SpotMarketAvailability(
+            "EURR/USDC", "EURR", "USDC", False, "post_only"
+        ),
+        SpotMarketAvailability(
+            "USDR/USDC", "USDR", "USDC", False, "post_only"
+        ),
+        SpotMarketAvailability(
+            "ETH/USDT", "ETH", "USDT", True, "online"
+        ),
+        SpotMarketAvailability(
+            "ETH/EUR", "ETH", "EUR", True, "online"
+        ),
+    ]
+
+    grid = trading._spot_market_diagnostics_grid(markets)
+
+    assert grid.to_dict("records") == [
+        {
+            "Trade against": "USDC",
+            "Spot markets": 4,
+            "Active/online used by BEC": 1,
+            "Not normally tradable": "1 cancel_only + 2 post_only",
+        },
+        {
+            "Trade against": "USDT",
+            "Spot markets": 1,
+            "Active/online used by BEC": 1,
+            "Not normally tradable": "None",
+        },
+        {
+            "Trade against": "BTC",
+            "Spot markets": 0,
+            "Active/online used by BEC": 0,
+            "Not normally tradable": "None",
+        },
+    ]
+
+
+def test_spot_market_diagnostics_loads_selected_public_adapter(monkeypatch):
+    calls = []
+    market = SpotMarketAvailability(
+        "BTC/USDC", "BTC", "USDC", True, "online"
+    )
+    adapter = SimpleNamespace(
+        load_spot_market_availability=lambda force=False: (
+            calls.append(force) or (market,)
+        )
+    )
+    monkeypatch.setattr(
+        trading,
+        "get_adapter_for_code",
+        lambda code, adapter_id="": (
+            calls.append((code, adapter_id)) or adapter
+        ),
+    )
+
+    grid = trading._load_spot_market_diagnostics(
+        {"code": "kraken", "adapter_id": "kraken"}
+    )
+
+    assert calls == [("kraken", "kraken"), True]
+    assert grid.iloc[0].to_dict() == {
+        "Trade against": "USDC",
+        "Spot markets": 1,
+        "Active/online used by BEC": 1,
+        "Not normally tradable": "None",
+    }
+
+
+def test_spot_market_diagnostics_button_renders_loaded_grid(monkeypatch):
+    rendered = []
+    grid = pd.DataFrame(
+        [
+            {
+                "Trade against": "USDC",
+                "Spot markets": 47,
+                "Active/online used by BEC": 44,
+                "Not normally tradable": "1 cancel_only + 2 post_only",
+            }
+        ]
+    )
+    monkeypatch.setattr(trading.st, "session_state", {})
+    monkeypatch.setattr(trading.st, "caption", lambda message: None)
+    monkeypatch.setattr(trading.st, "button", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        trading.st,
+        "spinner",
+        lambda *args, **kwargs: nullcontext(),
+    )
+    monkeypatch.setattr(
+        trading.st,
+        "dataframe",
+        lambda frame, **kwargs: rendered.append((frame, kwargs)),
+    )
+    monkeypatch.setattr(
+        trading,
+        "_load_spot_market_diagnostics",
+        lambda active_exchange: grid,
+    )
+
+    trading._render_spot_market_diagnostics(
+        {"code": "kraken", "name": "Kraken"}
+    )
+
+    assert rendered == [(grid, {"hide_index": True, "width": "content"})]
+
+
+def test_active_exchange_selector_replaces_stale_session_choice(monkeypatch):
+    session_state = {
+        trading.ACTIVE_EXCHANGE_SELECTOR_KEY: 1,
+    }
+    monkeypatch.setattr(trading.st, "session_state", session_state)
+
+    trading._sync_active_exchange_selector(2)
+
+    assert session_state == {
+        trading.ACTIVE_EXCHANGE_SELECTOR_KEY: 2,
+        trading.ACTIVE_EXCHANGE_SELECTOR_CONTEXT_KEY: 2,
+    }
+
+
+def test_active_exchange_selector_preserves_pending_user_choice(monkeypatch):
+    session_state = {
+        trading.ACTIVE_EXCHANGE_SELECTOR_KEY: 1,
+        trading.ACTIVE_EXCHANGE_SELECTOR_CONTEXT_KEY: 2,
+    }
+    monkeypatch.setattr(trading.st, "session_state", session_state)
+
+    trading._sync_active_exchange_selector(2)
+
+    assert session_state == {
+        trading.ACTIVE_EXCHANGE_SELECTOR_KEY: 1,
+        trading.ACTIVE_EXCHANGE_SELECTOR_CONTEXT_KEY: 2,
+    }
 
 
 def test_positions_display_grid_removes_internal_columns_without_mutating_source():

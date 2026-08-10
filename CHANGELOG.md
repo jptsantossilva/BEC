@@ -2,6 +2,16 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-08-10]
+- Kraken Live Execution - Classify explicit regional asset restrictions as definitive order rejections, settle affected intents without reconciliation, automatically add the restricted base asset to the BEC blacklist, and block subsequent automatic buys for blacklisted assets.
+- Telegram - Include symbol, timeframe and strategy in live submission failure alerts, with a dedicated regional-restriction message explaining the rejected intent and automatic blacklist action.
+- Market Phases - Apply base-asset blacklist entries to both Binance-style symbols such as `XMRUSDC` and canonical CCXT symbols such as `XMR/USDC`.
+
+## [2026-07-28]
+- Trading Settings - Added an on-demand, public read-only SPOT market diagnostic for the active exchange. It summarizes direct USDC, USDT and BTC markets, active markets available to BEC, and native unavailable states such as `cancel_only` and `post_only`, without using credentials or submitting orders.
+- Market Phases - Renamed the exchange-neutral market service alias from `binance` to `exchange_service` in the market-phase workflow, clarifying that it uses the active exchange adapter.
+- Trading Settings - Fixed stale Active exchange selector state so it refreshes from the persisted active exchange without discarding a newly selected exchange awaiting explicit application.
+
 ## [2026-07-27]
 - Kraken Live Execution - Generate Kraken-compatible 32-character client order IDs, validate unsupported IDs before intent persistence, classify Kraken `cl_ord_id` validation errors as definitive rejections, and settle previously misclassified intents during reconciliation without resubmitting an order.
 - Trading Settings - Reorganized exchange controls into a production-first summary with collapsed management and diagnostics sections, contextual OKX confirmation, on-demand reconciliation, and hidden-by-default Kraken/OKX validation tools.

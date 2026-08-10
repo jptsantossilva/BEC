@@ -729,6 +729,9 @@ def test_uncertain_submission_is_marked_for_reconciliation(monkeypatch):
     )
     monkeypatch.setattr(live_execution.service, "normalize_symbol", lambda symbol: symbol)
     monkeypatch.setattr(live_execution.service, "load_markets", lambda: {market.symbol: market})
+    monkeypatch.setattr(
+        live_execution.database, "is_symbol_blacklisted", lambda symbol: False
+    )
     monkeypatch.setattr(live_execution, "_stake_amount", lambda quote: Decimal("10"))
     monkeypatch.setattr(
         live_execution.service,
@@ -778,6 +781,128 @@ def test_known_submission_rejection_is_settled_without_reconciliation(monkeypatc
     live_execution._record_submission_failure(7, "create exchange buy order", ValueError("invalid"))
 
     assert rejected == [(7, "ValueError('invalid')")]
+
+
+def test_regional_restriction_is_rejected_blacklisted_and_reported_with_context(
+    monkeypatch,
+):
+    error = RuntimeError(
+        'kraken {"error":["EAccount:Invalid permissions:XMR trading restricted for PT."]}'
+    )
+    rejected = []
+    blacklisted = []
+    reported = []
+    adapter = SimpleNamespace(
+        code="kraken",
+        regional_trading_restriction=lambda value: (
+            {"asset": "XMR", "region": "PT"}
+            if "trading restricted" in str(value)
+            else None
+        ),
+        is_known_submission_rejection=lambda exc: True,
+    )
+    monkeypatch.setattr(live_execution.service, "get_adapter", lambda: adapter)
+    monkeypatch.setattr(
+        live_execution.database,
+        "mark_order_intent_rejected",
+        lambda intent_id, detail: rejected.append((intent_id, detail)),
+    )
+    monkeypatch.setattr(
+        live_execution.database,
+        "mark_order_intent_unknown",
+        lambda *_args: pytest.fail("regional restriction must not be unknown"),
+    )
+    monkeypatch.setattr(
+        live_execution.database,
+        "ensure_symbol_blacklisted",
+        lambda symbol: blacklisted.append(symbol) or True,
+    )
+    monkeypatch.setattr(
+        live_execution.telegram,
+        "send_error_event",
+        lambda **kwargs: reported.append(kwargs),
+    )
+
+    live_execution._record_submission_failure(
+        17,
+        "create exchange buy order",
+        error,
+        symbol="XMR/USDC",
+        timeframe="1d",
+        strategy="HMA RSI",
+    )
+
+    assert rejected == [(17, repr(error))]
+    assert blacklisted == ["XMR"]
+    assert reported[0]["symbol"] == "XMR/USDC"
+    assert reported[0]["timeframe"] == "1d"
+    assert reported[0]["strategy"] == "HMA RSI"
+    assert reported[0]["reason"] == "The exchange rejected XMR trading for region PT"
+    assert "marked rejected" in reported[0]["impact"]
+    assert "blacklist" in reported[0]["impact"]
+    assert "No reconciliation" in reported[0]["next_step"]
+
+
+def test_non_regional_rejection_never_changes_blacklist(monkeypatch):
+    adapter = SimpleNamespace(
+        code="kraken",
+        regional_trading_restriction=lambda value: None,
+        is_known_submission_rejection=lambda exc: True,
+    )
+    monkeypatch.setattr(live_execution.service, "get_adapter", lambda: adapter)
+    monkeypatch.setattr(
+        live_execution.database, "mark_order_intent_rejected", lambda *_args: None
+    )
+    monkeypatch.setattr(
+        live_execution.database,
+        "ensure_symbol_blacklisted",
+        lambda symbol: pytest.fail(
+            "a non-regional rejection must never modify the blacklist"
+        ),
+    )
+    monkeypatch.setattr(
+        live_execution.telegram, "send_error_event", lambda **kwargs: None
+    )
+
+    live_execution._record_submission_failure(
+        18,
+        "create exchange buy order",
+        RuntimeError("EOrder:Insufficient funds"),
+        symbol="BTC/USDC",
+        timeframe="1h",
+        strategy="EMA Cross",
+    )
+
+
+def test_blacklisted_base_asset_skips_buy_before_balance_or_intent(monkeypatch):
+    market = MarketInfo("XMR/USDC", "XMRUSDC", "XMR", "USDC", True)
+    monkeypatch.setattr(
+        live_execution, "_guarded_live_exchange", lambda side: (_exchange(), None)
+    )
+    monkeypatch.setattr(live_execution.service, "normalize_symbol", lambda symbol: symbol)
+    monkeypatch.setattr(live_execution.service, "load_markets", lambda: {market.symbol: market})
+    monkeypatch.setattr(
+        live_execution.database,
+        "is_symbol_blacklisted",
+        lambda symbol: symbol == "XMR",
+    )
+    monkeypatch.setattr(
+        live_execution,
+        "_stake_amount",
+        lambda quote: pytest.fail("a blacklisted buy must not read sizing/balance"),
+    )
+    monkeypatch.setattr(
+        live_execution.database,
+        "create_order_intent",
+        lambda **kwargs: pytest.fail("a blacklisted buy must not create an intent"),
+    )
+
+    result = live_execution.create_buy_order(
+        symbol="XMR/USDC", bot="1d", strategy_id="hma_rsi"
+    )
+
+    assert result["skipped"] is True
+    assert "XMR" in result["reason"]
 
 
 def test_okx_submission_reporting_withholds_exchange_request_details(monkeypatch):
@@ -955,3 +1080,66 @@ def test_reconciliation_settles_stored_invalid_kraken_client_id_rejection(monkey
 
     assert stats == {"checked": 1, "updated": 1, "unresolved": 0}
     assert rejected[0][0] == 1
+
+
+def test_reconciliation_blacklists_stored_regional_restriction(monkeypatch):
+    rejected = []
+    blacklisted = []
+    error = (
+        "ExchangeError('kraken "
+        '{"error":["EAccount:Invalid permissions:XMR trading restricted for PT."]}'
+        "')"
+    )
+
+    class Adapter:
+        code = "kraken"
+        capabilities = ExchangeCapabilities(supports_reconciliation=True)
+
+        def regional_trading_restriction(self, value):
+            return (
+                {"asset": "XMR", "region": "PT"}
+                if "trading restricted" in value
+                else None
+            )
+
+        def is_known_persisted_submission_rejection(self, value):
+            return self.regional_trading_restriction(value) is not None
+
+        def fetch_order_by_client_id(self, *_args):
+            pytest.fail("a definitively rejected order must not be looked up")
+
+    monkeypatch.setattr(
+        live_execution.database,
+        "get_active_exchange",
+        lambda required=False: _exchange(),
+    )
+    monkeypatch.setattr(live_execution.service, "get_adapter", lambda: Adapter())
+    monkeypatch.setattr(
+        live_execution.database,
+        "get_unsettled_order_intents",
+        lambda exchange_id: [
+            {
+                "Id": 22,
+                "Side": "BUY",
+                "Symbol": "XMR/USDC",
+                "Client_Order_Id": "bec-test",
+                "Error_Message": error,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        live_execution.database,
+        "mark_order_intent_rejected",
+        lambda intent_id, detail: rejected.append((intent_id, detail)),
+    )
+    monkeypatch.setattr(
+        live_execution.database,
+        "ensure_symbol_blacklisted",
+        lambda symbol: blacklisted.append(symbol) or True,
+    )
+
+    stats = live_execution.reconcile_unsettled_orders()
+
+    assert stats == {"checked": 1, "updated": 1, "unresolved": 0}
+    assert rejected == [(22, error)]
+    assert blacklisted == ["XMR"]

@@ -9,7 +9,7 @@ import importlib
 
 import bec.utils.config as config
 import bec.utils.database as database
-import bec.exchanges.service as binance
+import bec.exchanges.service as exchange_service
 import bec.utils.telegram as telegram
 import bec.utils.telegram_reporting as telegram_reporting
 import bec.add_symbol as add_symbol
@@ -22,7 +22,7 @@ MARKET_PHASE_MIN_CANDLES = 200
 MARKET_PHASE_LOOKBACK_CANDLES = 201
 
 def get_blacklist(settings=None):
-    """Return set of blacklisted symbols with trade-against suffix applied."""
+    """Return blacklisted symbols in native Binance and canonical CCXT forms."""
     if settings is None:
         settings = config.load_settings()
 
@@ -30,10 +30,20 @@ def get_blacklist(settings=None):
     df_blacklist = database.get_symbol_blacklist()
     blacklist = set()
     if not df_blacklist.empty:
-        trade_against_suffix = settings.trade_against
-        df_blacklist['Symbol'] = df_blacklist['Symbol'].astype(str) + trade_against_suffix
-        # Convert blacklist to set
-        blacklist = set(df_blacklist["Symbol"].unique())
+        quote_asset = str(settings.trade_against).strip().upper()
+        base_assets = {
+            str(symbol).strip().upper()
+            for symbol in df_blacklist["Symbol"]
+            if pd.notna(symbol) and str(symbol).strip()
+        }
+        blacklist = {
+            formatted
+            for base_asset in base_assets
+            for formatted in (
+                f"{base_asset}{quote_asset}",
+                f"{base_asset}/{quote_asset}",
+            )
+        }
     return blacklist
 
 
@@ -79,7 +89,7 @@ def get_symbols(trade_against, settings=None):
     blacklist = get_blacklist(settings=settings)
 
     symbols = set(
-        binance.get_tradable_symbols(
+        exchange_service.get_tradable_symbols(
             trade_against,
             excluded_base_assets={"AUD", "EUR", "GBP"},
         )
@@ -114,7 +124,7 @@ def set_market_phases_to_symbols(symbols, timeframe, warning_stats=None):
 
     for symbol in symbols:
         print("Calculating " + symbol)
-        df = binance.get_close_df(
+        df = exchange_service.get_close_df(
             symbol=symbol,
             interval=timeframe,
             start_date=start_date,
@@ -196,7 +206,7 @@ def trade_against_auto_switch(settings=None, warning_stats=None):
         sell_timeframes = ["1d", "4h", "1h"]
         sell_message = "Trade against auto switch"
 
-        df_btc = binance.get_close_df(
+        df_btc = exchange_service.get_close_df(
             symbol=btc_pair,
             interval=btc_timeframe,
             include_symbol=True,
@@ -280,7 +290,7 @@ def trade_against_auto_switch(settings=None, warning_stats=None):
             for tf in sell_timeframes:
                 df_sell = database.get_positions_by_bot_position( bot=tf, position=1)
                 for _, pos_row in df_sell.iterrows():
-                    binance.create_sell_order(
+                    exchange_service.create_sell_order(
                         symbol=str(pos_row["Symbol"]),
                         bot=tf,
                         reason=f"{sell_message}",
@@ -294,7 +304,11 @@ def trade_against_auto_switch(settings=None, warning_stats=None):
             
             # convert all USDT/USDC to BTC
             btc_pair_to_buy = f"BTC{settings.trade_against}"
-            binance.create_buy_order(symbol=btc_pair_to_buy, bot=btc_timeframe, convert_all_balance=True)
+            exchange_service.create_buy_order(
+                symbol=btc_pair_to_buy,
+                bot=btc_timeframe,
+                convert_all_balance=True,
+            )
                 
             # change trade against to BTC
             config.update_settings({"trade_against": "BTC"})
@@ -341,7 +355,7 @@ def trade_against_auto_switch(settings=None, warning_stats=None):
             for tf in sell_timeframes:
                 df_sell = database.get_positions_by_bot_position( bot=tf, position=1)
                 for _, pos_row in df_sell.iterrows():
-                    binance.create_sell_order(
+                    exchange_service.create_sell_order(
                         symbol=str(pos_row["Symbol"]),
                         bot=tf,
                         reason=f"{sell_message}",
@@ -355,7 +369,12 @@ def trade_against_auto_switch(settings=None, warning_stats=None):
 
             # convert all BTC to Stablecoin
             btc_pair_to_sell = f"BTC{settings.trade_against_switch_stablecoin}"
-            binance.create_sell_order(symbol=btc_pair_to_sell, bot=btc_timeframe, convert_all_balance=True, reason=f"{sell_message}")
+            exchange_service.create_sell_order(
+                symbol=btc_pair_to_sell,
+                bot=btc_timeframe,
+                convert_all_balance=True,
+                reason=f"{sell_message}",
+            )
 
             # change trade against to stablecoin
             config.update_settings({"trade_against": settings.trade_against_switch_stablecoin})
@@ -397,7 +416,7 @@ def _infer_btc_auto_switch_signal_timeframe(strategy_id: str, base_timeframe: st
 
 def _get_btc_auto_switch_candle_id(symbol: str, timeframe: str) -> str:
     """Return the latest closed candle identifier for a BTC auto-switch signal."""
-    df = binance.get_close_df(
+    df = exchange_service.get_close_df(
         symbol=symbol,
         interval=timeframe,
         include_symbol=True,
@@ -568,7 +587,7 @@ def main(timeframe):
     capabilities = get_adapter_capabilities_for_code(active_exchange["code"])
     if capabilities.uses_native_private_workflows:
         # Private account actions remain native-Binance-only through PR 6.
-        binance.create_balance_snapshot(telegram_prefix="", notify=False)
+        exchange_service.create_balance_snapshot(telegram_prefix="", notify=False)
         _run_btc_auto_switch_backtest_if_needed(settings, timeframe)
         settings = trade_against_auto_switch(
             settings=settings, warning_stats=warning_stats
