@@ -41,6 +41,33 @@ def _exchange_editor(
     )
 
 
+def _okx_exchange_editor(*, enabled=True, quote="USDC", adapter_id="myokx"):
+    return pd.DataFrame(
+        [
+            {
+                "Id": 3,
+                "Code": "okx",
+                "Quote Asset": quote,
+                "Adapter Variant": adapter_id,
+                "Enabled": enabled,
+            }
+        ]
+    )
+
+
+def _persisted_okx(*, quote="USDC", adapter_id="myokx"):
+    return pd.DataFrame(
+        [
+            {
+                "Id": 3,
+                "Code": "okx",
+                "Quote_Asset": quote,
+                "Adapter_Id": adapter_id,
+            }
+        ]
+    )
+
+
 def test_manual_demo_submission_feedback_handles_exchange_rejection():
     assert trading._manual_demo_submission_feedback(None, "submitted") == (
         "error",
@@ -114,6 +141,139 @@ def test_exchange_editor_persists_explicit_live_gates(monkeypatch):
     assert saved[0]["Sell_Enabled"] is True
     assert saved[0]["Partial_Sell_Policy"] == "sell_all"
     assert saved[0]["Sizing_Buffer_Pct"] == pytest.approx(1.5)
+
+
+def test_okx_save_automatically_loads_and_syncs_public_markets(monkeypatch):
+    calls = []
+    market = MarketInfo("BTC/USDC", "BTC-USDC", "BTC", "USDC", True)
+    adapter = SimpleNamespace(
+        load_markets=lambda *, force=False: calls.append(("load", force))
+        or {market.symbol: market}
+    )
+    monkeypatch.setattr(
+        trading.database,
+        "exchange_quote_has_validated_markets",
+        lambda exchange_id, quote: False,
+    )
+    monkeypatch.setattr(
+        trading,
+        "get_adapter_for_code",
+        lambda code, *, adapter_id: calls.append((code, adapter_id)) or adapter,
+    )
+    monkeypatch.setattr(
+        trading.database,
+        "sync_exchange_market_catalog",
+        lambda exchange_id, markets: calls.append(
+            ("sync", exchange_id, list(markets))
+        ),
+    )
+
+    quotes = trading._prepare_okx_public_markets_for_save(
+        _okx_exchange_editor(), _persisted_okx(), {}
+    )
+
+    assert quotes == {"okx": ["USDC"]}
+    assert calls == [
+        ("okx", "myokx"),
+        ("load", True),
+        ("sync", 3, ["BTC/USDC"]),
+    ]
+
+
+def test_okx_save_reuses_an_already_validated_public_catalog(monkeypatch):
+    monkeypatch.setattr(
+        trading.database,
+        "exchange_quote_has_validated_markets",
+        lambda exchange_id, quote: (exchange_id, quote) == (3, "USDC"),
+    )
+    monkeypatch.setattr(
+        trading,
+        "get_adapter_for_code",
+        lambda *args, **kwargs: pytest.fail("validated markets should not reload"),
+    )
+
+    quotes = trading._prepare_okx_public_markets_for_save(
+        _okx_exchange_editor(), _persisted_okx(), {}
+    )
+
+    assert quotes == {"okx": ["USDC"]}
+
+
+def test_okx_save_reports_public_market_load_failure_without_raw_error(monkeypatch):
+    monkeypatch.setattr(
+        trading.database,
+        "exchange_quote_has_validated_markets",
+        lambda exchange_id, quote: False,
+    )
+    monkeypatch.setattr(
+        trading,
+        "get_adapter_for_code",
+        lambda *args, **kwargs: SimpleNamespace(
+            load_markets=lambda **kwargs: (_ for _ in ()).throw(
+                RuntimeError("sensitive upstream detail")
+            )
+        ),
+    )
+
+    with pytest.raises(ValueError, match="Could not load OKX public spot markets") as exc:
+        trading._prepare_okx_public_markets_for_save(
+            _okx_exchange_editor(), _persisted_okx(), {}
+        )
+
+    assert "sensitive upstream detail" not in str(exc.value)
+
+
+def test_standard_exchange_rows_hide_the_internal_okx_validation_identity():
+    exchanges = pd.DataFrame(
+        [
+            {"Id": 1, "Code": "binance"},
+            {"Id": 2, "Code": "kraken"},
+            {"Id": 3, "Code": "okx"},
+            {"Id": 4, "Code": "okx_demo"},
+        ]
+    )
+
+    visible = trading._standard_exchange_rows(exchanges)
+
+    assert visible["Code"].tolist() == ["binance", "kraken", "okx"]
+
+
+def test_okx_validation_environment_inherits_production_identity_and_starts_disarmed():
+    production = pd.Series(
+        {
+            "Id": 3,
+            "Code": "okx",
+            "Quote_Asset": "USDT",
+            "Adapter_Id": "okx",
+        }
+    )
+    demo = pd.Series(
+        {
+            "Id": 4,
+            "Code": "okx_demo",
+            "Taker_Fee": float("nan"),
+            "Buy_Enabled": True,
+            "Sell_Enabled": True,
+            "Partial_Sell_Policy": "accumulate",
+            "Sizing_Buffer_Pct": float("nan"),
+        }
+    )
+
+    record = trading._okx_validation_environment_record(
+        demo, production, enabled=True
+    )
+
+    assert record == {
+        "Id": 4,
+        "Enabled": True,
+        "Quote_Asset": "USDT",
+        "Taker_Fee": None,
+        "Adapter_Id": "okx",
+        "Buy_Enabled": False,
+        "Sell_Enabled": False,
+        "Partial_Sell_Policy": "accumulate",
+        "Sizing_Buffer_Pct": 5.0,
+    }
 
 
 def test_okx_arming_confirmation_is_requested_only_for_new_production_side():

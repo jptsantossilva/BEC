@@ -2,6 +2,9 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-08-20]
+- Trading Settings - Show only OKX Production alongside Binance and Kraken in normal exchange management, automatically validate its credential-free public markets when saving, and move the isolated OKX Demo identity into an advanced production-validation workflow.
+
 ## [2026-08-10]
 - Documentation - Reworked the README around BEC's multi-exchange spot architecture, clarified the one-active-exchange limitation, documented Binance, Kraken, OKX production and OKX Demo capabilities, and aligned Docker environment setup and safety guidance with the current application.
 - Kraken Live Execution - Classify explicit regional asset restrictions as definitive order rejections, settle affected intents without reconciliation, automatically add the restricted base asset to the BEC blacklist, and block subsequent automatic buys for blacklisted assets.

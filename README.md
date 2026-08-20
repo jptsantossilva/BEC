@@ -21,7 +21,11 @@ Telegram notifications in a single application.
 | Binance | Supported | Native Binance workflow |
 | Kraken | Supported | Explicitly gated live workflow with durable order intents and reconciliation |
 | OKX | Supported | Gated production workflow after controlled OKX Demo validation |
-| OKX Demo | Validation environment | Controlled order-lifecycle validation with separate demo credentials |
+
+OKX Demo Trading is not shown as a normal exchange. It is an isolated internal
+environment available only through the advanced OKX production-validation
+workflow, using separate demo credentials and data so it cannot be confused
+with production activity.
 
 Exchange data, symbols, fees, rankings, backtests, positions, orders, and
 balances are kept isolated. Switching the active exchange is blocked while
