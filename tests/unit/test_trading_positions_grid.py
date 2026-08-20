@@ -482,6 +482,32 @@ def test_spot_market_diagnostics_grid_summarizes_supported_quote_assets():
     ]
 
 
+def test_active_spot_market_pairs_grid_lists_only_supported_active_pairs():
+    markets = [
+        SpotMarketAvailability("ETH/USDT", "ETH", "USDT", True, "online"),
+        SpotMarketAvailability("BTC/USDC", "BTC", "USDC", True, "online"),
+        SpotMarketAvailability("AI16Z/USDC", "AI16Z", "USDC", False, "cancel_only"),
+        SpotMarketAvailability("ETH/EUR", "ETH", "EUR", True, "online"),
+    ]
+
+    grid = trading._active_spot_market_pairs_grid(markets)
+
+    assert grid.to_dict("records") == [
+        {
+            "Trading pair": "BTC/USDC",
+            "Base asset": "BTC",
+            "Quote asset": "USDC",
+            "Status": "online",
+        },
+        {
+            "Trading pair": "ETH/USDT",
+            "Base asset": "ETH",
+            "Quote asset": "USDT",
+            "Status": "online",
+        },
+    ]
+
+
 def test_spot_market_diagnostics_loads_selected_public_adapter(monkeypatch):
     calls = []
     market = SpotMarketAvailability(
@@ -500,17 +526,25 @@ def test_spot_market_diagnostics_loads_selected_public_adapter(monkeypatch):
         ),
     )
 
-    grid = trading._load_spot_market_diagnostics(
+    result = trading._load_spot_market_diagnostics(
         {"code": "kraken", "adapter_id": "kraken"}
     )
 
     assert calls == [("kraken", "kraken"), True]
-    assert grid.iloc[0].to_dict() == {
+    assert result["summary"].iloc[0].to_dict() == {
         "Trade against": "USDC",
         "Spot markets": 1,
         "Active/online used by BEC": 1,
         "Not normally tradable": "None",
     }
+    assert result["active_pairs"].to_dict("records") == [
+        {
+            "Trading pair": "BTC/USDC",
+            "Base asset": "BTC",
+            "Quote asset": "USDC",
+            "Status": "online",
+        }
+    ]
 
 
 def test_spot_market_diagnostics_button_renders_loaded_grid(monkeypatch):
@@ -538,10 +572,16 @@ def test_spot_market_diagnostics_button_renders_loaded_grid(monkeypatch):
         "dataframe",
         lambda frame, **kwargs: rendered.append((frame, kwargs)),
     )
+    monkeypatch.setattr(trading.st, "toggle", lambda *args, **kwargs: False)
     monkeypatch.setattr(
         trading,
         "_load_spot_market_diagnostics",
-        lambda active_exchange: grid,
+        lambda active_exchange: {
+            "summary": grid,
+            "active_pairs": pd.DataFrame(
+                [{"Trading pair": "BTC/USDC"}]
+            ),
+        },
     )
 
     trading._render_spot_market_diagnostics(
@@ -549,6 +589,53 @@ def test_spot_market_diagnostics_button_renders_loaded_grid(monkeypatch):
     )
 
     assert rendered == [(grid, {"hide_index": True, "width": "content"})]
+
+
+def test_spot_market_diagnostics_pair_list_is_rendered_only_when_requested(
+    monkeypatch,
+):
+    summary = pd.DataFrame([{"Trade against": "USDC", "Spot markets": 1}])
+    active_pairs = pd.DataFrame(
+        [
+            {
+                "Trading pair": "BTC/USDC",
+                "Base asset": "BTC",
+                "Quote asset": "USDC",
+                "Status": "online",
+            }
+        ]
+    )
+    rendered = []
+    monkeypatch.setattr(
+        trading.st,
+        "session_state",
+        {
+            "spot_market_diagnostics_okx": {
+                "summary": summary,
+                "active_pairs": active_pairs,
+            }
+        },
+    )
+    monkeypatch.setattr(trading.st, "caption", lambda message: None)
+    monkeypatch.setattr(trading.st, "button", lambda *args, **kwargs: False)
+    monkeypatch.setattr(trading.st, "toggle", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        trading.st,
+        "dataframe",
+        lambda frame, **kwargs: rendered.append((frame, kwargs)),
+    )
+
+    trading._render_spot_market_diagnostics(
+        {"code": "okx", "name": "OKX (Production)"}
+    )
+
+    assert rendered == [
+        (summary, {"hide_index": True, "width": "content"}),
+        (
+            active_pairs,
+            {"hide_index": True, "width": "content", "height": 400},
+        ),
+    ]
 
 
 def test_active_exchange_selector_replaces_stale_session_choice(monkeypatch):

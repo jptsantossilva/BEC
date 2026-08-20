@@ -1483,14 +1483,40 @@ def _spot_market_diagnostics_grid(
     return pd.DataFrame(rows)
 
 
-def _load_spot_market_diagnostics(active_exchange: dict) -> pd.DataFrame:
+def _active_spot_market_pairs_grid(
+    markets: list[SpotMarketAvailability]
+    | tuple[SpotMarketAvailability, ...],
+) -> pd.DataFrame:
+    """List active direct spot pairs represented by the diagnostics summary."""
+    supported_quotes = set(SPOT_MARKET_DIAGNOSTIC_QUOTES)
+    rows = [
+        {
+            "Trading pair": str(market.symbol),
+            "Base asset": str(market.base_asset).upper(),
+            "Quote asset": str(market.quote_asset).upper(),
+            "Status": str(market.status or "online").lower(),
+        }
+        for market in markets
+        if market.active
+        and str(market.quote_asset).upper() in supported_quotes
+    ]
+    return pd.DataFrame(
+        sorted(rows, key=lambda row: (row["Quote asset"], row["Base asset"])),
+        columns=["Trading pair", "Base asset", "Quote asset", "Status"],
+    )
+
+
+def _load_spot_market_diagnostics(active_exchange: dict) -> dict[str, pd.DataFrame]:
     """Load fresh public spot-market states for the active exchange."""
     adapter = get_adapter_for_code(
         str(active_exchange["code"]),
         adapter_id=str(active_exchange.get("adapter_id") or ""),
     )
     markets = adapter.load_spot_market_availability(force=True)
-    return _spot_market_diagnostics_grid(markets)
+    return {
+        "summary": _spot_market_diagnostics_grid(markets),
+        "active_pairs": _active_spot_market_pairs_grid(markets),
+    }
 
 
 def _render_spot_market_diagnostics(active_exchange: dict) -> None:
@@ -1525,7 +1551,32 @@ def _render_spot_market_diagnostics(active_exchange: dict) -> None:
 
     result = st.session_state.get(state_key)
     if isinstance(result, pd.DataFrame):
-        st.dataframe(result, hide_index=True, width="content")
+        # Compatibility with a result retained in session state by an older
+        # dashboard process during a hot reload.
+        summary = result
+        active_pairs = pd.DataFrame()
+    elif isinstance(result, dict):
+        summary = result.get("summary")
+        active_pairs = result.get("active_pairs")
+    else:
+        summary = None
+        active_pairs = None
+
+    if isinstance(summary, pd.DataFrame):
+        st.dataframe(summary, hide_index=True, width="content")
+    if isinstance(active_pairs, pd.DataFrame) and not active_pairs.empty:
+        show_pairs = st.toggle(
+            f"Show active BEC trading pairs ({len(active_pairs)})",
+            key=f"show_active_spot_pairs_{code}",
+            help="The list stays collapsed by default and uses the loaded public snapshot.",
+        )
+        if show_pairs:
+            st.dataframe(
+                active_pairs,
+                hide_index=True,
+                width="content",
+                height=400,
+            )
 
 
 def _render_exchange_management(
