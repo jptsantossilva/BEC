@@ -27,21 +27,14 @@ def check_okx_private_access(
 
     This helper deliberately does not use the app-wide adapter or active
     exchange.  It cannot enable an exchange, arm order flags, create an order,
-    query an order, or change application settings.
+    query an order, or change application settings. Because the local adapter
+    never escapes this function, the balance check is safe in every app run
+    mode and does not need to pause trading.
     """
+    del run_mode  # Read-only balance access is independent from order run modes.
     code = str(exchange.get("Code") or exchange.get("code") or "").lower()
     if code not in {"okx", "okx_demo"}:
         return OkxPrivateStatus(False, "The selected configuration is not an OKX identity.")
-    mode = str(run_mode or "").strip().lower()
-    # The demo identity can be checked while it is armed for its controlled
-    # demo workflow.  This operation remains balance-only in either mode.
-    allowed_modes = {"test", "demo"} if code == "okx_demo" else {"test"}
-    if mode not in allowed_modes:
-        required_mode = "run_mode=test or run_mode=demo" if code == "okx_demo" else "run_mode=test"
-        return OkxPrivateStatus(
-            False,
-            f"OKX read-only checks require {required_mode}; no setting was changed.",
-        )
 
     environment = str(
         exchange.get("Execution_Environment")

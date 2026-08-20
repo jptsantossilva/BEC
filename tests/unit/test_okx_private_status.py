@@ -193,18 +193,19 @@ def test_okx_private_status_is_read_only_and_never_exposes_credential_values():
     assert "passphrase-value" not in status.message
 
 
-def test_okx_private_status_requires_test_mode_without_creating_an_adapter():
-    called = []
-
+@pytest.mark.parametrize("run_mode", ["prod", "live"])
+def test_okx_production_private_status_is_read_only_in_every_run_mode(run_mode):
+    client = ReadOnlyOkxClient()
+    adapter = _private_adapter(client=client)
     status = check_okx_private_access(
         _exchange(),
-        run_mode="live",
-        adapter_factory=lambda **kwargs: called.append(kwargs),
+        run_mode=run_mode,
+        adapter_factory=lambda **kwargs: adapter,
     )
 
-    assert status.available is False
-    assert "run_mode=test" in status.message
-    assert called == []
+    assert status.available is True
+    assert "trading/cash balance access succeeded" in status.message
+    assert client.calls == [("balance", None), ("balance", {"type": "funding"})]
 
 
 def test_okx_demo_private_status_allows_demo_mode_for_balance_validation():
@@ -226,18 +227,22 @@ def test_okx_demo_private_status_allows_demo_mode_for_balance_validation():
     ]
 
 
-def test_okx_demo_private_status_rejects_live_mode_without_creating_an_adapter():
-    called = []
-
+def test_okx_demo_private_status_remains_sandboxed_in_live_mode():
+    client = ReadOnlyOkxClient()
+    adapter = _private_adapter(client=client, environment="demo")
     status = check_okx_private_access(
         _exchange("demo"),
         run_mode="live",
-        adapter_factory=lambda **kwargs: called.append(kwargs),
+        adapter_factory=lambda **kwargs: adapter,
     )
 
-    assert status.available is False
-    assert "run_mode=test or run_mode=demo" in status.message
-    assert called == []
+    assert status.available is True
+    assert "OKX demo" in status.message
+    assert client.calls == [
+        ("sandbox", True),
+        ("balance", None),
+        ("balance", {"type": "funding"}),
+    ]
 
 
 def test_okx_private_status_sanitizes_authentication_errors():
