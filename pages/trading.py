@@ -1259,7 +1259,9 @@ def _okx_production_arming_requested(
     )
 
 
-def _render_okx_read_only_checks(exchanges: pd.DataFrame) -> None:
+def _render_okx_read_only_checks(
+    exchanges: pd.DataFrame, *, key_scope: str
+) -> None:
     st.caption(
         "These checks read balances only. They never submit, query, amend, or "
         "cancel an order."
@@ -1270,7 +1272,7 @@ def _render_okx_read_only_checks(exchanges: pd.DataFrame) -> None:
         if st.button(
             label,
             icon=":material/key:",
-            key=f"{okx_row['Code']}_readonly_api",
+            key=f"{key_scope}_{okx_row['Code']}_readonly_api",
         ):
             from bec.exchanges.okx_private_status import check_okx_private_access
 
@@ -1304,7 +1306,9 @@ def _render_okx_production_validation_management(
     production_api_rows = exchanges[
         exchanges["Code"].astype(str) == "okx"
     ]
-    _render_okx_read_only_checks(production_api_rows)
+    _render_okx_read_only_checks(
+        production_api_rows, key_scope="okx_production_validation"
+    )
 
     if active_code == "okx_demo":
         st.warning(
@@ -1314,7 +1318,9 @@ def _render_okx_production_validation_management(
         demo_api_rows = exchanges[
             exchanges["Code"].astype(str) == "okx_demo"
         ]
-        _render_okx_read_only_checks(demo_api_rows)
+        _render_okx_read_only_checks(
+            demo_api_rows, key_scope="okx_production_validation"
+        )
 
         demo_buy_enabled = st.checkbox(
             "Enable controlled demo buys",
@@ -2199,7 +2205,9 @@ def _render_diagnostics_and_validation(
     if capabilities.uses_gated_live_execution:
         if code in {"okx", "okx_demo"}:
             active_rows = exchanges[exchanges["Code"].astype(str) == code]
-            _render_okx_read_only_checks(active_rows)
+            _render_okx_read_only_checks(
+                active_rows, key_scope="diagnostics"
+            )
         elif st.button(
             f"Check {active_exchange['name']} Private API",
             icon=":material/key:",

@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [2026-08-20]
 - Trading Settings - Show only OKX Production alongside Binance and Kraken in normal exchange management, automatically validate its credential-free public markets when saving, move the isolated OKX Demo identity into an advanced production-validation workflow, and allow strictly read-only OKX balance checks without changing the current run mode.
+- Trading Settings - Fixed duplicate Streamlit keys when the OKX read-only check appears in both exchange management and diagnostics.
 
 ## [2026-08-10]
 - Documentation - Reworked the README around BEC's multi-exchange spot architecture, clarified the one-active-exchange limitation, documented Binance, Kraken, OKX production and OKX Demo capabilities, and aligned Docker environment setup and safety guidance with the current application.

@@ -238,6 +238,32 @@ def test_standard_exchange_rows_hide_the_internal_okx_validation_identity():
     assert visible["Code"].tolist() == ["binance", "kraken", "okx"]
 
 
+def test_okx_read_only_buttons_use_location_scoped_streamlit_keys(monkeypatch):
+    keys = []
+    exchanges = pd.DataFrame(
+        [{"Code": "okx", "Name": "OKX (Production)"}]
+    )
+    monkeypatch.setattr(trading.st, "caption", lambda message: None)
+    monkeypatch.setattr(
+        trading.st,
+        "button",
+        lambda label, **kwargs: keys.append(kwargs["key"]) or False,
+    )
+
+    trading._render_okx_read_only_checks(
+        exchanges, key_scope="okx_production_validation"
+    )
+    trading._render_okx_read_only_checks(
+        exchanges, key_scope="diagnostics"
+    )
+
+    assert keys == [
+        "okx_production_validation_okx_readonly_api",
+        "diagnostics_okx_readonly_api",
+    ]
+    assert len(keys) == len(set(keys))
+
+
 def test_okx_validation_environment_inherits_production_identity_and_starts_disarmed():
     production = pd.Series(
         {
