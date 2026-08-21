@@ -178,7 +178,12 @@ def format_trade_event(
     client_order_id: str = "",
     order_status: str = "",
     fees: str = "",
-    reconciliation: str = "",
+    submitted_at: str = "",
+    executed_at: str = "",
+    order_closed_at: str = "",
+    confirmed_at: str = "",
+    confirmation_delay: str = "",
+    confirmation_source: str = "",
 ):
     action = str(action or "").upper()
     lines = [
@@ -202,7 +207,12 @@ def format_trade_event(
                 ("Client order", client_order_id),
                 ("Order status", order_status),
                 ("Fees", fees),
-                ("Reconciliation", reconciliation),
+                ("Submitted at", submitted_at),
+                ("Executed at", executed_at),
+                ("Kraken closed at", order_closed_at),
+                ("Confirmed at", confirmed_at),
+                ("Confirmation delay", confirmation_delay),
+                ("Confirmation source", confirmation_source),
             ]
         )
     )
@@ -231,7 +241,12 @@ def send_trade_event(
     client_order_id: str = "",
     order_status: str = "",
     fees: str = "",
-    reconciliation: str = "",
+    submitted_at: str = "",
+    executed_at: str = "",
+    order_closed_at: str = "",
+    confirmed_at: str = "",
+    confirmation_delay: str = "",
+    confirmation_source: str = "",
     position_opened: bool = False,
 ):
     prefix_label = str(telegram_prefix or "").strip()
@@ -256,7 +271,12 @@ def send_trade_event(
         client_order_id=client_order_id,
         order_status=order_status,
         fees=fees,
-        reconciliation=reconciliation,
+        submitted_at=submitted_at,
+        executed_at=executed_at,
+        order_closed_at=order_closed_at,
+        confirmed_at=confirmed_at,
+        confirmation_delay=confirmation_delay,
+        confirmation_source=confirmation_source,
     )
     print(msg)
     send_telegram_message(telegram_token, emoji, msg)

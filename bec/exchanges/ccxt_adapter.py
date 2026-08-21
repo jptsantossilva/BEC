@@ -74,6 +74,7 @@ class CcxtExchangeAdapter(ExchangeAdapter):
 
     asset_aliases: Mapping[str, str] = {}
     capabilities = ExchangeCapabilities(
+        supports_private_balance_reads=True,
         supports_backtesting=True,
         supports_live_trading=True,
         requires_explicit_live_flags=True,
@@ -640,6 +641,10 @@ class CcxtExchangeAdapter(ExchangeAdapter):
                     raw=item,
                 )
             )
+        # Only an exchange trade timestamp belongs in Order_Fills.Filled_At.
+        # Kraken's lastUpdateTimestamp is its order close/update time and must
+        # remain separate from execution time.
+        aggregate_fill_timestamp = _timestamp(raw.get("lastTradeTimestamp"))
         if not fills and raw.get("fee"):
             fee = raw.get("fee") or {}
             fills.append(
@@ -652,6 +657,7 @@ class CcxtExchangeAdapter(ExchangeAdapter):
                         else None
                     ),
                     fee_amount=_decimal(fee.get("cost")),
+                    timestamp=aggregate_fill_timestamp,
                     raw=raw,
                 )
             )
@@ -667,6 +673,7 @@ class CcxtExchangeAdapter(ExchangeAdapter):
                             else None
                         ),
                         fee_amount=_decimal(fee.get("cost")),
+                        timestamp=aggregate_fill_timestamp,
                         raw=raw,
                     )
                 )
@@ -725,6 +732,20 @@ class CcxtExchangeAdapter(ExchangeAdapter):
             canonical = self._canonical_asset(asset)
             return balances.get(canonical, Balance(canonical, Decimal("0")))
         return balances
+
+    def check_reconciliation_access(self) -> None:
+        """Prove that both open- and closed-order reads are permitted."""
+        self._private_disabled("order reconciliation checks")
+        reads = (
+            ("open orders", getattr(self.client, "fetch_open_orders", None)),
+            ("closed orders", getattr(self.client, "fetch_closed_orders", None)),
+        )
+        for label, method in reads:
+            if not callable(method):
+                raise NotImplementedError(
+                    f"{self.name} cannot check read-only access to {label}"
+                )
+            method(limit=1)
 
     def create_market_buy(
         self,

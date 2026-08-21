@@ -310,11 +310,15 @@ def test_binance_spot_market_diagnostics_include_inactive_native_states():
 def test_adapter_capabilities_describe_existing_exchange_routing():
     assert BinanceAdapter.capabilities.uses_native_private_workflows is True
     assert BinanceAdapter.capabilities.uses_gated_live_execution is False
+    assert BinanceAdapter.capabilities.supports_private_balance_reads is True
 
     from bec.exchanges.kraken_adapter import KrakenAdapter
+    from bec.exchanges.okx_adapter import OkxAdapter
 
     assert KrakenAdapter.capabilities.uses_gated_live_execution is True
     assert KrakenAdapter.capabilities.requires_explicit_live_flags is True
+    assert KrakenAdapter.capabilities.supports_private_balance_reads is True
+    assert OkxAdapter.capabilities.supports_private_balance_reads is True
 
 
 def test_binance_adapter_normalizes_order_results():

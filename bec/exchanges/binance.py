@@ -1150,7 +1150,10 @@ def create_balance_snapshot(telegram_prefix: str, notify: bool = True):
     df_balance.sort_values(by='Balance_USD', ascending=False, inplace=True)
 
     # add data to table Balance
-    database.add_balances( df_balance)
+    database.add_balances(
+        df_balance,
+        exchange_id=database.get_active_exchange_id(required=True),
+    )
 
     msg = "Balance snapshot finished"
     msg = telegram_prefix + msg

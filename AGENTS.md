@@ -101,3 +101,6 @@ pins unless the dependency workflow is being updated deliberately.
   commissions, fingerprints, approvals, and PR 6 rollout checks.
 - Use `agent-docs/kraken-live-execution.md` for PR 7 credentials, live flags,
   order intents, reconciliation, partial fills, and rollout safety.
+- Use `agent-docs/kraken-order-confirmation-plan.md` for the simplified Kraken
+  submit-once, immediate txid confirmation, minute reconciliation, timestamp,
+  notification, audit, and rollout requirements.

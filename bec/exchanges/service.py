@@ -101,6 +101,10 @@ def fetch_order(exchange_order_id: str, symbol: str):
     return get_adapter().fetch_order(exchange_order_id, symbol)
 
 
+def check_reconciliation_access() -> None:
+    get_adapter().check_reconciliation_access()
+
+
 def validate_client_order_id(client_order_id: str) -> str:
     return get_adapter().validate_client_order_id(client_order_id)
 
@@ -217,5 +221,39 @@ def create_sell_order(*args: Any, **kwargs: Any):
 
 
 def create_balance_snapshot(*args: Any, **kwargs: Any):
-    _require_native_private_trading("balance snapshots")
-    return _legacy_binance.create_balance_snapshot(*args, **kwargs)
+    """Create a daily snapshot through the active exchange adapter."""
+    telegram_prefix = str(kwargs.pop("telegram_prefix", ""))
+    notify = bool(kwargs.pop("notify", True))
+    if args:
+        telegram_prefix = str(args[0])
+    if len(args) > 1:
+        notify = bool(args[1])
+    if len(args) > 2:
+        raise TypeError("create_balance_snapshot accepts at most two positional arguments")
+
+    from bec.balance_snapshots import create_daily_balance_snapshot
+
+    start_message = (
+        f"{telegram_prefix}Creating balance snapshot. It can take a few minutes..."
+    )
+    print(start_message)
+    if notify:
+        from bec.utils import telegram
+
+        telegram.send_telegram_message(
+            telegram.telegram_token_main, "", start_message
+        )
+
+    result = create_daily_balance_snapshot(**kwargs)
+    finish_message = (
+        f"{telegram_prefix}Balance snapshot finished "
+        f"({result.exchange_code}, {result.snapshot_date}, "
+        f"assets={result.assets_stored}, skipped={len(result.skipped_assets)}, "
+        f"total_usd={result.total_usd:.2f}, total_btc={result.total_btc:.8f})"
+    )
+    print(finish_message)
+    if notify:
+        telegram.send_telegram_message(
+            telegram.telegram_token_main, "", finish_message
+        )
+    return result

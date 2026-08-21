@@ -2251,6 +2251,12 @@ def _render_diagnostics_and_validation(
         "Credential checks and validation tools are optional operational actions. "
         "API keys must never have withdrawal permission."
     )
+    if code == "kraken":
+        st.caption(
+            "Kraken live execution requires Query Funds, Create/Modify Orders, "
+            "Query Open Orders & Trades, and Query Closed Orders & Trades. "
+            "The private check is read-only and submits no order."
+        )
     _render_spot_market_diagnostics(active_exchange)
 
     if capabilities.uses_gated_live_execution:

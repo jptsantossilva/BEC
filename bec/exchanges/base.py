@@ -33,6 +33,7 @@ class ExchangeCapabilities:
     """
 
     supports_public_market_data: bool = True
+    supports_private_balance_reads: bool = False
     supports_backtesting: bool = False
     supports_live_trading: bool = False
     requires_explicit_live_flags: bool = True
@@ -204,6 +205,16 @@ class ExchangeAdapter(ABC):
         is added. Transport and ambiguous exchange errors must remain unknown.
         """
         return False
+
+    def check_reconciliation_access(self) -> None:
+        """Verify read-only access required to resolve submitted orders.
+
+        Adapters without a reconciliation workflow report the capability as
+        unsupported without performing any network operation.
+        """
+        raise NotImplementedError(
+            f"{self.name} does not support read-only order reconciliation checks"
+        )
 
     @abstractmethod
     def load_markets(self, *, force: bool = False) -> Mapping[str, MarketInfo]:

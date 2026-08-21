@@ -28,6 +28,7 @@ class OkxAdapter(CcxtExchangeAdapter):
     code = "okx"
     name = "OKX"
     capabilities = ExchangeCapabilities(
+        supports_private_balance_reads=True,
         supports_backtesting=True,
         supports_live_trading=True,
         requires_explicit_live_flags=True,

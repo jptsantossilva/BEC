@@ -21,6 +21,52 @@ MARKET_PHASE_MIN_CANDLES = 200
 # Last SMA200/ROC60 values only need the latest 200 closed candles plus the current row.
 MARKET_PHASE_LOOKBACK_CANDLES = 201
 
+
+def _create_active_exchange_balance_snapshot(
+    active_exchange: dict, warning_stats: dict
+):
+    """Run the read-only daily snapshot without blocking public analysis."""
+    from bec.exchanges.registry import get_adapter_capabilities_for_code
+
+    capabilities = get_adapter_capabilities_for_code(active_exchange["code"])
+    if not capabilities.supports_private_balance_reads:
+        return None
+    try:
+        return exchange_service.create_balance_snapshot(
+            telegram_prefix="",
+            notify=False,
+            exchange=active_exchange,
+        )
+    except Exception as exc:
+        warning_stats["warnings"] = int(warning_stats.get("warnings", 0)) + 1
+        error_type = type(exc).__name__
+        message = (
+            f"{database.exchange_log_prefix()} Daily balance snapshot failed "
+            f"({error_type}); continuing market phase analysis."
+        )
+        print(message)
+        logging.warning(message)
+        try:
+            telegram.send_error_event(
+                action="daily balance snapshot",
+                timeframe="1d",
+                reason=f"The active exchange balance read failed ({error_type}).",
+                impact="No balance snapshot was stored; market phase analysis continued.",
+                next_step=(
+                    "Check private read credentials and exchange availability before "
+                    "the next daily run."
+                ),
+                notify_main=False,
+            )
+        except Exception as notification_exc:
+            notification_error = type(notification_exc).__name__
+            logging.warning(
+                "%s Balance snapshot warning notification failed (%s).",
+                database.exchange_log_prefix(),
+                notification_error,
+            )
+        return None
+
 def get_blacklist(settings=None):
     """Return blacklisted symbols in native Binance and canonical CCXT forms."""
     if settings is None:
@@ -585,9 +631,8 @@ def main(timeframe):
     from bec.exchanges.registry import get_adapter_capabilities_for_code
 
     capabilities = get_adapter_capabilities_for_code(active_exchange["code"])
+    _create_active_exchange_balance_snapshot(active_exchange, warning_stats)
     if capabilities.uses_native_private_workflows:
-        # Private account actions remain native-Binance-only through PR 6.
-        exchange_service.create_balance_snapshot(telegram_prefix="", notify=False)
         _run_btc_auto_switch_backtest_if_needed(settings, timeframe)
         settings = trade_against_auto_switch(
             settings=settings, warning_stats=warning_stats

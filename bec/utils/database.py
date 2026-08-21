@@ -41,20 +41,29 @@ ACTIVE_EXCHANGE_ID_SQL = """(
     WHERE Enabled = 1 AND Is_Default = 1
     ORDER BY Id LIMIT 1
 )"""
+RECONCILIATION_JOB = "orders_reconcile"
+COMPAT_RECONCILIATION_JOB = "orders_reconcile_15m"
+LEGACY_RECONCILIATION_JOB = "kraken_reconcile_15m"
+RECONCILIATION_JOB_ALIASES = (
+    COMPAT_RECONCILIATION_JOB,
+    LEGACY_RECONCILIATION_JOB,
+)
 EXCHANGE_DEPENDENT_JOBS = (
     "main_1h",
     "main_4h",
     "main_1d",
     "symbol_by_market_phase_1d",
     "super_rsi_15m",
-    "orders_reconcile_15m",
+    RECONCILIATION_JOB,
 )
 LIVE_TRADING_JOBS = ("main_1h", "main_4h", "main_1d")
 PUBLIC_ANALYSIS_JOBS = ("symbol_by_market_phase_1d",)
 SIGNAL_SCHEDULE_JOBS = ("super_rsi_15m",)
-RECONCILIATION_JOB = "orders_reconcile_15m"
-LEGACY_RECONCILIATION_JOB = "kraken_reconcile_15m"
 UNSETTLED_ORDER_STATUSES = ("pending", "open", "partially_filled", "unknown")
+
+
+class UnsettledOrderIntentError(RuntimeError):
+    """A duplicate action was blocked until its existing intent is settled."""
 
 
 def _adapter_capabilities_for_code(code: str):
@@ -102,7 +111,7 @@ def get_exchange_settings_table():
 
 
 def _disable_exchange_jobs(connection) -> None:
-    jobs = (*EXCHANGE_DEPENDENT_JOBS, LEGACY_RECONCILIATION_JOB)
+    jobs = (*EXCHANGE_DEPENDENT_JOBS, *RECONCILIATION_JOB_ALIASES)
     placeholders = ",".join("?" for _ in jobs)
     connection.execute(
         f"UPDATE Job_Schedules SET enabled=0 WHERE name IN ({placeholders})",
@@ -1672,7 +1681,9 @@ def create_order_intent(
     if side not in {"BUY", "SELL"}:
         raise ValueError("Order intent side must be BUY or SELL")
     if has_unsettled_order_intent(position_id=position_id, side=side, symbol=symbol):
-        raise RuntimeError("An unsettled order intent already exists for this action")
+        raise UnsettledOrderIntentError(
+            "An unsettled order intent already exists for this action"
+        )
     # A 32-character hexadecimal UUID form satisfies Kraken cl_ord_id as well
     # as the supported Binance and OKX client-order identifier constraints.
     client_order_id = client_order_id or secrets.token_hex(16)
@@ -1685,9 +1696,10 @@ def create_order_intent(
     if not strategy_params_json:
         strategy_params_json = build_strategy_params_json(strategy_id)
     created_at = _utc_now_str()
-    with connection:
-        cursor = connection.execute(
-            """
+    try:
+        with connection:
+            cursor = connection.execute(
+                """
             INSERT INTO Orders (
                 Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset,
                 Quote_Asset, Client_Order_Id, Position_Id, Date, Bot, Symbol,
@@ -1699,34 +1711,42 @@ def create_order_intent(
             ) VALUES (
                 ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0
             )
-            """,
-            (
-                *exchange_fields,
-                client_order_id,
-                position_id,
-                created_at,
-                bot,
-                symbol,
-                side,
-                0.0,
-                0.0,
-                strategy_id,
-                strategy_params_json,
-                exit_reason,
-                float(sell_percentage),
-                int(take_profit_num),
-                "pending",
-                "created",
-                requested_qty,
-                requested_quote_qty,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-            ),
-        )
+                """,
+                (
+                    *exchange_fields,
+                    client_order_id,
+                    position_id,
+                    created_at,
+                    bot,
+                    symbol,
+                    side,
+                    0.0,
+                    0.0,
+                    strategy_id,
+                    strategy_params_json,
+                    exit_reason,
+                    float(sell_percentage),
+                    int(take_profit_num),
+                    "pending",
+                    "created",
+                    requested_qty,
+                    requested_quote_qty,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                ),
+            )
+    except sqlite3.IntegrityError as exc:
+        if has_unsettled_order_intent(
+            position_id=position_id, side=side, symbol=symbol
+        ):
+            raise UnsettledOrderIntentError(
+                "An unsettled order intent already exists for this action"
+            ) from exc
+        raise
     return get_order_intent(int(cursor.lastrowid))
 
 
@@ -1804,6 +1824,30 @@ def mark_order_intent_submitting(intent_id: int) -> None:
         )
     if cursor.rowcount != 1:
         raise RuntimeError("Order intent has already been submitted")
+
+
+def record_order_acknowledgement(intent_id: int, result) -> dict:
+    """Persist an accepted exchange id without treating it as an execution."""
+    exchange_order_id = str(result.exchange_order_id or "").strip()
+    if not exchange_order_id:
+        raise ValueError("An accepted order acknowledgement requires an exchange order id")
+    connection = _get_conn()
+    raw_json = json.dumps(dict(result.raw), ensure_ascii=True, default=str)
+    with connection:
+        cursor = connection.execute(
+            """
+            UPDATE Orders
+            SET Exchange_Order_Id=?, Order_Status='pending',
+                Intent_State='reconcile_required', Raw_Response_JSON=?,
+                Error_Message=NULL
+            WHERE Id=? AND Submission_Attempts=1
+              AND lower(COALESCE(Order_Status, 'unknown')) IN ('pending','unknown')
+            """,
+            (exchange_order_id, raw_json, int(intent_id)),
+        )
+    if cursor.rowcount != 1:
+        raise RuntimeError("Order acknowledgement could not be persisted")
+    return get_order_intent(intent_id)
 
 
 def mark_order_intent_unknown(intent_id: int, error: str) -> None:
@@ -1997,7 +2041,10 @@ def _fill_key(fill, index: int) -> str:
 def _persist_order_fills(connection, intent: dict, result) -> dict[str, float]:
     """Upsert the latest fill snapshot and return fees by canonical asset."""
     for index, fill in enumerate(result.fills):
-        filled_at = fill.timestamp or result.timestamp
+        # Result.timestamp is the order-open/submission timestamp on Kraken
+        # (and may have the same meaning elsewhere). Never synthesize a trade
+        # execution time from it.
+        filled_at = fill.timestamp
         connection.execute(
             """
             INSERT INTO Order_Fills (
@@ -5241,19 +5288,29 @@ def _ensure_balances_unique_index(connection):
             """)
 
 
-def add_balances(balances: pd.DataFrame):
+def add_balances(balances: pd.DataFrame, *, exchange_id: int):
     connection = _get_conn()
     if balances.empty:
         return
-    # convert dataframe to a list of tuples
-    data = list(balances.to_records(index=False))
+    # itertuples keeps SQLite values as Python scalars instead of numpy scalar
+    # objects, which sqlite3 can otherwise bind as binary blobs.
+    data = list(balances.itertuples(index=False, name=None))
     dates = sorted({str(row[0]) for row in data})
     with connection:
         connection.executemany(
-            f"DELETE FROM Balances WHERE Date=? AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}",
-            [(date,) for date in dates],
+            "DELETE FROM Balances WHERE Date=? AND Exchange_Id=?",
+            [(date, int(exchange_id)) for date in dates],
         )
-        connection.executemany(sql_add_balances, data)
+        connection.executemany(
+            """
+            INSERT OR REPLACE INTO Balances (
+                Date, Asset, Balance, USD_Price, BTC_Price,
+                Balance_USD, Balance_BTC, Total_Balance_Of_BTC, Exchange_Id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [(*row, int(exchange_id)) for row in data],
+        )
 
 
 def get_asset_balances_last_n_days(n_days):
@@ -6122,7 +6179,7 @@ DEFAULT_JOB_SCHEDULES = [
         RECONCILIATION_JOB,
         "reconcile_orders.py",
         "",
-        "15m",
+        "1m",
         0,
         "Reconcile unsettled exchange order intents without resubmission.",
     ),
@@ -6835,13 +6892,20 @@ def ensure_job_schedules():
     connection = _get_conn()
     with connection:
         connection.execute(sql_create_job_schedules_table)
-        legacy_reconciliation = connection.execute(
-            """
-            SELECT script, script_args, cadence, enabled, description, last_run
-            FROM Job_Schedules WHERE name=?
-            """,
-            (LEGACY_RECONCILIATION_JOB,),
+        canonical_reconciliation = connection.execute(
+            "SELECT enabled, last_run FROM Job_Schedules WHERE name=?",
+            (RECONCILIATION_JOB,),
         ).fetchone()
+        alias_reconciliation = None
+        for alias in RECONCILIATION_JOB_ALIASES:
+            row = connection.execute(
+                "SELECT enabled, last_run FROM Job_Schedules WHERE name=?",
+                (alias,),
+            ).fetchone()
+            if row is not None:
+                alias_reconciliation = row
+                break
+        reconciliation_state = canonical_reconciliation or alias_reconciliation
         for (
             name,
             script,
@@ -6864,22 +6928,30 @@ def ensure_job_schedules():
                     "UPDATE Job_Schedules SET script = ?, description = ? WHERE name = ?",
                     (script, description, name),
                 )
-        if legacy_reconciliation is not None:
+            if name == RECONCILIATION_JOB:
+                connection.execute(
+                    """
+                    UPDATE Job_Schedules
+                    SET script=?, script_args=?, cadence=?, description=?
+                    WHERE name=?
+                    """,
+                    (script, script_args, cadence, description, name),
+                )
+        if canonical_reconciliation is None and alias_reconciliation is not None:
             connection.execute(
                 """
-                UPDATE Job_Schedules
-                SET enabled=?, last_run=COALESCE(last_run, ?)
-                WHERE name=?
+                UPDATE Job_Schedules SET enabled=?, last_run=? WHERE name=?
                 """,
                 (
-                    int(bool(legacy_reconciliation[3])),
-                    legacy_reconciliation[5],
+                    int(bool(alias_reconciliation[0])),
+                    alias_reconciliation[1],
                     RECONCILIATION_JOB,
                 ),
             )
+        for alias in RECONCILIATION_JOB_ALIASES:
             connection.execute(
-                "UPDATE Job_Schedules SET enabled=0 WHERE name=?",
-                (LEGACY_RECONCILIATION_JOB,),
+                "DELETE FROM Job_Schedules WHERE name=?",
+                (alias,),
             )
         exchange_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(Exchanges)")
@@ -6954,6 +7026,17 @@ def ensure_job_schedules():
             connection.execute(
                 "UPDATE Job_Schedules SET enabled=1 WHERE name=?",
                 (RECONCILIATION_JOB,),
+            )
+        if reconciliation_state is not None:
+            # Renaming or updating the job must not silently arm/disarm it or
+            # move its scheduler cursor.
+            connection.execute(
+                "UPDATE Job_Schedules SET enabled=?, last_run=? WHERE name=?",
+                (
+                    reconciliation_state[0],
+                    reconciliation_state[1],
+                    RECONCILIATION_JOB,
+                ),
             )
 
 

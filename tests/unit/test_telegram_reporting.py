@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 import json
 from types import SimpleNamespace
 
+import ccxt
 import pandas as pd
 import pytest
 
@@ -907,6 +908,11 @@ def test_trade_event_formatting_and_closed_position_copy(monkeypatch):
         quantity=0.5,
         notional_value=50.0,
         open_positions="3/20",
+        submitted_at="2026-08-21T10:00:00Z",
+        executed_at="2026-08-21T10:00:02Z",
+        confirmed_at="2026-08-21T10:00:03Z",
+        confirmation_delay="3s",
+        confirmation_source="immediate order query",
     )
 
     assert "1h BUY BTCUSDC" in buy_msg
@@ -914,6 +920,12 @@ def test_trade_event_formatting_and_closed_position_copy(monkeypatch):
     assert "Price: 100.0" in buy_msg
     assert "Qty: 0.5" in buy_msg
     assert "Open positions: 3/20" in buy_msg
+    assert "Submitted at: 2026-08-21T10:00:00Z" in buy_msg
+    assert "Executed at: 2026-08-21T10:00:02Z" in buy_msg
+    assert "Confirmed at: 2026-08-21T10:00:03Z" in buy_msg
+    assert "Confirmation delay: 3s" in buy_msg
+    assert "Confirmation source: immediate order query" in buy_msg
+    assert "Reconciliation:" not in buy_msg
 
     telegram.send_trade_event(
         telegram_token="main-token",
@@ -1861,7 +1873,7 @@ def test_add_symbol_transient_market_failure_preserves_approval_and_pending_work
     assert int(previous_result.iloc[0]["Trading_Approved"]) == 1
 
 
-@pytest.mark.parametrize("exchange_code", ["binance", "kraken"])
+@pytest.mark.parametrize("exchange_code", ["binance", "kraken", "okx", "okx_demo"])
 def test_market_phase_builds_candidates_for_public_exchanges(monkeypatch, exchange_code):
     settings = SimpleNamespace(
         main_strategies=["hma_rsi_linreg_copy", "ema_cross_with_market_phases_copy"],
@@ -1894,7 +1906,7 @@ def test_market_phase_builds_candidates_for_public_exchanges(monkeypatch, exchan
         market_phase.database,
         "get_active_exchange",
         lambda required=True: {
-            "id": 1 if exchange_code == "binance" else 2,
+            "id": {"binance": 1, "kraken": 2, "okx": 3, "okx_demo": 4}[exchange_code],
             "code": exchange_code,
             "quote_asset": "USDC",
         },
@@ -1939,7 +1951,36 @@ def test_market_phase_builds_candidates_for_public_exchanges(monkeypatch, exchan
     assert cleanup_calls == [["hma_rsi_linreg_copy", "ema_cross_with_market_phases_copy"]]
     assert added_strategies == ["hma_rsi_linreg_copy", "ema_cross_with_market_phases_copy"]
     assert backtesting_calls == [settings]
-    assert len(balance_calls) == (1 if exchange_code == "binance" else 0)
+    assert len(balance_calls) == 1
+    assert balance_calls[0]["exchange"]["code"] == exchange_code
+
+
+def test_market_phase_balance_failure_isolated_from_public_analysis(monkeypatch):
+    events = []
+    warning_stats = {"warnings": 0}
+    monkeypatch.setattr(
+        market_phase.exchange_service,
+        "create_balance_snapshot",
+        lambda **kwargs: (_ for _ in ()).throw(
+            ccxt.AuthenticationError("private context")
+        ),
+    )
+    monkeypatch.setattr(
+        market_phase.telegram,
+        "send_error_event",
+        lambda **kwargs: events.append(kwargs),
+    )
+
+    result = market_phase._create_active_exchange_balance_snapshot(
+        {"id": 2, "code": "kraken", "quote_asset": "USDC"},
+        warning_stats,
+    )
+
+    assert result is None
+    assert warning_stats == {"warnings": 1}
+    assert events[0]["action"] == "daily balance snapshot"
+    assert "AuthenticationError" in events[0]["reason"]
+    assert "private context" not in str(events[0])
 
 
 def test_market_phase_empty_data_is_skipped_without_error_notification(monkeypatch):

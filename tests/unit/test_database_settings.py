@@ -146,7 +146,7 @@ def test_new_install_disables_exchange_dependent_jobs(tmp_path):
             "main_1d",
             "symbol_by_market_phase_1d",
             "super_rsi_15m",
-            "orders_reconcile_15m",
+            "orders_reconcile",
         }
         assert test_conn.execute(
             "SELECT COUNT(*) FROM Exchanges WHERE Enabled=1 OR Is_Default=1"
@@ -198,7 +198,16 @@ def test_upgraded_install_keeps_binance_active_and_jobs_enabled(tmp_path):
             database._thread_local.conn = original_conn
 
 
-def test_schedule_migration_preserves_legacy_reconciliation_cursor(tmp_path):
+@pytest.mark.parametrize(
+    "legacy_name",
+    [
+        database.COMPAT_RECONCILIATION_JOB,
+        database.LEGACY_RECONCILIATION_JOB,
+    ],
+)
+def test_schedule_rename_preserves_legacy_reconciliation_state(
+    tmp_path, legacy_name
+):
     original_conn = getattr(database._thread_local, "conn", None)
     test_conn = sqlite3.connect(tmp_path / "data.db", check_same_thread=False)
     test_conn.execute(database.sql_create_job_schedules_table)
@@ -209,7 +218,7 @@ def test_schedule_migration_preserves_legacy_reconciliation_cursor(tmp_path):
             (name, script, script_args, cadence, enabled, description, last_run)
         VALUES (?, 'reconcile_orders.py', '', '15m', 1, 'legacy', '2026-07-12T10:15:00+00:00')
         """,
-        (database.LEGACY_RECONCILIATION_JOB,),
+        (legacy_name,),
     )
     test_conn.commit()
 
@@ -223,13 +232,58 @@ def test_schedule_migration_preserves_legacy_reconciliation_cursor(tmp_path):
         ).fetchone()
         legacy = test_conn.execute(
             "SELECT enabled FROM Job_Schedules WHERE name=?",
-            (database.LEGACY_RECONCILIATION_JOB,),
+            (legacy_name,),
         ).fetchone()
 
-        # Binance does not support the gated reconciliation workflow, so the
-        # migrated schedule is safely disabled while retaining its cursor.
-        assert migrated == (0, "2026-07-12T10:15:00+00:00")
-        assert legacy == (0,)
+        assert migrated == (1, "2026-07-12T10:15:00+00:00")
+        assert legacy is None
+    finally:
+        test_conn.close()
+        if original_conn is None:
+            try:
+                delattr(database._thread_local, "conn")
+            except AttributeError:
+                pass
+        else:
+            database._thread_local.conn = original_conn
+
+
+@pytest.mark.parametrize("enabled", [0, 1])
+def test_existing_reconciliation_schedule_moves_to_one_minute_without_state_change(
+    tmp_path, enabled
+):
+    original_conn = getattr(database._thread_local, "conn", None)
+    test_conn = sqlite3.connect(tmp_path / "data.db", check_same_thread=False)
+    test_conn.execute(database.sql_create_job_schedules_table)
+    create_exchange_metadata(test_conn, upgraded_install=True)
+    test_conn.execute(
+        """
+        INSERT INTO Job_Schedules
+            (name, script, script_args, cadence, enabled, description, last_run)
+        VALUES (?, 'old.py', 'old', '15m', ?, 'old', '2026-08-21T10:15:00+00:00')
+        """,
+        (database.RECONCILIATION_JOB, enabled),
+    )
+    test_conn.commit()
+
+    database._thread_local.conn = test_conn
+    try:
+        database.ensure_job_schedules()
+
+        row = test_conn.execute(
+            """
+            SELECT script, script_args, cadence, enabled, last_run
+            FROM Job_Schedules WHERE name=?
+            """,
+            (database.RECONCILIATION_JOB,),
+        ).fetchone()
+        assert row == (
+            "reconcile_orders.py",
+            "",
+            "1m",
+            enabled,
+            "2026-08-21T10:15:00+00:00",
+        )
     finally:
         test_conn.close()
         if original_conn is None:

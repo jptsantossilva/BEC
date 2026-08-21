@@ -79,7 +79,7 @@ Make the existing runtime capability-driven without registering or exposing OKX.
 - Replace `code == "kraken"`/`code == "binance"` decisions with adapter capabilities except where the native Binance legacy path is intentionally required.
 - Generalize `_exchange_symbol_metadata()` so every CCXT-backed adapter resolves canonical/native symbols through its adapter.
 - Rename the internal Kraken live workflow and reconciliation functions to exchange-neutral names; leave compatibility imports/wrappers temporarily.
-- Introduce the generic `orders_reconcile_15m` schedule. Migrate the enabled state and `last_run` from `kraken_reconcile_15m`, retaining a compatibility alias for one release.
+- Use the generic `orders_reconcile` schedule. Migrate the enabled state and `last_run` from the former `orders_reconcile_15m` or `kraken_reconcile_15m` rows and remove those obsolete aliases.
 - Make public/backtesting/live availability derive from capabilities rather than hardcoded code sets.
 - Make injected test adapters deterministic: explicit constructor arguments must override `.env`, and credential presence must not itself authorize order submission.
 

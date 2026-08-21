@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
 
 import ccxt
@@ -24,6 +25,7 @@ class FakeKrakenClient:
         self.load_calls = []
         self.fail_status = False
         self.created = []
+        self.reconciliation_reads = []
         self.candles = [
             [1_700_000_000_000, 10, 12, 9, 11, 5],
             [1_700_000_060_000, 11, 13, 10, 12, 6],
@@ -157,6 +159,24 @@ class FakeKrakenClient:
                 "buy", status="open", client_order_id=params["clientOrderId"]
             )
         ]
+
+    def fetch_open_orders(
+        self, symbol=None, since=None, limit=None, params=None
+    ):
+        self.reconciliation_reads.append(("open", limit))
+        if params:
+            return [
+                self._order(
+                    "buy", status="open", client_order_id=params["clientOrderId"]
+                )
+            ]
+        return []
+
+    def fetch_closed_orders(
+        self, symbol=None, since=None, limit=None, params=None
+    ):
+        self.reconciliation_reads.append(("closed", limit))
+        return []
 
     def cancel_order(self, order_id, symbol):
         assert (order_id, symbol) == ("KRAKEN-1", "BTC/EUR")
@@ -559,6 +579,8 @@ def test_kraken_private_balance_orders_fills_and_reconciliation():
     fetched = adapter.fetch_order("KRAKEN-1", "BTC/EUR")
     resolved = adapter.fetch_order_by_client_id("bec-buy", "BTC/EUR")
     canceled = adapter.cancel_order("KRAKEN-1", "BTC/EUR")
+    client.reconciliation_reads.clear()
+    adapter.check_reconciliation_access()
 
     assert balances["BTC"].free == Decimal("0.5")
     assert balances["BTC"].locked == Decimal("0.1")
@@ -570,6 +592,7 @@ def test_kraken_private_balance_orders_fills_and_reconciliation():
     assert fetched.status is OrderStatus.PARTIALLY_FILLED
     assert resolved.status is OrderStatus.PARTIALLY_FILLED
     assert canceled.status is OrderStatus.CANCELED
+    assert client.reconciliation_reads == [("open", 1), ("closed", 1)]
 
 
 def test_kraken_order_lookup_ignores_empty_trade_placeholder_and_keeps_order_fee():
@@ -609,6 +632,42 @@ def test_kraken_order_lookup_ignores_empty_trade_placeholder_and_keeps_order_fee
     assert result.fills[0].quantity == Decimal("0.00077525")
     assert result.fills[0].fee_asset == "EUR"
     assert result.fills[0].fee_amount == Decimal("0.40000")
+    assert result.fills[0].timestamp is None
+
+
+def test_kraken_aggregate_fill_does_not_store_close_or_open_time_as_fill_time():
+    class TimestampClient(FakeKrakenClient):
+        def fetch_order(self, order_id, symbol):
+            raw = super()._order("buy", status="closed")
+            raw["timestamp"] = 1_700_000_000_000
+            raw["lastUpdateTimestamp"] = 1_700_000_060_000
+            raw["trades"] = []
+            raw["fee"] = {"cost": "0.40", "currency": "EUR"}
+            return raw
+
+    result = KrakenAdapter(
+        client=TimestampClient(), private_enabled=True
+    ).fetch_order("KRAKEN-1", "BTC/EUR")
+
+    assert result.timestamp == datetime.fromtimestamp(
+        1_700_000_000_000 / 1000, tz=timezone.utc
+    )
+    assert result.fills[0].timestamp is None
+
+
+def test_kraken_reconciliation_access_requires_both_order_history_permissions():
+    class MissingClosedPermissionClient(FakeKrakenClient):
+        def fetch_closed_orders(
+            self, symbol=None, since=None, limit=None, params=None
+        ):
+            raise ccxt.PermissionDenied("closed orders denied")
+
+    adapter = KrakenAdapter(
+        client=MissingClosedPermissionClient(), private_enabled=True
+    )
+
+    with pytest.raises(ccxt.PermissionDenied, match="closed orders denied"):
+        adapter.check_reconciliation_access()
 
 
 def test_market_buy_fallback_applies_one_percent_base_quantity_buffer():

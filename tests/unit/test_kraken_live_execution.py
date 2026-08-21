@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -8,6 +9,7 @@ from bec.exchanges import live_execution
 from bec.exchanges.base import (
     ExchangeCapabilities,
     MarketInfo,
+    OrderFill,
     OrderResult,
     OrderStatus,
     OrderValidation,
@@ -51,6 +53,21 @@ def _result(side="sell"):
         average_price=Decimal("100"),
         client_order_id="bec-test",
         raw={"id": "K-1"},
+    )
+
+
+def _pending_result(status=OrderStatus.PENDING, *, executed="0"):
+    return OrderResult(
+        exchange_order_id="K-1",
+        symbol="BTC/USDC",
+        exchange_symbol="XBTUSDC",
+        side="buy",
+        status=status,
+        requested_quantity=Decimal("0.2"),
+        executed_quantity=Decimal(executed),
+        average_price=Decimal("100") if Decimal(executed) else None,
+        client_order_id="bec-test",
+        raw={"id": "K-1", "status": status.value},
     )
 
 
@@ -113,6 +130,52 @@ def test_demo_run_mode_is_rejected_for_kraken(monkeypatch):
     )
 
     with pytest.raises(RuntimeError, match="reserved for the active OKX Demo"):
+        live_execution._live_exchange("buy")
+
+
+def test_kraken_live_preflight_requires_balance_and_reconciliation_access(monkeypatch):
+    reads = []
+    monkeypatch.setattr(
+        live_execution.service,
+        "get_adapter",
+        lambda: SimpleNamespace(
+            code="kraken",
+            name="Kraken",
+            private_enabled=True,
+            capabilities=ExchangeCapabilities(uses_gated_live_execution=True),
+        ),
+    )
+    monkeypatch.setattr(
+        live_execution.database,
+        "get_active_exchange",
+        lambda required=True: _exchange(
+            buy_enabled=True, quote_asset="USDC", execution_environment="production"
+        ),
+    )
+    monkeypatch.setattr(
+        live_execution.config, "load_settings", lambda refresh=True: _settings()
+    )
+    monkeypatch.setattr(
+        live_execution.service,
+        "fetch_balance",
+        lambda asset: reads.append(("balance", asset)),
+    )
+    monkeypatch.setattr(
+        live_execution.service,
+        "check_reconciliation_access",
+        lambda: reads.append(("orders", None)),
+    )
+
+    live_execution._live_exchange("buy")
+
+    assert reads == [("balance", "USDC"), ("orders", None)]
+
+    monkeypatch.setattr(
+        live_execution.service,
+        "check_reconciliation_access",
+        lambda: (_ for _ in ()).throw(PermissionError("closed orders denied")),
+    )
+    with pytest.raises(RuntimeError, match="Query Closed Orders & Trades"):
         live_execution._live_exchange("buy")
 
 
@@ -507,6 +570,66 @@ def test_buy_opening_is_detected_only_on_its_first_persisted_fill():
     assert not live_execution._buy_opened_position(
         intent, {"delta_net_qty": 0}
     )
+
+
+def test_order_telemetry_separates_execution_and_confirmation_times():
+    trade_time = datetime(2026, 8, 21, 10, 0, 2, tzinfo=timezone.utc)
+    result = OrderResult(
+        exchange_order_id="K-1",
+        symbol="BTC/USDC",
+        exchange_symbol="XBTUSDC",
+        side="buy",
+        status=OrderStatus.FILLED,
+        requested_quantity=Decimal("0.2"),
+        executed_quantity=Decimal("0.2"),
+        average_price=Decimal("100"),
+        fills=(
+            OrderFill(
+                price=Decimal("100"),
+                quantity=Decimal("0.2"),
+                trade_id="T-1",
+                timestamp=trade_time,
+            ),
+        ),
+        client_order_id="bec-test",
+        raw={"lastUpdateTimestamp": 1_777_000_000_000},
+    )
+
+    telemetry = live_execution._order_telemetry(
+        _exchange(name="Kraken", execution_environment="production"),
+        result,
+        intent={
+            "Date": "2026-08-21T10:00:00+00:00",
+            "Last_Reconciled_At": "2026-08-21T10:15:00+00:00",
+        },
+        confirmation_source="scheduled reconciliation",
+    )
+
+    assert telemetry["submitted_at"] == "2026-08-21T10:00:00Z"
+    assert telemetry["executed_at"] == "2026-08-21T10:00:02Z"
+    assert telemetry["order_closed_at"] == ""
+    assert telemetry["confirmed_at"] == "2026-08-21T10:15:00Z"
+    assert telemetry["confirmation_delay"] == "900s"
+    assert telemetry["confirmation_source"] == "scheduled reconciliation"
+
+    closed_only = OrderResult(
+        exchange_order_id="K-2",
+        symbol="BTC/USDC",
+        exchange_symbol="XBTUSDC",
+        side="buy",
+        status=OrderStatus.FILLED,
+        requested_quantity=Decimal("0.2"),
+        executed_quantity=Decimal("0.2"),
+        average_price=Decimal("100"),
+        fills=(OrderFill(price=Decimal("100"), quantity=Decimal("0.2")),),
+        raw={"timestamp": 1_776_999_000_000, "lastUpdateTimestamp": 1_777_000_000_000},
+    )
+    close_telemetry = live_execution._order_telemetry(_exchange(), closed_only)
+    expected_close = datetime.fromtimestamp(
+        1_777_000_000_000 / 1000, tz=timezone.utc
+    ).isoformat(timespec="seconds").replace("+00:00", "Z")
+    assert close_telemetry["executed_at"] == ""
+    assert close_telemetry["order_closed_at"] == expected_close
 
 
 def test_manual_demo_ioc_sell_uses_explicit_limit_order_not_market_order(monkeypatch):
@@ -927,6 +1050,180 @@ def test_okx_submission_reporting_withholds_exchange_request_details(monkeypatch
     assert "request details withheld" in repr(reported[0]["exception"])
 
 
+@pytest.mark.parametrize("terminal_query", [1, 2, 3])
+def test_kraken_acknowledgement_is_polled_until_terminal_query(
+    monkeypatch, terminal_query
+):
+    intent = {
+        "Id": 7,
+        "Side": "BUY",
+        "Symbol": "BTC/USDC",
+        "Bot": "1h",
+        "Client_Order_Id": "bec-test",
+        "Applied_Executed_Qty": 0,
+    }
+    sleeps = []
+    acknowledgements = []
+    applied = []
+    responses = [
+        _pending_result()
+        for _ in range(terminal_query - 1)
+    ] + [_result(side="buy")]
+    monkeypatch.setattr(live_execution.time, "sleep", sleeps.append)
+    monkeypatch.setattr(
+        live_execution.database,
+        "record_order_acknowledgement",
+        lambda intent_id, result: acknowledgements.append((intent_id, result.status)),
+    )
+    monkeypatch.setattr(
+        live_execution.service, "fetch_order", lambda *_args: responses.pop(0)
+    )
+    monkeypatch.setattr(
+        live_execution.database, "get_order_intent", lambda _id: intent
+    )
+    monkeypatch.setattr(
+        live_execution,
+        "_apply_order_result_and_notify",
+        lambda **kwargs: applied.append(kwargs) or {"delta_executed_qty": 0},
+    )
+
+    outcome = live_execution._persist_submitted_order(
+        intent=intent,
+        acknowledgement=_pending_result(OrderStatus.UNKNOWN),
+        exchange=_exchange(),
+        strategy_name="EMA",
+        reason="Entry condition fulfilled",
+    )
+
+    assert acknowledgements == [(7, OrderStatus.UNKNOWN)]
+    assert sleeps == [1, 2, 4][:terminal_query]
+    assert len(applied) == terminal_query
+    assert all(
+        item["confirmation_source"] == "immediate order query" for item in applied
+    )
+    assert outcome["result"].status is OrderStatus.FILLED
+    assert outcome["confirmation_deferred"] is False
+
+
+def test_kraken_three_nonterminal_reads_defer_to_scheduled_reconciliation(monkeypatch):
+    intent = {"Id": 7, "Side": "BUY", "Symbol": "BTC/USDC"}
+    sleeps = []
+    applied = []
+    monkeypatch.setattr(live_execution.time, "sleep", sleeps.append)
+    monkeypatch.setattr(
+        live_execution.database, "record_order_acknowledgement", lambda *_args: None
+    )
+    monkeypatch.setattr(
+        live_execution.service, "fetch_order", lambda *_args: _pending_result()
+    )
+    monkeypatch.setattr(
+        live_execution.database, "get_order_intent", lambda _id: intent
+    )
+    monkeypatch.setattr(
+        live_execution,
+        "_apply_order_result_and_notify",
+        lambda **kwargs: applied.append(kwargs) or {"delta_executed_qty": 0},
+    )
+
+    outcome = live_execution._persist_submitted_order(
+        intent=intent,
+        acknowledgement=_pending_result(OrderStatus.UNKNOWN),
+        exchange=_exchange(),
+        strategy_name="EMA",
+        reason="Entry condition fulfilled",
+    )
+
+    assert sleeps == [1, 2, 4]
+    assert len(applied) == 3
+    assert outcome["confirmation_deferred"] is True
+
+
+def test_kraken_first_confirmation_timeout_stops_polling_without_resubmission(
+    monkeypatch,
+):
+    intent = {"Id": 7, "Side": "BUY", "Symbol": "BTC/USDC"}
+    sleeps = []
+    reads = []
+    monkeypatch.setattr(live_execution.time, "sleep", sleeps.append)
+    monkeypatch.setattr(
+        live_execution.database, "record_order_acknowledgement", lambda *_args: None
+    )
+
+    def timeout(*_args):
+        reads.append(True)
+        raise TimeoutError("read timed out")
+
+    monkeypatch.setattr(live_execution.service, "fetch_order", timeout)
+    monkeypatch.setattr(
+        live_execution,
+        "_apply_order_result_and_notify",
+        lambda **kwargs: pytest.fail("a failed first read has no result to apply"),
+    )
+
+    outcome = live_execution._persist_submitted_order(
+        intent=intent,
+        acknowledgement=_pending_result(OrderStatus.UNKNOWN),
+        exchange=_exchange(),
+        strategy_name="EMA",
+        reason="Entry condition fulfilled",
+    )
+
+    assert sleeps == [1]
+    assert len(reads) == 1
+    assert outcome["confirmation_deferred"] is True
+
+
+def test_duplicate_unsettled_action_returns_structured_skip_without_submission(
+    monkeypatch,
+):
+    market = MarketInfo("BTC/USDC", "XBTUSDC", "BTC", "USDC", True)
+    submitted = []
+    monkeypatch.setattr(
+        live_execution, "_guarded_live_exchange", lambda side: (_exchange(), None)
+    )
+    monkeypatch.setattr(live_execution.service, "normalize_symbol", lambda value: value)
+    monkeypatch.setattr(
+        live_execution.service, "load_markets", lambda: {market.symbol: market}
+    )
+    monkeypatch.setattr(
+        live_execution.database, "is_symbol_blacklisted", lambda _asset: False
+    )
+    monkeypatch.setattr(live_execution, "_stake_amount", lambda _asset: Decimal("10"))
+    monkeypatch.setattr(
+        live_execution.service,
+        "validate_order",
+        lambda _request: OrderValidation(True),
+    )
+    monkeypatch.setattr(
+        live_execution.database,
+        "create_order_intent",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            live_execution.database.UnsettledOrderIntentError(
+                "An unsettled order intent already exists for this action"
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        live_execution.database,
+        "mark_order_intent_submitting",
+        lambda *_args: pytest.fail("a duplicate intent must not be submitted"),
+    )
+    monkeypatch.setattr(
+        live_execution.service,
+        "create_market_buy",
+        lambda *_args, **_kwargs: submitted.append(True),
+    )
+
+    outcome = live_execution.create_buy_order(symbol="BTC/USDC", bot="1h")
+
+    assert outcome == {
+        "skipped": True,
+        "reason": "An unsettled order intent already exists for this action",
+        "reconciliation_required": True,
+    }
+    assert submitted == []
+
+
 def test_reconciliation_resolves_unknown_intent_by_client_id(monkeypatch):
     applied = []
 
@@ -970,6 +1267,67 @@ def test_reconciliation_resolves_unknown_intent_by_client_id(monkeypatch):
 
     assert stats == {"checked": 1, "updated": 1, "unresolved": 0}
     assert applied == [(1, OrderStatus.FILLED)]
+
+
+def test_reconciliation_returns_without_creating_adapter_when_no_intents(monkeypatch):
+    monkeypatch.setattr(
+        live_execution.database,
+        "get_active_exchange",
+        lambda required=False: _exchange(),
+    )
+    monkeypatch.setattr(
+        live_execution.database, "get_unsettled_order_intents", lambda _id: []
+    )
+    monkeypatch.setattr(
+        live_execution.service,
+        "get_adapter",
+        lambda: pytest.fail("no adapter or Kraken request is needed"),
+    )
+
+    assert live_execution.reconcile_unsettled_orders() == {
+        "checked": 0,
+        "updated": 0,
+        "unresolved": 0,
+    }
+
+
+def test_reconciliation_uses_txid_before_client_order_search(monkeypatch):
+    calls = []
+    intent = {
+        "Id": 1,
+        "Side": "BUY",
+        "Symbol": "BTC/USDC",
+        "Exchange_Order_Id": "K-1",
+        "Client_Order_Id": "bec-test",
+    }
+
+    class Adapter:
+        capabilities = ExchangeCapabilities(supports_reconciliation=True)
+
+        def fetch_order(self, exchange_order_id, symbol):
+            calls.append(("txid", exchange_order_id, symbol))
+            return _result(side="buy")
+
+        def fetch_order_by_client_id(self, *_args):
+            pytest.fail("a resolved txid must not trigger a client-id scan")
+
+    monkeypatch.setattr(
+        live_execution.database,
+        "get_active_exchange",
+        lambda required=False: _exchange(),
+    )
+    monkeypatch.setattr(
+        live_execution.database, "get_unsettled_order_intents", lambda _id: [intent]
+    )
+    monkeypatch.setattr(live_execution.service, "get_adapter", lambda: Adapter())
+    monkeypatch.setattr(
+        live_execution,
+        "_apply_order_result_and_notify",
+        lambda **_kwargs: {"delta_executed_qty": 0},
+    )
+
+    assert live_execution.reconcile_unsettled_orders()["updated"] == 1
+    assert calls == [("txid", "K-1", "BTC/USDC")]
 
 
 def test_reconciliation_notifies_when_first_buy_fill_opens_position(monkeypatch):
@@ -1021,6 +1379,14 @@ def test_reconciliation_notifies_when_first_buy_fill_opens_position(monkeypatch)
         live_execution.database, "get_num_open_positions", lambda: 1
     )
     monkeypatch.setattr(
+        live_execution.database,
+        "get_order_intent",
+        lambda _id: {
+            **intent,
+            "Last_Reconciled_At": "2026-08-21T10:15:00+00:00",
+        },
+    )
+    monkeypatch.setattr(
         live_execution,
         "_send_trade_notification",
         lambda **kwargs: notifications.append(kwargs),
@@ -1032,7 +1398,10 @@ def test_reconciliation_notifies_when_first_buy_fill_opens_position(monkeypatch)
     assert len(notifications) == 1
     assert notifications[0]["action"] == "BUY"
     assert notifications[0]["position_opened"] is True
-    assert notifications[0]["reason"] == "Entry confirmed during reconciliation"
+    assert notifications[0]["reason"] == (
+        "Entry confirmed during scheduled reconciliation"
+    )
+    assert notifications[0]["confirmation_source"] == "scheduled reconciliation"
 
 
 def test_reconciliation_settles_stored_invalid_kraken_client_id_rejection(monkeypatch):

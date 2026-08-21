@@ -2,16 +2,25 @@
 
 from __future__ import annotations
 
+import time
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from bec.exchanges import service
-from bec.exchanges.base import OrderRequest
+from bec.exchanges.base import OrderRequest, OrderStatus
 from bec.utils import config, database, telegram
 
 
 KRAKEN_MANUAL_TEST_SYMBOL = "BTC/USDC"
 KRAKEN_MANUAL_TEST_QUOTE_AMOUNT = Decimal("50")
 KRAKEN_MANUAL_TEST_CONFIRMATION = "BUY 50 USDC BTC/USDC LIVE"
+KRAKEN_IMMEDIATE_CONFIRMATION_DELAYS = (1, 2, 4)
+TERMINAL_ORDER_STATUSES = {
+    OrderStatus.FILLED,
+    OrderStatus.CANCELED,
+    OrderStatus.REJECTED,
+    OrderStatus.EXPIRED,
+}
 
 
 def _live_exchange(side: str) -> dict:
@@ -43,6 +52,16 @@ def _live_exchange(side: str) -> dict:
         raise RuntimeError(f"{name} {side} operations are disabled in Trading Settings")
     if not bool(getattr(adapter, "private_enabled", False)):
         raise RuntimeError(f"{name} private credentials are not configured")
+    if adapter_code == "kraken":
+        try:
+            service.fetch_balance(str(exchange.get("quote_asset") or ""))
+            service.check_reconciliation_access()
+        except Exception as exc:
+            raise RuntimeError(
+                "Kraken private preflight failed; the API key must allow Query Funds, "
+                "Create/Modify Orders, Query Open Orders & Trades, and Query Closed "
+                "Orders & Trades"
+            ) from exc
     if adapter_code == "okx":
         if database.get_compatible_okx_demo_validation(exchange) is None:
             raise RuntimeError(
@@ -267,6 +286,281 @@ def _buy_opened_position(intent: dict, applied: dict) -> bool:
     )
 
 
+def _parse_utc_datetime(value) -> datetime | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _format_utc_datetime(value) -> str:
+    parsed = _parse_utc_datetime(value)
+    return parsed.isoformat(timespec="seconds").replace("+00:00", "Z") if parsed else ""
+
+
+def _raw_order_timestamp(result, field: str) -> datetime | None:
+    raw = result.raw or {}
+    milliseconds = raw.get(field)
+    if milliseconds in (None, ""):
+        return None
+    try:
+        return datetime.fromtimestamp(float(milliseconds) / 1000, tz=timezone.utc)
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def _order_telemetry(
+    exchange: dict,
+    result,
+    *,
+    intent: dict | None = None,
+    confirmation_source: str = "",
+) -> dict[str, str]:
+    fees: dict[str, Decimal] = {}
+    for fill in result.fills:
+        asset = str(fill.fee_asset or "").upper()
+        if asset:
+            fees[asset] = fees.get(asset, Decimal("0")) + Decimal(str(fill.fee_amount))
+    fee_text = ", ".join(
+        f"{asset} {amount}" for asset, amount in sorted(fees.items())
+    )
+    exact_fill_times = [
+        fill.timestamp
+        for fill in result.fills
+        if fill.trade_id and fill.timestamp is not None
+    ]
+    executed_at = (
+        min(exact_fill_times)
+        if exact_fill_times
+        else _raw_order_timestamp(result, "lastTradeTimestamp")
+    )
+    closed_at = (
+        None
+        if executed_at
+        else _raw_order_timestamp(result, "lastUpdateTimestamp")
+    )
+    submitted_at = _parse_utc_datetime((intent or {}).get("Date"))
+    confirmed_at = _parse_utc_datetime((intent or {}).get("Last_Reconciled_At"))
+    delay = ""
+    if submitted_at is not None and confirmed_at is not None:
+        delay_seconds = max(0, int((confirmed_at - submitted_at).total_seconds()))
+        delay = f"{delay_seconds}s"
+    return {
+        "exchange": str(exchange.get("name") or exchange.get("code") or ""),
+        "environment": str(exchange.get("execution_environment") or ""),
+        "client_order_id": str(
+            result.client_order_id or (intent or {}).get("Client_Order_Id") or ""
+        ),
+        "order_status": str(result.status.value),
+        "fees": fee_text,
+        "submitted_at": _format_utc_datetime(submitted_at),
+        "executed_at": _format_utc_datetime(executed_at),
+        "order_closed_at": _format_utc_datetime(closed_at),
+        "confirmed_at": _format_utc_datetime(confirmed_at),
+        "confirmation_delay": delay,
+        "confirmation_source": confirmation_source,
+    }
+
+
+def _log_order_persistence(
+    exchange: dict, result, *, intent: dict | None = None, confirmation_source: str = ""
+) -> None:
+    telemetry = _order_telemetry(
+        exchange,
+        result,
+        intent=intent,
+        confirmation_source=confirmation_source,
+    )
+    print(
+        database.exchange_log_prefix(),
+        "Order persisted "
+        f"exchange={telemetry['exchange']} environment={telemetry['environment']} "
+        f"client_order_id={telemetry['client_order_id']} status={telemetry['order_status']} "
+        f"fees={telemetry['fees'] or 'none'} "
+        f"confirmation_source={telemetry['confirmation_source'] or 'submission response'}",
+    )
+
+
+def _create_order_intent_or_skip(**kwargs) -> tuple[dict | None, dict | None]:
+    try:
+        return database.create_order_intent(**kwargs), None
+    except database.UnsettledOrderIntentError as exc:
+        message = str(exc)
+        print(database.exchange_log_prefix(), f"Order skipped: {message}")
+        return None, {
+            "skipped": True,
+            "reason": message,
+            "reconciliation_required": True,
+        }
+
+
+def _confirm_kraken_submission(intent: dict, acknowledgement):
+    """Poll a Kraken txid with read-only requests and never resubmit it."""
+    database.record_order_acknowledgement(intent["Id"], acknowledgement)
+    results = []
+    for delay in KRAKEN_IMMEDIATE_CONFIRMATION_DELAYS:
+        time.sleep(delay)
+        try:
+            result = service.fetch_order(
+                acknowledgement.exchange_order_id,
+                str(intent["Symbol"]),
+            )
+        except Exception as exc:
+            print(
+                database.exchange_log_prefix(),
+                "Immediate Kraken order confirmation deferred "
+                f"intent={intent['Id']} ({type(exc).__name__})",
+            )
+            break
+        results.append(result)
+        if result.status in TERMINAL_ORDER_STATUSES:
+            break
+    return results
+
+
+def _apply_order_result_and_notify(
+    *,
+    intent: dict,
+    result,
+    exchange: dict,
+    confirmation_source: str,
+    strategy_name: str = "",
+    reason: str = "",
+) -> dict:
+    applied = database.apply_order_result(intent["Id"], result)
+    if str(intent.get("Side") or "").upper() == "SELL":
+        _post_apply_sell(intent, applied, float(result.average_price or 0))
+    persisted_intent = database.get_order_intent(intent["Id"])
+    _log_order_persistence(
+        exchange,
+        result,
+        intent=persisted_intent,
+        confirmation_source=confirmation_source,
+    )
+    first_fill = (
+        float(intent.get("Applied_Executed_Qty") or 0) <= 0
+        and float(applied.get("delta_executed_qty") or 0) > 0
+    )
+    if not first_fill:
+        return applied
+
+    side = str(intent.get("Side") or result.side).upper()
+    average = float(result.average_price or 0)
+    quantity = float(result.executed_quantity)
+    telemetry = _order_telemetry(
+        exchange,
+        result,
+        intent=persisted_intent,
+        confirmation_source=confirmation_source,
+    )
+    event = {
+        "bot": str(intent.get("Bot") or ""),
+        "action": side,
+        "symbol": result.symbol,
+        "strategy": strategy_name or str(intent.get("Strategy_Id") or ""),
+        "reason": reason,
+        "unit_price": average,
+        "quantity": quantity,
+        "notional_value": float(
+            intent.get("Requested_Quote_Qty") or (quantity * average)
+        ),
+        "open_positions": str(database.get_num_open_positions()),
+        **telemetry,
+    }
+    if side == "BUY":
+        event.update(
+            emoji=telegram.EMOJI_ENTER_TRADE,
+            position_opened=_buy_opened_position(intent, applied),
+        )
+    else:
+        pnl_value = float(persisted_intent.get("PnL_Value") or 0)
+        event.update(
+            emoji=(
+                telegram.EMOJI_TRADE_WITH_PROFIT
+                if pnl_value > 0
+                else telegram.EMOJI_TRADE_WITH_LOSS
+            ),
+            pnl_perc=float(persisted_intent.get("PnL_Perc") or 0),
+            pnl_value=pnl_value,
+        )
+    _send_trade_notification(**event)
+    return applied
+
+
+def _persist_submitted_order(
+    *,
+    intent: dict,
+    acknowledgement,
+    exchange: dict,
+    strategy_name: str,
+    reason: str,
+):
+    result = acknowledgement
+    confirmation_source = (
+        "immediate order query"
+        if str(exchange.get("code") or "") == "kraken"
+        else "submission response"
+    )
+    if (
+        str(exchange.get("code") or "") == "kraken"
+        and result.status not in TERMINAL_ORDER_STATUSES
+    ):
+        if not str(result.exchange_order_id or ""):
+            error = RuntimeError("Kraken accepted response did not include an order id")
+            _record_submission_failure(
+                intent["Id"],
+                f"confirm exchange {str(intent.get('Side') or '').lower()} order",
+                error,
+                symbol=str(intent.get("Symbol") or ""),
+                timeframe=str(intent.get("Bot") or ""),
+                strategy=strategy_name or str(intent.get("Strategy_Id") or ""),
+            )
+            return None
+        confirmations = _confirm_kraken_submission(intent, result)
+        if not confirmations:
+            return {
+                "result": result,
+                "applied": None,
+                "exchange": exchange,
+                "confirmation_deferred": True,
+            }
+        confirmation_source = "immediate order query"
+        applied = None
+        for result in confirmations:
+            current_intent = database.get_order_intent(intent["Id"])
+            applied = _apply_order_result_and_notify(
+                intent=current_intent,
+                result=result,
+                exchange=exchange,
+                confirmation_source=confirmation_source,
+                strategy_name=strategy_name,
+                reason=reason,
+            )
+        return {
+            "result": result,
+            "applied": applied,
+            "exchange": exchange,
+            "confirmation_deferred": result.status not in TERMINAL_ORDER_STATUSES,
+        }
+    applied = _apply_order_result_and_notify(
+        intent=intent,
+        result=result,
+        exchange=exchange,
+        confirmation_source=confirmation_source,
+        strategy_name=strategy_name,
+        reason=reason,
+    )
+    return {"result": result, "applied": applied, "exchange": exchange}
+
+
 def _require_okx_production_strategy_gate(
     exchange: dict, *, bot: str, symbol: str, strategy_id: str, side: str
 ) -> None:
@@ -284,36 +578,6 @@ def _require_okx_production_strategy_gate(
             "OKX production buy requires an approved backtest with matching exchange, "
             "adapter, quote asset, fee, and fingerprint"
         )
-
-
-def _order_telemetry(exchange: dict, result) -> dict[str, str]:
-    fees: dict[str, Decimal] = {}
-    for fill in result.fills:
-        asset = str(fill.fee_asset or "").upper()
-        if asset:
-            fees[asset] = fees.get(asset, Decimal("0")) + Decimal(str(fill.fee_amount))
-    fee_text = ", ".join(
-        f"{asset} {amount}" for asset, amount in sorted(fees.items())
-    )
-    return {
-        "exchange": str(exchange.get("name") or exchange.get("code") or ""),
-        "environment": str(exchange.get("execution_environment") or ""),
-        "client_order_id": str(result.client_order_id or ""),
-        "order_status": str(result.status.value),
-        "fees": fee_text,
-        "reconciliation": "persisted",
-    }
-
-
-def _log_order_persistence(exchange: dict, result) -> None:
-    telemetry = _order_telemetry(exchange, result)
-    print(
-        database.exchange_log_prefix(),
-        "Order persisted "
-        f"exchange={telemetry['exchange']} environment={telemetry['environment']} "
-        f"client_order_id={telemetry['client_order_id']} status={telemetry['order_status']} "
-        f"fees={telemetry['fees'] or 'none'} reconciliation={telemetry['reconciliation']}",
-    )
 
 
 def create_buy_order(
@@ -372,7 +636,7 @@ def create_buy_order(
     if not validation.valid:
         raise ValueError("; ".join(validation.errors))
 
-    intent = database.create_order_intent(
+    intent, duplicate = _create_order_intent_or_skip(
         side="BUY",
         symbol=market.symbol,
         bot=bot,
@@ -381,6 +645,8 @@ def create_buy_order(
         strategy_id=strategy_id,
         strategy_params_json=strategy_params_json,
     )
+    if duplicate:
+        return duplicate
     database.mark_order_intent_submitting(intent["Id"])
     try:
         result = service.create_market_buy(
@@ -398,24 +664,13 @@ def create_buy_order(
             strategy=strategy_name or strategy_id,
         )
         return None
-    applied = database.apply_order_result(intent["Id"], result)
-    _log_order_persistence(exchange, result)
-    if float(applied.get("delta_net_qty") or 0) > 0:
-        _send_trade_notification(
-            bot=bot,
-            emoji=telegram.EMOJI_ENTER_TRADE,
-            action="BUY",
-            symbol=result.symbol,
-            strategy=strategy_name or strategy_id,
-            reason="Entry condition fulfilled",
-            unit_price=float(result.average_price or 0),
-            quantity=float(result.executed_quantity),
-            notional_value=float(quote_amount),
-            open_positions=str(database.get_num_open_positions()),
-            position_opened=_buy_opened_position(intent, applied),
-            **_order_telemetry(exchange, result),
-        )
-    return {"result": result, "applied": applied, "exchange": exchange}
+    return _persist_submitted_order(
+        intent=intent,
+        acknowledgement=result,
+        exchange=exchange,
+        strategy_name=strategy_name or strategy_id,
+        reason="Entry condition fulfilled",
+    )
 
 
 def create_okx_demo_manual_buy(*, symbol: str, quote_amount: Decimal):
@@ -685,7 +940,7 @@ def create_sell_order(
         limit_ioc_creator = getattr(service.get_adapter(), "create_limit_sell_ioc", None)
         if not callable(limit_ioc_creator):
             raise RuntimeError("The active OKX Demo adapter cannot create explicit limit IOC sells")
-    intent = database.create_order_intent(
+    intent, duplicate = _create_order_intent_or_skip(
         side="SELL",
         symbol=market.symbol,
         bot=bot,
@@ -701,6 +956,8 @@ def create_sell_order(
         sell_percentage=percentage,
         take_profit_num=take_profit_num,
     )
+    if duplicate:
+        return duplicate
     database.mark_order_intent_submitting(intent["Id"])
     try:
         if limit_ioc_creator is not None:
@@ -726,45 +983,27 @@ def create_sell_order(
             strategy=strategy_name or strategy_id,
         )
         return None
-    applied = database.apply_order_result(intent["Id"], result)
-    _post_apply_sell(intent, applied, float(result.average_price or 0))
-    _log_order_persistence(exchange, result)
-    settled_intent = database.get_order_intent(intent["Id"])
-    pnl_value = float(settled_intent.get("PnL_Value") or 0)
-    pnl_perc = float(settled_intent.get("PnL_Perc") or 0)
-    emoji = (
-        telegram.EMOJI_TRADE_WITH_PROFIT
-        if pnl_value > 0
-        else telegram.EMOJI_TRADE_WITH_LOSS
-    )
-    _send_trade_notification(
-        bot=bot,
-        emoji=emoji,
-        action="SELL",
-        symbol=result.symbol,
-        strategy=strategy_name or strategy_id,
+    return _persist_submitted_order(
+        intent=intent,
+        acknowledgement=result,
+        exchange=exchange,
+        strategy_name=strategy_name or strategy_id,
         reason=reason or "Exit condition fulfilled",
-        unit_price=float(result.average_price or 0),
-        quantity=float(result.executed_quantity),
-        notional_value=float(result.executed_quantity)
-        * float(result.average_price or 0),
-        pnl_perc=pnl_perc,
-        pnl_value=pnl_value,
-        open_positions=str(database.get_num_open_positions()),
-        **_order_telemetry(exchange, result),
     )
-    return {"result": result, "applied": applied, "exchange": exchange}
 
 
 def reconcile_unsettled_orders() -> dict:
     exchange = database.get_active_exchange(required=False)
     if not exchange:
         return {"checked": 0, "updated": 0, "unresolved": 0}
+    intents = database.get_unsettled_order_intents(int(exchange["id"]))
+    if not intents:
+        return {"checked": 0, "updated": 0, "unresolved": 0}
     adapter = service.get_adapter()
     if not adapter.capabilities.supports_reconciliation:
         return {"checked": 0, "updated": 0, "unresolved": 0}
     stats = {"checked": 0, "updated": 0, "unresolved": 0}
-    for intent in database.get_unsettled_order_intents(int(exchange["id"])):
+    for intent in intents:
         stats["checked"] += 1
         try:
             stored_rejection = getattr(
@@ -783,43 +1022,39 @@ def reconcile_unsettled_orders() -> dict:
                 )
                 stats["updated"] += 1
                 continue
-            resolver = getattr(adapter, "fetch_order_by_client_id", None)
-            result = (
-                resolver(intent["Client_Order_Id"], intent["Symbol"])
-                if resolver and str(intent.get("Client_Order_Id") or "")
-                else None
-            )
-            if result is None:
-                exchange_order_id = str(intent.get("Exchange_Order_Id") or "")
-                if exchange_order_id:
+            exchange_order_id = str(intent.get("Exchange_Order_Id") or "")
+            result = None
+            if exchange_order_id:
+                try:
                     result = adapter.fetch_order(exchange_order_id, intent["Symbol"])
+                except Exception:
+                    # Retain the existing client-id search only as a read-only
+                    # fallback when Kraken cannot resolve the precise txid.
+                    result = None
+            if result is None:
+                resolver = getattr(adapter, "fetch_order_by_client_id", None)
+                result = (
+                    resolver(intent["Client_Order_Id"], intent["Symbol"])
+                    if resolver and str(intent.get("Client_Order_Id") or "")
+                    else None
+                )
             if result is None:
                 stats["unresolved"] += 1
                 continue
-            applied = database.apply_order_result(intent["Id"], result)
-            if str(intent["Side"]).upper() == "SELL":
-                _post_apply_sell(intent, applied, float(result.average_price or 0))
-            elif _buy_opened_position(intent, applied):
-                _send_trade_notification(
-                    bot=str(intent.get("Bot") or ""),
-                    emoji=telegram.EMOJI_ENTER_TRADE,
-                    action="BUY",
-                    symbol=result.symbol,
-                    strategy=str(intent.get("Strategy_Id") or ""),
-                    reason="Entry confirmed during reconciliation",
-                    unit_price=float(result.average_price or 0),
-                    quantity=float(result.executed_quantity),
-                    notional_value=float(
-                        intent.get("Requested_Quote_Qty")
-                        or (
-                            float(result.executed_quantity)
-                            * float(result.average_price or 0)
-                        )
-                    ),
-                    open_positions=str(database.get_num_open_positions()),
-                    position_opened=True,
-                    **_order_telemetry(exchange, result),
-                )
+            side = str(intent.get("Side") or "").upper()
+            _apply_order_result_and_notify(
+                intent=intent,
+                result=result,
+                exchange=exchange,
+                confirmation_source="scheduled reconciliation",
+                strategy_name=str(intent.get("Strategy_Id") or ""),
+                reason=(
+                    "Entry confirmed during scheduled reconciliation"
+                    if side == "BUY"
+                    else str(intent.get("Exit_Reason") or "")
+                    or "Exit confirmed during scheduled reconciliation"
+                ),
+            )
             stats["updated"] += 1
         except Exception as exc:
             database.mark_order_intent_unknown(intent["Id"], repr(exc))
@@ -837,9 +1072,13 @@ def reconcile_unsettled_orders() -> dict:
 def private_api_status() -> tuple[bool, str]:
     try:
         service.fetch_balance()
+        exchange = database.get_active_exchange(required=False) or {}
+        if str(exchange.get("code") or "") == "kraken":
+            service.check_reconciliation_access()
     except Exception as exc:
         return False, f"Private API unavailable ({type(exc).__name__})."
     return True, (
-        "Private balance access succeeded. Confirm the key has only the minimum "
-        "balance/order permissions, no withdrawal permission, and an IP allowlist."
+        "Private read-only preflight succeeded. Kraken keys require Query Funds, "
+        "Create/Modify Orders, Query Open Orders & Trades, and Query Closed Orders "
+        "& Trades. Keep withdrawal permission disabled and use an IP allowlist."
     )

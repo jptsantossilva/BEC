@@ -1144,6 +1144,56 @@ def test_order_intent_is_persisted_before_submission_and_never_resubmitted(
         _restore_connection(original)
 
 
+def test_order_acknowledgement_persists_txid_as_pending_without_fill_or_reconcile_time(
+    tmp_path, monkeypatch
+):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        database.set_active_exchange(2)
+        monkeypatch.setattr(
+            database,
+            "_exchange_symbol_metadata",
+            lambda symbol: (2, "BTC/USDC", "XBTUSDC", "BTC", "USDC"),
+        )
+        intent = database.create_order_intent(
+            side="BUY",
+            symbol="BTC/USDC",
+            bot="1h",
+            requested_quote_qty=50,
+            client_order_id="bec-test",
+        )
+        database.mark_order_intent_submitting(intent["Id"])
+        acknowledgement = OrderResult(
+            exchange_order_id="K-ACK-1",
+            symbol="BTC/USDC",
+            exchange_symbol="XBTUSDC",
+            side="buy",
+            status=OrderStatus.UNKNOWN,
+            requested_quantity=None,
+            executed_quantity=Decimal("0"),
+            average_price=None,
+            client_order_id="bec-test",
+            raw={"id": "K-ACK-1", "info": {"txid": ["K-ACK-1"]}},
+        )
+
+        stored = database.record_order_acknowledgement(intent["Id"], acknowledgement)
+
+        assert stored["Exchange_Order_Id"] == "K-ACK-1"
+        assert stored["Order_Status"] == "pending"
+        assert stored["Intent_State"] == "reconcile_required"
+        assert stored["Submission_Attempts"] == 1
+        assert stored["Last_Reconciled_At"] is None
+        assert stored["Applied_Executed_Qty"] == 0
+        assert '"txid": ["K-ACK-1"]' in stored["Raw_Response_JSON"]
+        assert connection.execute(
+            "SELECT COUNT(*) FROM Order_Fills WHERE Order_Id=?", (intent["Id"],)
+        ).fetchone()[0] == 0
+    finally:
+        connection.close()
+        _restore_connection(original)
+
+
 def test_invalid_client_order_id_is_rejected_before_intent_persistence(tmp_path, monkeypatch):
     connection = _runtime_database(tmp_path)
     original = _use_connection(connection)
@@ -1255,6 +1305,10 @@ def test_partial_buy_reconciliation_applies_only_incremental_net_quantity(
             pytest.approx(0.02),
             pytest.approx(0.98),
         )
+        assert connection.execute(
+            "SELECT Filled_At FROM Order_Fills WHERE Order_Id=?",
+            (intent["Id"],),
+        ).fetchone() == (None,)
     finally:
         connection.close()
         _restore_connection(original)

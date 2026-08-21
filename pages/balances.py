@@ -1,5 +1,7 @@
-import streamlit as st
+from datetime import date, datetime, timezone
+
 import altair as alt
+import streamlit as st
 
 import bec.utils.database as database
 from bec.page_config import configure_page
@@ -172,6 +174,28 @@ def get_chart_daily_asset_balances():
 
 
 st.header("Balances")
+active_exchange = database.get_active_exchange(required=False)
+if active_exchange is None:
+    st.warning("No active exchange is selected.")
+else:
+    st.caption(
+        f"Exchange: {active_exchange['name']} ({active_exchange['code']})"
+    )
+    last_snapshot = database.get_last_date_from_balances()
+    if last_snapshot == "0":
+        st.caption("Last successful snapshot: none")
+    else:
+        st.caption(f"Last successful snapshot: {last_snapshot}")
+        try:
+            today_utc = datetime.now(timezone.utc).date()
+            snapshot_age = (today_utc - date.fromisoformat(last_snapshot)).days
+        except (TypeError, ValueError):
+            snapshot_age = 0
+        if snapshot_age > 2:
+            st.warning(
+                f"The latest balance snapshot is {snapshot_age} days old. "
+                "Check the daily job and private exchange credentials."
+            )
 get_chart_daily_balance(asset="USD")
 get_chart_daily_balance(asset="BTC")
 get_chart_daily_asset_balances()

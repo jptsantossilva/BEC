@@ -2,6 +2,17 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-08-21]
+- Balances - Added exchange-neutral daily balance snapshots for the active Binance, Kraken, OKX Production, or OKX Demo identity, with transient read retries and USD/BTC valuation through direct, inverse, or BTC-bridged spot markets.
+- Balances - Isolated snapshot persistence by an explicitly captured `Exchange_Id`, preventing a concurrent active-exchange change from attributing balances to the wrong exchange while preserving atomic daily replacement.
+- Market Phases - Run the read-only balance snapshot for every capable active exchange while allowing public daily analysis to continue when credentials or the private balance API are unavailable.
+- Balances Dashboard - Show the active exchange, latest successful snapshot date, and a warning when balance history is stale.
+- Kraken Order Confirmation - Persist successful `AddOrder` acknowledgements as pending and query the returned txid after 1, 2 and 4 seconds without ever retrying submission; unresolved intents fall back to the compatibility-named one-minute reconciler.
+- Kraken Reconciliation - Skip private API construction when no intents exist, resolve by txid before client-id history scans, preserve duplicate protection as a non-fatal structured skip, and retain idempotent partial-fill processing.
+- Scheduler - Rename the compatibility-named `orders_reconcile_15m` job to the cadence-neutral `orders_reconcile`, automatically preserving its enabled state and `last_run` while removing obsolete schedule aliases.
+- Kraken Operations - Expand the read-only preflight and dashboard guidance to require balance plus open/closed order-history access while continuing to prohibit withdrawals.
+- Telegram - Separate submitted, executed or Kraken-closed, and confirmed timestamps; include confirmation delay and source, and remove the ambiguous `Reconciliation: persisted` field.
+
 ## [2026-08-20]
 - Trading Settings - Show only OKX Production alongside Binance and Kraken in normal exchange management, automatically validate its credential-free public markets when saving, move the isolated OKX Demo identity into an advanced production-validation workflow, and allow strictly read-only OKX balance checks without changing the current run mode.
 - Trading Settings - Fixed duplicate Streamlit keys when the OKX read-only check appears in both exchange management and diagnostics.

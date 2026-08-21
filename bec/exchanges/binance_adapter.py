@@ -117,6 +117,7 @@ class BinanceAdapter(ExchangeAdapter):
     code = "binance"
     name = "Binance"
     capabilities = ExchangeCapabilities(
+        supports_private_balance_reads=True,
         supports_backtesting=True,
         supports_live_trading=True,
         requires_explicit_live_flags=False,
