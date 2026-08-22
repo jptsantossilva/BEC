@@ -21,6 +21,11 @@ These settings affect future backtest runs and the approval status used by tradi
 
 BEC runs strategy tests against historical OHLCV candles for each selected symbol, timeframe, and strategy.
 
+Unless **Use full history** is enabled, the configured timeframe lookback and
+warm-up candles determine the requested range. Full-history runs start from the
+exchange's available market history; for OKX, BEC automatically clamps the
+request to the instrument listing time and paginates all available candles.
+
 The backtest uses the current settings for:
 
 - starting cash and commission;

@@ -1070,14 +1070,17 @@ def get_data(symbol, timeframe):
         "symbol": symbol,
         "interval": timeframe,
     }
-    if start_date is not None:
-        kwargs["start_date"] = start_date
+    # Keep the legacy Binance full-history baseline explicit so CCXT adapters
+    # paginate from the same point (and may clamp it to the market listing time).
+    kwargs["start_date"] = start_date if start_date is not None else "1 Jan, 2010"
 
     df = binance.get_ohlcv(**kwargs)
 
     if df.empty:
-        msg = f"Failed after max tries to get historical data for {symbol} ({timeframe}). "
-        msg = msg + sys._getframe().f_code.co_name + " - " + symbol
+        msg = (
+            f"No closed historical candles are available for {symbol} "
+            f"({timeframe}); the backtest was skipped."
+        )
         msg = telegram.telegram_prefix_market_phases_sl + msg
         print(msg)
 

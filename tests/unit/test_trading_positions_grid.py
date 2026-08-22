@@ -241,7 +241,7 @@ def test_standard_exchange_rows_hide_the_internal_okx_validation_identity():
 def test_okx_read_only_buttons_use_location_scoped_streamlit_keys(monkeypatch):
     keys = []
     exchanges = pd.DataFrame(
-        [{"Code": "okx", "Name": "OKX (Production)"}]
+        [{"Code": "okx", "Name": "OKX"}]
     )
     monkeypatch.setattr(trading.st, "caption", lambda message: None)
     monkeypatch.setattr(
@@ -549,6 +549,7 @@ def test_spot_market_diagnostics_loads_selected_public_adapter(monkeypatch):
 
 def test_spot_market_diagnostics_button_renders_loaded_grid(monkeypatch):
     rendered = []
+    successes = []
     grid = pd.DataFrame(
         [
             {
@@ -561,7 +562,11 @@ def test_spot_market_diagnostics_button_renders_loaded_grid(monkeypatch):
     )
     monkeypatch.setattr(trading.st, "session_state", {})
     monkeypatch.setattr(trading.st, "caption", lambda message: None)
-    monkeypatch.setattr(trading.st, "button", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        trading.st,
+        "button",
+        lambda *args, **kwargs: kwargs["on_click"](*kwargs["args"]),
+    )
     monkeypatch.setattr(
         trading.st,
         "spinner",
@@ -571,6 +576,11 @@ def test_spot_market_diagnostics_button_renders_loaded_grid(monkeypatch):
         trading.st,
         "dataframe",
         lambda frame, **kwargs: rendered.append((frame, kwargs)),
+    )
+    monkeypatch.setattr(
+        trading.st,
+        "success",
+        lambda message: successes.append(message),
     )
     monkeypatch.setattr(trading.st, "toggle", lambda *args, **kwargs: False)
     monkeypatch.setattr(
@@ -589,6 +599,132 @@ def test_spot_market_diagnostics_button_renders_loaded_grid(monkeypatch):
     )
 
     assert rendered == [(grid, {"hide_index": True, "width": "content"})]
+    assert successes == [
+        "Loaded 47 direct Kraken spot markets supported by BEC "
+        "(1 active/online)."
+    ]
+
+
+def test_spot_market_diagnostics_button_identity_survives_exchange_switch(
+    monkeypatch,
+):
+    buttons = []
+    monkeypatch.setattr(trading.st, "session_state", {})
+    monkeypatch.setattr(trading.st, "caption", lambda message: None)
+    monkeypatch.setattr(
+        trading.st,
+        "button",
+        lambda *args, **kwargs: buttons.append(kwargs),
+    )
+
+    trading._render_spot_market_diagnostics(
+        {"code": "kraken", "name": "Kraken"}
+    )
+    trading._render_spot_market_diagnostics(
+        {"code": "okx", "name": "OKX"}
+    )
+
+    assert [button["key"] for button in buttons] == [
+        "check_active_spot_markets",
+        "check_active_spot_markets",
+    ]
+    assert [button["args"] for button in buttons] == [("kraken",), ("okx",)]
+
+
+def test_spot_market_diagnostics_error_feedback_survives_rerun(monkeypatch):
+    errors = []
+    session_state = {
+        "spot_market_diagnostics_okx": pd.DataFrame([{"stale": True}]),
+    }
+    monkeypatch.setattr(trading.st, "session_state", session_state)
+    monkeypatch.setattr(trading.st, "caption", lambda message: None)
+    monkeypatch.setattr(
+        trading.st,
+        "button",
+        lambda *args, **kwargs: kwargs["on_click"](*kwargs["args"]),
+    )
+    monkeypatch.setattr(
+        trading.st,
+        "spinner",
+        lambda *args, **kwargs: nullcontext(),
+    )
+    monkeypatch.setattr(trading.st, "error", lambda message: errors.append(message))
+    monkeypatch.setattr(
+        trading,
+        "_load_spot_market_diagnostics",
+        lambda active_exchange: (_ for _ in ()).throw(RuntimeError("private detail")),
+    )
+
+    trading._render_spot_market_diagnostics({"code": "okx", "name": "OKX"})
+    monkeypatch.setattr(trading.st, "button", lambda *args, **kwargs: False)
+    trading._render_spot_market_diagnostics({"code": "okx", "name": "OKX"})
+
+    assert "spot_market_diagnostics_okx" not in session_state
+    assert session_state["spot_market_diagnostics_feedback_okx"] == (
+        "error",
+        "OKX spot market diagnostics are unavailable. Review the operational "
+        "log and try again.",
+    )
+    assert errors == [
+        "OKX spot market diagnostics are unavailable. Review the operational "
+        "log and try again.",
+        "OKX spot market diagnostics are unavailable. Review the operational "
+        "log and try again.",
+    ]
+
+
+def test_spot_market_diagnostics_request_survives_interrupted_run(monkeypatch):
+    class SimulatedRerun(BaseException):
+        pass
+
+    session_state = {}
+    should_interrupt = True
+    summary = pd.DataFrame(
+        [
+            {
+                "Trade against": "USDC",
+                "Spot markets": 1,
+                "Active/online used by BEC": 1,
+                "Not normally tradable": "None",
+            }
+        ]
+    )
+
+    def button(*args, **kwargs):
+        nonlocal should_interrupt
+        if should_interrupt:
+            kwargs["on_click"](*kwargs["args"])
+
+    def load(active_exchange):
+        nonlocal should_interrupt
+        if should_interrupt:
+            should_interrupt = False
+            raise SimulatedRerun()
+        return {"summary": summary, "active_pairs": pd.DataFrame()}
+
+    monkeypatch.setattr(trading.st, "session_state", session_state)
+    monkeypatch.setattr(trading.st, "caption", lambda message: None)
+    monkeypatch.setattr(trading.st, "button", button)
+    monkeypatch.setattr(
+        trading.st,
+        "spinner",
+        lambda *args, **kwargs: nullcontext(),
+    )
+    monkeypatch.setattr(trading.st, "success", lambda message: None)
+    monkeypatch.setattr(trading.st, "dataframe", lambda *args, **kwargs: None)
+    monkeypatch.setattr(trading, "_load_spot_market_diagnostics", load)
+
+    with pytest.raises(SimulatedRerun):
+        trading._render_spot_market_diagnostics(
+            {"code": "okx", "name": "OKX"}
+        )
+
+    assert session_state[trading.SPOT_MARKET_DIAGNOSTICS_REQUEST_KEY] == "okx"
+
+    trading._render_spot_market_diagnostics({"code": "okx", "name": "OKX"})
+
+    assert trading.SPOT_MARKET_DIAGNOSTICS_REQUEST_KEY not in session_state
+    assert session_state["spot_market_diagnostics_okx"]["summary"].equals(summary)
 
 
 def test_spot_market_diagnostics_pair_list_is_rendered_only_when_requested(
@@ -626,7 +762,7 @@ def test_spot_market_diagnostics_pair_list_is_rendered_only_when_requested(
     )
 
     trading._render_spot_market_diagnostics(
-        {"code": "okx", "name": "OKX (Production)"}
+        {"code": "okx", "name": "OKX"}
     )
 
     assert rendered == [

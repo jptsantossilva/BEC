@@ -7,12 +7,24 @@ use the canonical adapter contract.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
 from bec.exchanges import binance as _legacy_binance
 from bec.exchanges.base import ExchangeAdapter, OrderRequest
 from bec.exchanges.registry import get_default_adapter, set_default_adapter
+
+
+_TIMEFRAME_SECONDS = {
+    "1m": 60,
+    "15m": 15 * 60,
+    "30m": 30 * 60,
+    "1h": 60 * 60,
+    "4h": 4 * 60 * 60,
+    "1d": 24 * 60 * 60,
+    "1w": 7 * 24 * 60 * 60,
+}
 
 
 def get_adapter() -> ExchangeAdapter:
@@ -142,6 +154,46 @@ def get_ohlcv(symbol: str, interval: str, *args: Any, **kwargs: Any):
     return get_adapter().fetch_ohlcv(symbol, interval, **kwargs)
 
 
+def get_recent_ohlcv(
+    symbol: str,
+    interval: str,
+    *,
+    required_closed_candles: int,
+    now_utc: datetime | None = None,
+    **kwargs: Any,
+):
+    """Return at most the latest requested number of fully closed candles."""
+    count = int(required_closed_candles)
+    if count <= 0:
+        raise ValueError("required_closed_candles must be greater than zero")
+    timeframe_seconds = _TIMEFRAME_SECONDS.get(str(interval))
+    if timeframe_seconds is None:
+        raise ValueError(f"Unsupported recent OHLCV interval: {interval}")
+    if "start_date" in kwargs or "since" in kwargs or "end_date" in kwargs:
+        raise TypeError(
+            "Recent OHLCV requests cannot include start_date, since, or end_date"
+        )
+
+    now = now_utc or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    else:
+        now = now.astimezone(timezone.utc)
+    # Two additional intervals absorb boundary alignment and the in-progress bar.
+    start_date = now - timedelta(seconds=timeframe_seconds * (count + 2))
+    kwargs["drop_incomplete"] = True
+    frame = get_ohlcv(
+        symbol=symbol,
+        interval=interval,
+        start_date=start_date,
+        end_date=now,
+        **kwargs,
+    )
+    if frame.empty or len(frame) <= count:
+        return frame
+    return frame.tail(count).copy()
+
+
 def get_close_df(symbol: str, interval: str, *args: Any, **kwargs: Any):
     price_col = str(kwargs.pop("price_col", "Close"))
     include_symbol = bool(kwargs.get("include_symbol", False))
@@ -149,6 +201,38 @@ def get_close_df(symbol: str, interval: str, *args: Any, **kwargs: Any):
     kwargs.setdefault("drop_incomplete", True)
     kwargs.setdefault("keep_time_col", False)
     frame = get_ohlcv(symbol, interval, *args, **kwargs)
+    if frame.empty:
+        return frame
+    columns = []
+    if keep_time_col and "Time" in frame.columns:
+        columns.append("Time")
+    if include_symbol and "Symbol" in frame.columns:
+        columns.append("Symbol")
+    columns.append("Close")
+    result = frame[columns].copy()
+    if price_col != "Close":
+        result = result.rename(columns={"Close": price_col})
+    return result
+
+
+def get_recent_close_df(
+    symbol: str,
+    interval: str,
+    *,
+    required_closed_candles: int,
+    **kwargs: Any,
+):
+    """Return the latest closed-candle price frame for indicator consumers."""
+    price_col = str(kwargs.pop("price_col", "Close"))
+    include_symbol = bool(kwargs.get("include_symbol", False))
+    keep_time_col = bool(kwargs.get("keep_time_col", False))
+    kwargs.setdefault("keep_time_col", False)
+    frame = get_recent_ohlcv(
+        symbol,
+        interval,
+        required_closed_candles=required_closed_candles,
+        **kwargs,
+    )
     if frame.empty:
         return frame
     columns = []

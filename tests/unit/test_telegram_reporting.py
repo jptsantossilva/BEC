@@ -66,12 +66,13 @@ def test_main_get_data_accepts_weekly_timeframe(monkeypatch):
         calls.append(kwargs)
         return _market_data(rows=3)
 
-    monkeypatch.setattr(main.binance, "get_ohlcv", fake_get_ohlcv)
+    monkeypatch.setattr(main.binance, "get_recent_ohlcv", fake_get_ohlcv)
 
     df = main.get_data("BTCUSDC", "1w")
 
     assert not df.empty
     assert calls[0]["interval"] == "1w"
+    assert calls[0]["required_closed_candles"] == main.MIN_LIVE_CLOSED_CANDLES
 
 
 def test_backtesting_get_data_uses_configured_limited_start_date(monkeypatch):
@@ -99,7 +100,7 @@ def test_backtesting_get_data_uses_configured_limited_start_date(monkeypatch):
     assert calls[0]["start_date"] == start_date
 
 
-def test_backtesting_full_history_omits_start_date(monkeypatch):
+def test_backtesting_full_history_uses_explicit_legacy_baseline(monkeypatch):
     import bec.my_backtesting as my_backtesting
 
     calls = []
@@ -118,7 +119,110 @@ def test_backtesting_full_history_omits_start_date(monkeypatch):
     df = my_backtesting.get_data("JSTBTC", "1h")
 
     assert not df.empty
-    assert "start_date" not in calls[0]
+    assert calls[0]["start_date"] == "1 Jan, 2010"
+
+
+def test_trade_cycle_market_data_caches_one_fetch_per_market(monkeypatch):
+    calls = []
+
+    def fake_get_data(symbol, timeframe, required_closed_candles):
+        calls.append((symbol, timeframe, required_closed_candles))
+        return _market_data(rows=required_closed_candles)
+
+    monkeypatch.setattr(main, "get_data", fake_get_data)
+    market_data = main._TradeCycleMarketData({("AAAUSDC", "1h"): 201})
+
+    first = market_data.load("AAAUSDC", "1h")
+    second = market_data.load("aaausdc", "1h")
+
+    assert len(first) == len(second) == 201
+    assert calls == [("AAAUSDC", "1h", 201)]
+
+
+def test_trade_cycle_market_data_aggregates_insufficient_history_once(monkeypatch):
+    sent = []
+    monkeypatch.setattr(
+        main,
+        "get_data",
+        lambda symbol, timeframe, required_closed_candles: _market_data(rows=200),
+    )
+    monkeypatch.setattr(
+        main.telegram,
+        "send_error_event",
+        lambda **kwargs: sent.append(kwargs),
+    )
+    market_data = main._TradeCycleMarketData({("AAAUSDC", "1h"): 201})
+
+    assert market_data.load("AAAUSDC", "1h").empty
+    assert market_data.load("AAAUSDC", "1h").empty
+    market_data.send_failure_summary("1h")
+
+    assert len(sent) == 1
+    assert "AAAUSDC (1h) 200/201 candles" in sent[0]["reason"]
+    assert "before any buy or sell order decision" in sent[0]["impact"]
+
+
+def test_trade_skips_all_order_decisions_when_history_is_insufficient(monkeypatch):
+    definition = get_builtin_template("market_phases")
+    sell_rows = pd.DataFrame(
+        [
+            {
+                "Id": 1,
+                "Symbol": "AAAUSDC",
+                "Strategy_Id": "market_phases",
+                "Strategy_Name": "Market Phases",
+            }
+        ]
+    )
+    order_calls = []
+    errors = []
+    context = {
+        "definition": definition,
+        "declarative": True,
+        "parameters": {"sma_fast": 50, "sma_slow": 200},
+        "order_first": 50,
+        "order_second": 200,
+        "setup": "50/200",
+    }
+
+    monkeypatch.setattr(main.database, "delete_positions_not_top_rank", lambda: None)
+    monkeypatch.setattr(
+        main.database,
+        "get_positions_by_bot_position",
+        lambda bot, position: sell_rows if position == 1 else pd.DataFrame(),
+    )
+    monkeypatch.setattr(
+        main.database, "is_trade_main_timeframe_enabled", lambda timeframe: False
+    )
+    monkeypatch.setattr(main, "get_strategy_runtime_context", lambda *args, **kwargs: context)
+    monkeypatch.setattr(
+        main,
+        "get_runtime_risk_settings",
+        lambda *args, **kwargs: {
+            "atr_trailing_enabled": False,
+            "atr_period": 14,
+        },
+    )
+    monkeypatch.setattr(
+        main,
+        "get_data",
+        lambda symbol, timeframe, required_closed_candles: _market_data(rows=200),
+    )
+    monkeypatch.setattr(
+        main.binance,
+        "create_sell_order",
+        lambda *args, **kwargs: order_calls.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        main.telegram, "send_error_event", lambda **kwargs: errors.append(kwargs)
+    )
+
+    summary = main.trade("1h", "prod", settings=_settings(), send_summary=False)
+
+    assert summary["empty_data"] == 1
+    assert summary["sell_actions"] == 0
+    assert order_calls == []
+    assert len(errors) == 1
 
 
 def test_manual_backtest_propagates_transient_market_failure_without_telegram_spam(
@@ -493,7 +597,9 @@ def test_trade_summary_replaces_condition_not_fulfilled_telegram_spam(monkeypatc
             "take_profits": [],
         },
     )
-    monkeypatch.setattr(main, "get_data", lambda symbol, timeframe: _market_data())
+    monkeypatch.setattr(
+        main, "get_data", lambda symbol, timeframe, **kwargs: _market_data()
+    )
     monkeypatch.setattr(main.telegram, "send_telegram_message", lambda *args, **kwargs: sent.append(args))
 
     main.telegram_prefix_sl = "1h "
@@ -558,7 +664,9 @@ def test_trade_cycle_survives_declarative_hma_routine_logs(monkeypatch):
             "take_profits": [],
         },
     )
-    monkeypatch.setattr(main, "get_data", lambda symbol, timeframe: _market_data())
+    monkeypatch.setattr(
+        main, "get_data", lambda symbol, timeframe, **kwargs: _market_data()
+    )
     monkeypatch.setattr(main.telegram, "send_telegram_message", lambda *args, **kwargs: sent.append(args))
 
     settings = _settings(routine_mode="detailed")
@@ -599,7 +707,9 @@ def test_trade_calls_exchange_adapter_even_in_test_mode(monkeypatch):
     )
     monkeypatch.setattr(main, "get_current_pnl", lambda *args, **kwargs: 0.0)
     monkeypatch.setattr(main, "get_runtime_risk_settings", lambda *args, **kwargs: {"atr_trailing_enabled": False, "atr_period": 14, "atr_multiplier": 1.8, "atr_activation_pnl": 2.0, "stop_loss": 0.0, "take_profit_enabled": False, "take_profits": []})
-    monkeypatch.setattr(main, "get_data", lambda symbol, timeframe: _market_data())
+    monkeypatch.setattr(
+        main, "get_data", lambda symbol, timeframe, **kwargs: _market_data()
+    )
     monkeypatch.setattr(main, "get_strategy_sell_condition", lambda *args, **kwargs: True)
     monkeypatch.setattr(main, "get_strategy_buy_condition", lambda *args, **kwargs: (True, "Entry: True"))
     monkeypatch.setattr(main.binance, "create_sell_order", lambda *args, **kwargs: order_calls.append(("sell", args, kwargs)))
@@ -641,7 +751,9 @@ def test_trade_prod_mode_calls_exchange_orders(monkeypatch):
     )
     monkeypatch.setattr(main, "get_current_pnl", lambda *args, **kwargs: 0.0)
     monkeypatch.setattr(main, "get_runtime_risk_settings", lambda *args, **kwargs: {"atr_trailing_enabled": False, "atr_period": 14, "atr_multiplier": 1.8, "atr_activation_pnl": 2.0, "stop_loss": 0.0, "take_profit_enabled": False, "take_profits": []})
-    monkeypatch.setattr(main, "get_data", lambda symbol, timeframe: _market_data())
+    monkeypatch.setattr(
+        main, "get_data", lambda symbol, timeframe, **kwargs: _market_data()
+    )
     monkeypatch.setattr(main, "get_strategy_sell_condition", lambda *args, **kwargs: True)
     monkeypatch.setattr(main, "get_strategy_buy_condition", lambda *args, **kwargs: (True, "Entry: True"))
     monkeypatch.setattr(main.binance, "create_sell_order", lambda *args, **kwargs: order_calls.append(("sell", args, kwargs)))
@@ -1992,7 +2104,7 @@ def test_market_phase_empty_data_is_skipped_without_error_notification(monkeypat
 
     monkeypatch.setattr(
         market_phase.exchange_service,
-        "get_close_df",
+        "get_recent_close_df",
         lambda **kwargs: pd.DataFrame(),
     )
     monkeypatch.setattr(market_phase.telegram, "send_error_event", lambda **kwargs: errors.append(kwargs))
@@ -2025,7 +2137,7 @@ def test_market_phase_skips_symbols_without_enough_closed_candles(monkeypatch):
 
     monkeypatch.setattr(
         market_phase.exchange_service,
-        "get_close_df",
+        "get_recent_close_df",
         lambda **kwargs: short_history,
     )
     monkeypatch.setattr(market_phase.telegram, "send_error_event", lambda **kwargs: errors.append(kwargs))
@@ -2048,23 +2160,19 @@ def test_market_phase_uses_configured_candle_lookback(monkeypatch):
         },
         index=pd.date_range("2026-01-01", periods=220, freq="d"),
     )
-    now_utc = datetime(2026, 6, 7, tzinfo=timezone.utc)
-
     def fake_get_close_df(**kwargs):
         calls.append(kwargs)
         return history
 
     monkeypatch.setattr(
-        market_phase,
-        "_market_phase_start_date",
-        lambda timeframe: now_utc - timedelta(days=market_phase.MARKET_PHASE_LOOKBACK_CANDLES),
+        market_phase.exchange_service, "get_recent_close_df", fake_get_close_df
     )
-    monkeypatch.setattr(market_phase.exchange_service, "get_close_df", fake_get_close_df)
 
     result = market_phase.set_market_phases_to_symbols(["AAAUSDC"], "1d")
 
-    assert calls[0]["start_date"] == now_utc - timedelta(
-        days=market_phase.MARKET_PHASE_LOOKBACK_CANDLES
+    assert (
+        calls[0]["required_closed_candles"]
+        == market_phase.MARKET_PHASE_LOOKBACK_CANDLES
     )
     assert result.iloc[0]["Symbol"] == "AAAUSDC"
     assert result.iloc[0]["Market_Phase"] == "bullish"

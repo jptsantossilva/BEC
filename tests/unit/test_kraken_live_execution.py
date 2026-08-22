@@ -218,7 +218,7 @@ def test_okx_production_runtime_gates_each_block_submission(
 ):
     exchange = _exchange(
         code="okx",
-        name="OKX (Production)",
+        name="OKX",
         execution_environment="production",
         adapter_id="myokx",
         quote_asset="USDC",
@@ -258,7 +258,7 @@ def test_okx_production_runtime_gates_each_block_submission(
 def test_okx_production_private_balance_preflight_is_required(monkeypatch):
     exchange = _exchange(
         code="okx",
-        name="OKX (Production)",
+        name="OKX",
         execution_environment="production",
         adapter_id="myokx",
         quote_asset="USDC",

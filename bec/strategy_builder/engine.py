@@ -278,6 +278,202 @@ def _indicator_params(operand: dict, parameters: dict) -> dict:
     return params
 
 
+def _merge_history_requirements(*requirements: dict[str, int]) -> dict[str, int]:
+    merged: dict[str, int] = {}
+    for requirement in requirements:
+        for timeframe, candles in requirement.items():
+            merged[timeframe] = max(merged.get(timeframe, 0), int(candles))
+    return merged
+
+
+def _offset_history_requirements(
+    requirements: dict[str, int], extra_candles: int
+) -> dict[str, int]:
+    extra = max(int(extra_candles), 0)
+    return {
+        timeframe: max(int(candles), 1) + extra
+        for timeframe, candles in requirements.items()
+    }
+
+
+def _indicator_history_candles(operand: dict, parameters: dict) -> int:
+    name = registry.normalize_indicator_name(operand.get("name", ""))
+    params = _indicator_params(operand, parameters)
+    period = max(int(float(params.get("period", 1) or 1)), 1)
+    if name == "HMA":
+        return period + max(int(np.sqrt(period)), 1) - 1
+    if name == "MACD":
+        slow = max(int(float(params.get("slow", 26) or 26)), 1)
+        signal = max(int(float(params.get("signal", 9) or 9)), 1)
+        return slow + signal - 1
+    if name == "STOCH":
+        k = max(int(float(params.get("k", 14) or 14)), 1)
+        smooth = max(int(float(params.get("smooth", 3) or 3)), 1)
+        d = max(int(float(params.get("d", 3) or 3)), 1)
+        return k + smooth + d - 2
+    if name == "OBV":
+        return 2
+    return period
+
+
+def _operand_history_requirements(
+    operand: dict,
+    parameters: dict,
+    base_timeframe: str,
+) -> dict[str, int]:
+    if not isinstance(operand, dict):
+        return {}
+    operand_type = operand.get("type")
+    if operand_type in {"price", "indicator"}:
+        timeframe = _normalize_timeframe(
+            operand.get("timeframe", "current"), base_timeframe
+        )
+        candles = (
+            _indicator_history_candles(operand, parameters)
+            if operand_type == "indicator"
+            else 1
+        )
+        source = operand.get("source")
+        source_requirement = (
+            _operand_history_requirements(source, parameters, base_timeframe)
+            if isinstance(source, dict)
+            else {}
+        )
+        return _merge_history_requirements(
+            {timeframe: candles}, source_requirement
+        )
+    if operand_type == "transform":
+        source_requirement = _operand_history_requirements(
+            operand.get("source", {}), parameters, base_timeframe
+        )
+        bars = max(
+            int(float(operand.get("bars", operand.get("period", 1)) or 1)),
+            1,
+        )
+        extra = bars if operand.get("operator") == "lookback" else bars - 1
+        return _offset_history_requirements(source_requirement, extra)
+    return {}
+
+
+def _condition_history_requirements(
+    condition: dict,
+    parameters: dict,
+    base_timeframe: str,
+) -> dict[str, int]:
+    if not isinstance(condition, dict):
+        return {}
+    condition_type = condition.get("type")
+    if condition_type is None and isinstance(condition.get("conditions"), list):
+        condition_type = "group"
+    condition_type = condition_type or "comparison"
+    if condition_type == "group":
+        return _merge_history_requirements(
+            *(
+                _condition_history_requirements(item, parameters, base_timeframe)
+                for item in condition.get("conditions", [])
+            )
+        )
+    if condition_type == "window_condition":
+        if condition.get("operator") == "wait_n_bars":
+            return {base_timeframe: 1}
+        nested = _condition_history_requirements(
+            condition.get("condition", {}), parameters, base_timeframe
+        )
+        bars = max(int(float(condition.get("bars", 1) or 1)), 1)
+        return _offset_history_requirements(nested, bars - 1)
+
+    operands = [condition.get("left")]
+    if condition.get("operator") == "between":
+        lower = condition.get("lower")
+        upper = condition.get("upper")
+        if lower is None or upper is None:
+            right = condition.get("right", [])
+            if isinstance(right, list) and len(right) == 2:
+                lower, upper = right
+        operands.extend([lower, upper])
+    else:
+        operands.append(condition.get("right"))
+    requirements = _merge_history_requirements(
+        *(
+            _operand_history_requirements(operand, parameters, base_timeframe)
+            for operand in operands
+        )
+    )
+    if condition.get("operator") in {"crosses_above", "crosses_below"}:
+        requirements = _offset_history_requirements(requirements, 1)
+    return requirements
+
+
+def required_closed_candles_by_timeframe(
+    definition: dict,
+    parameters: dict | None,
+    base_timeframe: str,
+    risk_settings: dict | None = None,
+) -> dict[str, int]:
+    """Return the closed-candle warm-up required for one strategy evaluation."""
+    definition = schema.validate_definition(definition)
+    resolved_parameters = resolve_parameters(definition, parameters)
+    normalized_base = _normalize_timeframe(base_timeframe)
+    requirements = _merge_history_requirements(
+        _condition_history_requirements(
+            definition.get("entry", {}), resolved_parameters, normalized_base
+        ),
+        _condition_history_requirements(
+            definition.get("exit", {}), resolved_parameters, normalized_base
+        ),
+    )
+
+    state_entry = definition.get("state", {}).get("entry", {})
+    if isinstance(state_entry, dict):
+        requirements = _merge_history_requirements(
+            requirements,
+            *(
+                _operand_history_requirements(
+                    operand, resolved_parameters, normalized_base
+                )
+                for operand in state_entry.values()
+            ),
+        )
+
+    for rule in definition.get("risk", {}).get("rules", []):
+        condition = rule.get("condition") if isinstance(rule, dict) else None
+        if isinstance(condition, dict):
+            requirements = _merge_history_requirements(
+                requirements,
+                _condition_history_requirements(
+                    condition, resolved_parameters, normalized_base
+                ),
+            )
+        indicator = rule.get("indicator") if isinstance(rule, dict) else None
+        if isinstance(indicator, dict):
+            requirements = _merge_history_requirements(
+                requirements,
+                _operand_history_requirements(
+                    indicator, resolved_parameters, normalized_base
+                ),
+            )
+
+    risk_settings = risk_settings or {}
+    atr = risk_settings.get("atr_trailing", risk_settings)
+    if "atr_trailing_enabled" in risk_settings:
+        atr = {
+            "enabled": risk_settings.get("atr_trailing_enabled"),
+            "period": risk_settings.get("atr_period", 14),
+        }
+    if isinstance(atr, dict) and bool(atr.get("enabled", False)):
+        requirements[normalized_base] = max(
+            requirements.get(normalized_base, 0),
+            max(int(atr.get("period", 14) or 14), 1),
+        )
+
+    # Higher-timeframe series are shifted by one closed candle to avoid lookahead.
+    for timeframe in tuple(requirements):
+        if timeframe != normalized_base:
+            requirements[timeframe] += 1
+    requirements.setdefault(normalized_base, 1)
+    return requirements
+
+
 def _compute_indicator(df: pd.DataFrame, operand: dict, parameters: dict):
     name = registry.normalize_indicator_name(operand.get("name", ""))
     params = _indicator_params(operand, parameters)

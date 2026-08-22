@@ -33,7 +33,9 @@ from bec.db.order_fills_schema import (
     validate_durable_order_fills_schema,
 )
 from bec.db.okx_configuration_schema import (
+    apply_okx_display_name,
     apply_okx_configuration_schema,
+    validate_okx_display_name,
     validate_okx_configuration_schema,
 )
 from bec.db.okx_demo_execution_schema import (
@@ -94,6 +96,10 @@ def _okx_demo_execution(connection: sqlite3.Connection) -> None:
 
 def _repair_backtesting_exchange_context(connection: sqlite3.Connection) -> None:
     apply_backtesting_context_schema(connection)
+
+
+def _okx_display_name(connection: sqlite3.Connection) -> None:
+    apply_okx_display_name(connection)
 
 
 MIGRATIONS = (
@@ -183,5 +189,13 @@ MIGRATIONS = (
         apply=_repair_backtesting_exchange_context,
         validate=validate_backtesting_context_schema,
         signature="bec-repair-backtesting-exchange-context-v1",
+    ),
+    Migration(
+        version=12,
+        name="okx_display_name",
+        kind=MigrationKind.ADDITIVE,
+        apply=_okx_display_name,
+        validate=validate_okx_display_name,
+        signature="bec-okx-display-name-v1",
     ),
 )

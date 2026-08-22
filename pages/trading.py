@@ -41,6 +41,7 @@ TRADING_ACTIVE_TAB_WIDGET_KEY = "_trading_active_tab_widget"
 ACTIVE_EXCHANGE_SELECTOR_KEY = "active_exchange_selector"
 ACTIVE_EXCHANGE_SELECTOR_CONTEXT_KEY = "_active_exchange_selector_current"
 MAIN_STRATEGIES_WIDGET_KEY = "_main_strategies_widget"
+SPOT_MARKET_DIAGNOSTICS_REQUEST_KEY = "_active_spot_market_diagnostics_request"
 POSITIONS_DISPLAY_COLUMNS = [
     "Symbol",
     "PnL_Perc",
@@ -1519,35 +1520,69 @@ def _load_spot_market_diagnostics(active_exchange: dict) -> dict[str, pd.DataFra
     }
 
 
+def _request_spot_market_diagnostics(code: str) -> None:
+    """Queue a check for the currently rendered exchange across the widget rerun."""
+    st.session_state[SPOT_MARKET_DIAGNOSTICS_REQUEST_KEY] = str(code)
+
+
 def _render_spot_market_diagnostics(active_exchange: dict) -> None:
     """Render the public spot-market availability check and latest result."""
     code = str(active_exchange["code"])
     name = str(active_exchange.get("name") or code.upper())
     state_key = f"spot_market_diagnostics_{code}"
+    feedback_key = f"spot_market_diagnostics_feedback_{code}"
     st.caption(
         "This public, read-only check lists direct spot markets. It does not "
         "use credentials, balances, conversions, or submit orders."
     )
-    if st.button(
+
+    st.button(
         f"Check {name} Spot Markets",
         icon=":material/table_view:",
-        key=f"check_spot_markets_{code}",
-    ):
+        key="check_active_spot_markets",
+        on_click=_request_spot_market_diagnostics,
+        args=(code,),
+    )
+    requested_code = st.session_state.get(SPOT_MARKET_DIAGNOSTICS_REQUEST_KEY)
+    if requested_code == code:
         try:
             with st.spinner(f"Loading {name} spot markets..."):
-                st.session_state[state_key] = _load_spot_market_diagnostics(
+                result = _load_spot_market_diagnostics(
                     active_exchange
+                )
+                st.session_state[state_key] = result
+                summary = result["summary"]
+                active_pairs = result["active_pairs"]
+                loaded_markets = int(summary["Spot markets"].sum())
+                st.session_state[feedback_key] = (
+                    "success",
+                    f"Loaded {loaded_markets} direct {name} spot markets "
+                    f"supported by BEC ({len(active_pairs)} active/online).",
+                )
+                st.session_state.pop(
+                    SPOT_MARKET_DIAGNOSTICS_REQUEST_KEY, None
                 )
         except Exception as exc:
             st.session_state.pop(state_key, None)
+            st.session_state[feedback_key] = (
+                "error",
+                f"{name} spot market diagnostics are unavailable. "
+                "Review the operational log and try again.",
+            )
+            st.session_state.pop(
+                SPOT_MARKET_DIAGNOSTICS_REQUEST_KEY, None
+            )
             print(
                 database.exchange_log_prefix(),
                 f"Spot market diagnostics failed ({type(exc).__name__})",
             )
-            st.error(
-                f"{name} spot market diagnostics are unavailable. "
-                "Review the operational log and try again."
-            )
+
+    feedback = st.session_state.get(feedback_key)
+    if isinstance(feedback, tuple) and len(feedback) == 2:
+        level, message = feedback
+        (st.success if level == "success" else st.error)(message)
+    elif state_key not in st.session_state:
+        st.caption("No spot-market diagnostic has been run in this browser session.")
 
     result = st.session_state.get(state_key)
     if isinstance(result, pd.DataFrame):

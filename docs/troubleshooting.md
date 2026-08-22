@@ -15,6 +15,12 @@ docker compose logs -f jobs_runner
 
 Use `dashboard` logs for UI errors and `jobs_runner` logs for scheduled jobs, backtests, and Monte Carlo jobs.
 
+Live OHLCV warnings are grouped once per trading cycle. An insufficient-history
+warning means the market does not yet have enough closed candles for the active
+strategy; a transient public-data warning means the exchange remained
+unavailable after safe retries. In both cases, BEC skips the affected symbols
+before making an order decision.
+
 ## Missing Credentials
 
 If Binance, Telegram, or AI features fail, check `.env`.

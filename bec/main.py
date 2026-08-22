@@ -8,8 +8,8 @@ from datetime import date, datetime, timezone
 
 import numpy as np
 import pandas as pd
+import ccxt
 from backtesting.lib import crossover
-from dateutil.relativedelta import relativedelta
 
 import bec.exchanges.service as binance
 import bec.utils.config as config
@@ -17,6 +17,7 @@ import bec.utils.database as database
 import bec.utils.telegram as telegram
 from bec.utils import telegram_reporting
 from bec.strategy_builder import engine as strategy_engine
+from bec.exchanges.ccxt_adapter import TransientPublicMarketDataError
 from bec.utils.risk import get_runtime_risk_settings
 from bec.utils.take_profit import normalize_take_profit_levels, take_profit_enabled
 
@@ -41,6 +42,8 @@ telegram_token = telegram.telegram_token_main
 # sl = single line message; ml = multi line message
 telegram_prefix_sl = ""
 telegram_prefix_ml = ""
+
+MIN_LIVE_CLOSED_CANDLES = 201
 
 # strategy
 # strategy_name = ''
@@ -87,58 +90,147 @@ def apply_arguments(time_frame):
         raise ValueError("Incorrect time frame. Use one of: 15m, 1h, 4h, 1d")
 
 
-def get_data(symbol, timeframe):
-
-    # calc start date from were we need historical data candles
-    # we do this to make sure we get same ema/sma values as those at tradingview
-    # -------------------------------------
-    today = datetime.now(timezone.utc)
-
-    pastdate = None
-    if timeframe == "15m":
-        pastdate = today - relativedelta(minutes=15 * 200 * 8)
-    elif timeframe == "1h":
-        pastdate = today - relativedelta(hours=200 * 8)
-    elif timeframe == "4h":
-        # Use 4x hours to match 4h candles (approx. 1600 bars for 200*8)
-        pastdate = today - relativedelta(hours=4 * 200 * 8)
-    elif timeframe == "1d":
-        pastdate = today - relativedelta(days=200 * 8)
-    elif timeframe == "1w":
-        pastdate = today - relativedelta(weeks=200 * 8)
-    else:
-        raise ValueError(
-            f"Invalid timeframe '{timeframe}'. Expected one of: 15m, 1h, 4h, 1d, 1w."
-        )
-    
-    start_ms = int(pastdate.timestamp() * 1000)
-
-    # Trading uses only fully closed candles; drop the in-progress bar.
-    df = binance.get_ohlcv(
+def get_data(
+    symbol,
+    timeframe,
+    required_closed_candles=MIN_LIVE_CLOSED_CANDLES,
+):
+    """Load the latest closed candles needed for one live evaluation."""
+    df = binance.get_recent_ohlcv(
         symbol=symbol,
         interval=timeframe,
-        start_date=start_ms,
-        drop_incomplete=True,
+        required_closed_candles=int(required_closed_candles),
         keep_time_col=False,
     )
-
     if df.empty:
-        msg = f"Failed after max tries to get historical data for {symbol} ({timeframe}). "
-        msg = msg + sys._getframe().f_code.co_name + " - " + symbol
-        msg = telegram_prefix_sl + msg
+        msg = (
+            f"No closed OHLCV candles returned for {symbol} ({timeframe}); "
+            "the symbol will be skipped."
+        )
         print(msg)
+        return pd.DataFrame()
+    return df
+
+
+class _TradeCycleMarketData:
+    """One-run OHLCV cache and failure collector for fail-closed trading."""
+
+    def __init__(self, requirements: dict[tuple[str, str], int]):
+        self.requirements = dict(requirements)
+        self.cache: dict[tuple[str, str], pd.DataFrame] = {}
+        self.failures: dict[tuple[str, str], dict] = {}
+
+    @staticmethod
+    def _key(symbol: str, timeframe: str) -> tuple[str, str]:
+        return str(symbol).strip().upper(), str(timeframe).strip()
+
+    def _record_failure(
+        self,
+        key: tuple[str, str],
+        *,
+        reason: str,
+        required: int,
+        available: int = 0,
+        error_type: str = "",
+    ) -> None:
+        self.failures.setdefault(
+            key,
+            {
+                "reason": reason,
+                "required": int(required),
+                "available": int(available),
+                "error_type": str(error_type),
+            },
+        )
+
+    def load(self, symbol: str, timeframe: str) -> pd.DataFrame:
+        key = self._key(symbol, timeframe)
+        if key in self.cache:
+            return self.cache[key].copy()
+
+        required = max(
+            int(self.requirements.get(key, MIN_LIVE_CLOSED_CANDLES)),
+            MIN_LIVE_CLOSED_CANDLES,
+        )
+        try:
+            frame = get_data(
+                symbol=key[0],
+                timeframe=key[1],
+                required_closed_candles=required,
+            )
+        except TransientPublicMarketDataError as exc:
+            logging.warning(
+                "Transient OHLCV failure for %s %s: %s",
+                key[0],
+                key[1],
+                type(exc).__name__,
+            )
+            self._record_failure(
+                key,
+                reason="transient public market-data failure after retries",
+                required=required,
+                error_type=type(exc).__name__,
+            )
+            frame = pd.DataFrame()
+        except (ccxt.BadSymbol, ccxt.BadRequest, ValueError) as exc:
+            logging.warning(
+                "Permanent OHLCV request failure for %s %s: %s",
+                key[0],
+                key[1],
+                type(exc).__name__,
+            )
+            self._record_failure(
+                key,
+                reason="public market-data request was rejected",
+                required=required,
+                error_type=type(exc).__name__,
+            )
+            frame = pd.DataFrame()
+
+        if frame.empty and key not in self.failures:
+            self._record_failure(
+                key,
+                reason="exchange returned no closed candles",
+                required=required,
+            )
+        elif not frame.empty and len(frame) < required:
+            self._record_failure(
+                key,
+                reason="insufficient closed-candle history",
+                required=required,
+                available=len(frame),
+            )
+            frame = pd.DataFrame()
+
+        self.cache[key] = frame.copy()
+        return frame.copy()
+
+    def send_failure_summary(self, timeframe: str) -> None:
+        if not self.failures:
+            return
+        grouped: dict[str, list[str]] = {}
+        for (symbol, failed_timeframe), failure in sorted(self.failures.items()):
+            detail = f"{symbol} ({failed_timeframe})"
+            if failure["available"]:
+                detail += (
+                    f" {failure['available']}/{failure['required']} candles"
+                )
+            if failure["error_type"]:
+                detail += f" [{failure['error_type']}]"
+            grouped.setdefault(failure["reason"], []).append(detail)
+        lines = []
+        for reason, markets in grouped.items():
+            shown = markets[:25]
+            suffix = f" (+{len(markets) - 25} more)" if len(markets) > 25 else ""
+            lines.append(f"{reason}: {', '.join(shown)}{suffix}")
         telegram.send_error_event(
-            action="load OHLCV",
-            symbol=symbol,
+            action="load trade-cycle OHLCV",
             timeframe=timeframe,
-            reason="Historical dataframe is empty after retries.",
-            impact="Symbol was skipped in this cycle.",
-            next_step="Check active-exchange OHLCV availability and request logs.",
+            reason="\n".join(lines),
+            impact="Affected symbols were skipped before any buy or sell order decision.",
+            next_step="Review the active-exchange public market-data logs before the next cycle.",
             notify_main=False,
         )
-        return pd.DataFrame()
-
-    return df
 
 
 def calculate_atr(df: pd.DataFrame, period: int) -> float:
@@ -458,7 +550,7 @@ def get_strategy_parameters(strategy_id: str, symbol: str, timeframe: str, pos_r
     return context["order_first"], context["order_second"]
 
 
-def apply_strategy_technicals(df, strategy_id: str, first_value: int = 0, second_value: int = 0, symbol: str = "", timeframe: str = "current", parameters: dict | None = None):
+def apply_strategy_technicals(df, strategy_id: str, first_value: int = 0, second_value: int = 0, symbol: str = "", timeframe: str = "current", parameters: dict | None = None, data_loader=None):
     if strategy_uses_declarative_engine(strategy_id):
         definition = database.get_strategy_definition(strategy_id)
         parameters = parameters or get_strategy_parameter_overrides(strategy_id, first_value, second_value)
@@ -468,7 +560,7 @@ def apply_strategy_technicals(df, strategy_id: str, first_value: int = 0, second
             parameters,
             symbol=symbol,
             base_timeframe=timeframe,
-            data_loader=get_data,
+            data_loader=data_loader or get_data,
         )
         for column in prepared.columns:
             if column not in df.columns:
@@ -477,7 +569,7 @@ def apply_strategy_technicals(df, strategy_id: str, first_value: int = 0, second
     return
 
 
-def get_strategy_sell_condition(strategy_id: str, symbol: str, timeframe: str, df, lastrow, parameters: dict | None = None, pos_row=None):
+def get_strategy_sell_condition(strategy_id: str, symbol: str, timeframe: str, df, lastrow, parameters: dict | None = None, pos_row=None, data_loader=None):
     if strategy_uses_declarative_engine(strategy_id):
         definition = database.get_strategy_definition(strategy_id)
         parameters = parameters or get_strategy_parameter_overrides(strategy_id)
@@ -487,13 +579,13 @@ def get_strategy_sell_condition(strategy_id: str, symbol: str, timeframe: str, d
             parameters,
             symbol=symbol,
             base_timeframe=timeframe,
-            data_loader=get_data,
+            data_loader=data_loader or get_data,
             context={"entry_state": _snapshot_entry_state(pos_row)},
         )
     return False
 
 
-def get_strategy_buy_condition(strategy_id: str, symbol: str, timeframe: str, df, lastrow, parameters: dict | None = None):
+def get_strategy_buy_condition(strategy_id: str, symbol: str, timeframe: str, df, lastrow, parameters: dict | None = None, data_loader=None):
     detail = ""
     if strategy_uses_declarative_engine(strategy_id):
         definition = database.get_strategy_definition(strategy_id)
@@ -504,7 +596,7 @@ def get_strategy_buy_condition(strategy_id: str, symbol: str, timeframe: str, df
             parameters,
             symbol=symbol,
             base_timeframe=timeframe,
-            data_loader=get_data,
+            data_loader=data_loader or get_data,
         )
         return entry_ok, f"Entry: {entry_ok}"
     return False, detail
@@ -551,6 +643,64 @@ def _send_trade_cycle_summary(summary: dict):
     telegram.send_telegram_message(telegram_token, "", msg)
 
 
+def _live_history_requirements(
+    df_sell: pd.DataFrame,
+    df_buy: pd.DataFrame,
+    timeframe: str,
+    settings,
+) -> dict[tuple[str, str], int]:
+    """Resolve the maximum per-market warm-up needed by this trade cycle."""
+    requirements: dict[tuple[str, str], int] = {}
+    row_sets = ((df_sell, True), (df_buy, False))
+    for rows, prefer_position_params in row_sets:
+        for _, pos_row in rows.iterrows():
+            symbol = str(pos_row["Symbol"]).strip().upper()
+            strategy_id = str(
+                pos_row.get("Strategy_Id")
+                or get_default_main_strategy_id(settings)
+            )
+            context = get_strategy_runtime_context(
+                strategy_id,
+                symbol,
+                timeframe,
+                pos_row=pos_row,
+                prefer_position_params=prefer_position_params,
+            )
+            definition = context.get("definition")
+            try:
+                runtime_definition = database.get_strategy_definition(strategy_id)
+            except Exception:
+                runtime_definition = None
+            if isinstance(runtime_definition, dict) and runtime_definition:
+                definition = runtime_definition
+            declarative = (
+                isinstance(definition, dict)
+                and definition.get("engine") == "bec_strategy_ast_v2"
+            )
+            if declarative:
+                risk_settings = get_runtime_risk_settings(
+                    settings, strategy_id, pos_row=pos_row
+                )
+                strategy_requirements = (
+                    strategy_engine.required_closed_candles_by_timeframe(
+                        definition,
+                        context.get("parameters"),
+                        timeframe,
+                        risk_settings,
+                    )
+                )
+            else:
+                strategy_requirements = {timeframe: MIN_LIVE_CLOSED_CANDLES}
+            for required_timeframe, candles in strategy_requirements.items():
+                key = symbol, str(required_timeframe)
+                requirements[key] = max(
+                    requirements.get(key, 0),
+                    int(candles),
+                    MIN_LIVE_CLOSED_CANDLES,
+                )
+    return requirements
+
+
 def format_trade_cycle_summary(summary: dict) -> str:
     lines = [
         "Cycle",
@@ -594,6 +744,10 @@ def trade(timeframe, run_mode, settings=None, send_summary=True):
     else:
         df_buy = _filter_buy_candidates_for_active_strategies(df_buy, settings)
 
+    market_data = _TradeCycleMarketData(
+        _live_history_requirements(df_sell, df_buy, timeframe, settings)
+    )
+
     # check open positions and SELL if conditions are fulfilled
     for _, pos_row in df_sell.iterrows():
         cycle_summary["sell_evaluated"] += 1
@@ -613,7 +767,7 @@ def trade(timeframe, run_mode, settings=None, send_summary=True):
         order_second = strategy_context["order_second"]
 
         # get latest price data
-        df = get_data(symbol=symbol, timeframe=timeframe)
+        df = market_data.load(symbol=symbol, timeframe=timeframe)
 
         # Check if df is empty
         if df.empty:
@@ -628,6 +782,7 @@ def trade(timeframe, run_mode, settings=None, send_summary=True):
             symbol=symbol,
             timeframe=timeframe,
             parameters=strategy_parameters,
+            data_loader=market_data.load,
         )
 
         # last row
@@ -721,6 +876,7 @@ def trade(timeframe, run_mode, settings=None, send_summary=True):
             lastrow,
             parameters=strategy_parameters,
             pos_row=pos_row,
+            data_loader=market_data.load,
         )
 
         # set current PnL
@@ -843,25 +999,11 @@ def trade(timeframe, run_mode, settings=None, send_summary=True):
         order_first = strategy_context["order_first"]
         order_second = strategy_context["order_second"]
 
-        df = get_data(symbol=symbol, timeframe=timeframe)
+        df = market_data.load(symbol=symbol, timeframe=timeframe)
 
         # skip if no data
         if df.empty:
-            msg = f"{symbol} - {strategy_name} - Empty dataframe on BUY loop"
-            msg = telegram_prefix_sl + msg
-            print(msg)
             cycle_summary["empty_data"] += 1
-            cycle_summary["warnings"] += 1
-            telegram.send_error_event(
-                action="buy data load",
-                symbol=symbol,
-                timeframe=timeframe,
-                strategy=strategy_name,
-                reason="Empty dataframe on BUY loop",
-                impact="Symbol was skipped for entry in this cycle.",
-                next_step="Check active-exchange data availability and OHLCV fetch logs.",
-                notify_main=False,
-            )
             continue
 
         apply_strategy_technicals(
@@ -872,6 +1014,7 @@ def trade(timeframe, run_mode, settings=None, send_summary=True):
             symbol=symbol,
             timeframe=timeframe,
             parameters=strategy_parameters,
+            data_loader=market_data.load,
         )
 
         # last row
@@ -884,6 +1027,7 @@ def trade(timeframe, run_mode, settings=None, send_summary=True):
             df,
             lastrow,
             parameters=strategy_parameters,
+            data_loader=market_data.load,
         )
 
         if buy_condition:
@@ -896,7 +1040,7 @@ def trade(timeframe, run_mode, settings=None, send_summary=True):
                     strategy_parameters,
                     symbol=symbol,
                     base_timeframe=timeframe,
-                    data_loader=get_data,
+                    data_loader=market_data.load,
                 )
             strategy_params_json = _build_live_strategy_snapshot(
                 strategy_id,
@@ -924,6 +1068,9 @@ def trade(timeframe, run_mode, settings=None, send_summary=True):
             if send_detailed_routine_logs:
                 telegram.send_telegram_message(telegram_token, "", msg)
 
+    market_data.send_failure_summary(timeframe)
+    if market_data.failures:
+        cycle_summary["warnings"] += len(market_data.failures)
     if send_summary and not send_detailed_routine_logs:
         _send_trade_cycle_summary(cycle_summary)
     return cycle_summary

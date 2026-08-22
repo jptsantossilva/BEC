@@ -35,6 +35,7 @@ from bec.exchanges.public_rate_limit import SharedPublicRequestThrottle
 logger = logging.getLogger(__name__)
 
 TRANSIENT_PUBLIC_READ_ERRORS = (
+    ccxt.NetworkError,
     ccxt.RateLimitExceeded,
     ccxt.DDoSProtection,
     ccxt.RequestTimeout,
@@ -73,6 +74,7 @@ class CcxtExchangeAdapter(ExchangeAdapter):
     """CCXT spot adapter with explicitly gated private operations."""
 
     asset_aliases: Mapping[str, str] = {}
+    ohlcv_page_limit: int | None = None
     capabilities = ExchangeCapabilities(
         supports_private_balance_reads=True,
         supports_backtesting=True,
@@ -457,11 +459,20 @@ class CcxtExchangeAdapter(ExchangeAdapter):
             parsed = parsed.tz_convert("UTC")
         return int(parsed.timestamp() * 1000)
 
+    def _ohlcv_start_floor_ms(self, canonical_symbol: str) -> int | None:
+        """Return the earliest supported OHLCV timestamp when known."""
+        del canonical_symbol
+        return None
+
     def fetch_ohlcv(self, symbol: str, interval: str, **kwargs: Any) -> pd.DataFrame:
         canonical = self.normalize_symbol(symbol)
         start_ms = self._milliseconds(kwargs.pop("start_date", kwargs.pop("since", None)))
         end_ms = self._milliseconds(kwargs.pop("end_date", None))
         limit = int(kwargs.pop("limit", 720))
+        if limit <= 0:
+            raise ValueError("OHLCV page limit must be greater than zero")
+        if self.ohlcv_page_limit is not None:
+            limit = min(limit, int(self.ohlcv_page_limit))
         drop_last = bool(kwargs.pop("drop_last", False))
         drop_incomplete = bool(kwargs.pop("drop_incomplete", False))
         include_symbol = bool(kwargs.pop("include_symbol", False))
@@ -475,7 +486,17 @@ class CcxtExchangeAdapter(ExchangeAdapter):
             raise TypeError(f"Unsupported OHLCV options: {', '.join(sorted(kwargs))}")
 
         duration_ms = int(self.client.parse_timeframe(interval) * 1000)
+        start_floor_ms = self._ohlcv_start_floor_ms(canonical)
+        if start_ms is not None and start_floor_ms is not None:
+            start_ms = max(start_ms, start_floor_ms)
         cursor = start_ms
+        request_end_ms = end_ms
+        if request_end_ms is None:
+            milliseconds = getattr(self.client, "milliseconds", None)
+            if callable(milliseconds):
+                request_end_ms = int(milliseconds())
+            else:
+                request_end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         rows: dict[int, list[Any]] = {}
         for _ in range(1000):
             batch = self._call_public_read(
@@ -499,9 +520,9 @@ class CcxtExchangeAdapter(ExchangeAdapter):
                 if end_ms is None or timestamp_ms <= end_ms:
                     rows[timestamp_ms] = list(candle[:6])
             next_cursor = int(batch[-1][0]) + duration_ms
-            if cursor is None or len(batch) < limit or next_cursor <= cursor:
+            if cursor is None or next_cursor <= cursor:
                 break
-            if end_ms is not None and next_cursor > end_ms:
+            if request_end_ms is not None and next_cursor > request_end_ms:
                 break
             cursor = next_cursor
 

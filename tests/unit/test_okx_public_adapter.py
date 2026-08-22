@@ -185,6 +185,108 @@ def test_okx_public_ohlcv_ticker_book_health_and_private_boundary():
     assert client.private_calls == 0
 
 
+def test_okx_ohlcv_clamps_to_listing_time_and_paginates_past_exchange_page_cap():
+    class PaginatedOkxClient(FakeOkxClient):
+        listing_time = 1_700_000_000_000
+        duration_ms = 60_000
+
+        def __init__(self):
+            super().__init__()
+            self.calls = []
+            self.candles = [
+                [
+                    self.listing_time + index * self.duration_ms,
+                    10,
+                    12,
+                    9,
+                    11 + index,
+                    5,
+                ]
+                for index in range(650)
+            ]
+
+        def load_markets(self, reload=False):
+            markets = super().load_markets(reload=reload)
+            markets["BTC/USDC"]["info"]["listTime"] = str(self.listing_time)
+            return markets
+
+        def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
+            self.calls.append((since, limit))
+            assert limit == 300
+            return [row for row in self.candles if row[0] >= since][:limit]
+
+        def milliseconds(self):
+            return self.candles[-1][0]
+
+    client = PaginatedOkxClient()
+    adapter = OkxAdapter(client=client)
+
+    frame = adapter.fetch_ohlcv(
+        "BTC/USDC",
+        "1m",
+        start_date=client.listing_time - 10_000_000,
+        limit=720,
+        keep_time_col=False,
+    )
+
+    assert len(frame) == 650
+    assert frame.index.is_unique
+    assert frame.index.is_monotonic_increasing
+    assert client.calls == [
+        (client.listing_time, 300),
+        (client.listing_time + 300 * client.duration_ms, 300),
+        (client.listing_time + 600 * client.duration_ms, 300),
+    ]
+
+
+def test_okx_public_ohlcv_retries_transient_rate_limit():
+    class RateLimitedOkxClient(FakeOkxClient):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        def fetch_ohlcv(self, symbol, timeframe, since, limit, params):
+            self.calls += 1
+            if self.calls == 1:
+                raise ccxt.RateLimitExceeded("50011 rate limit reached")
+            return super().fetch_ohlcv(symbol, timeframe, since, limit, params)
+
+    client = RateLimitedOkxClient()
+    sleeps = []
+    adapter = OkxAdapter(
+        client=client,
+        sleeper=sleeps.append,
+        random_uniform=lambda _start, _end: 0.0,
+    )
+
+    frame = adapter.fetch_ohlcv(
+        "BTC/USDC",
+        "1m",
+        start_date=1_700_000_000_000,
+        keep_time_col=False,
+        max_retries=1,
+        backoff_sec=2,
+    )
+
+    assert not frame.empty
+    assert client.calls == 3  # retry, successful page, then end-of-history probe
+    assert sleeps == [2.0]
+
+
+def test_okx_default_client_uses_shared_public_throttle(monkeypatch):
+    monkeypatch.setattr(
+        OkxAdapter,
+        "_create_client",
+        staticmethod(lambda *args, **kwargs: FakeOkxClient()),
+    )
+
+    adapter = OkxAdapter()
+
+    assert adapter._public_read_retry_enabled is True
+    assert adapter._public_request_throttle.min_interval_seconds == 0.15
+    assert adapter._public_request_throttle.state_path.name == "okx-public.lock"
+
+
 def test_okx_market_info_can_be_persisted_with_native_and_canonical_symbols():
     market = MarketInfo(
         "BTC/USDC", "BTC-USDC", "BTC", "USDC", True,

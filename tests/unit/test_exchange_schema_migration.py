@@ -109,6 +109,7 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
         "9:backtesting_exchange_context",
         "10:okx_demo_execution",
         "11:repair_backtesting_exchange_context",
+        "12:okx_display_name",
     ]
     assert report.unresolved_legacy_symbols == ["UNKNOWNPAIR"]
 
@@ -124,6 +125,7 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
         "9:backtesting_exchange_context",
         "10:okx_demo_execution",
         "11:repair_backtesting_exchange_context",
+        "12:okx_display_name",
     ]
     assert applied.unresolved_legacy_symbols == ["UNKNOWNPAIR"]
 
@@ -154,6 +156,9 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
             ("okx", "myokx", "production"),
             ("okx_demo", "myokx", "demo"),
         ]
+        assert connection.execute(
+            "SELECT Name FROM Exchanges WHERE Code='okx'"
+        ).fetchone() == ("OKX",)
         assert connection.execute(
             """
             SELECT COUNT(*) FROM Exchange_Backtesting_Settings ebs
@@ -403,6 +408,7 @@ def test_kraken_metadata_migration_applies_automatically_after_version_two(tmp_p
             "backtesting_exchange_context",
             "okx_demo_execution",
             "repair_backtesting_exchange_context",
+            "okx_display_name",
         ]
         assert connection.execute(
             "SELECT Enabled, Is_Default FROM Exchanges WHERE Code='kraken'"
@@ -427,6 +433,35 @@ def test_new_database_is_marked_current_with_kraken_public_metadata(tmp_path):
             ("binance", 0, 0), ("kraken", 1, 1),
             ("okx", 0, 0), ("okx_demo", 0, 0),
         ]
+        assert connection.execute(
+            "SELECT Name FROM Exchanges WHERE Code='okx'"
+        ).fetchone() == ("OKX",)
+
+
+def test_okx_display_name_migration_preserves_demo_identity_and_settings(tmp_path):
+    database = tmp_path / "okx-display-name.db"
+    _create_legacy_database(database)
+    with sqlite3.connect(database) as connection:
+        apply_pending_migrations(connection, MIGRATIONS[:11], allow_rebuild=True)
+        connection.execute(
+            "UPDATE Exchanges SET Enabled=1, Quote_Asset='USDT' WHERE Code='okx'"
+        )
+        connection.commit()
+
+        applied = apply_pending_migrations(
+            connection, MIGRATIONS, allow_rebuild=False
+        )
+
+        assert [migration.name for migration in applied] == ["okx_display_name"]
+        assert connection.execute(
+            "SELECT Name, Enabled, Quote_Asset FROM Exchanges WHERE Code='okx'"
+        ).fetchone() == ("OKX", 1, "USDT")
+        assert connection.execute(
+            "SELECT Name FROM Exchanges WHERE Code='okx_demo'"
+        ).fetchone() == ("OKX (Demo)",)
+        assert apply_pending_migrations(
+            connection, MIGRATIONS, allow_rebuild=False
+        ) == []
 
 
 def test_kraken_defaults_migration_preserves_existing_fee(tmp_path):
@@ -454,6 +489,7 @@ def test_kraken_defaults_migration_preserves_existing_fee(tmp_path):
             "backtesting_exchange_context",
             "okx_demo_execution",
             "repair_backtesting_exchange_context",
+            "okx_display_name",
         ]
         assert connection.execute(
             "SELECT Commission_Value FROM Exchange_Backtesting_Settings "
@@ -493,7 +529,8 @@ def test_context_repair_restores_missing_monte_carlo_columns(tmp_path):
         )
 
         assert [migration.name for migration in applied] == [
-            "repair_backtesting_exchange_context"
+            "repair_backtesting_exchange_context",
+            "okx_display_name",
         ]
         columns = {
             row[1]

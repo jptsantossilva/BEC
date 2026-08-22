@@ -459,6 +459,7 @@ def test_kraken_ohlcv_retries_rate_limit_per_page_without_duplicate_candles():
         1_700_000_000_000,
         1_700_000_120_000,
         1_700_000_120_000,
+        1_700_000_180_000,
     ]
     assert sleeps == [2.0]
 
@@ -535,6 +536,23 @@ def test_exchange_service_close_frame_uses_active_public_adapter():
 
     assert frame.columns.tolist() == ["Time", "Symbol", "Close"]
     assert frame["Symbol"].tolist() == ["BTC/EUR"] * 3
+
+
+def test_exchange_service_recent_ohlcv_returns_exact_latest_closed_window():
+    adapter = KrakenAdapter(client=FakeKrakenClient())
+    service.set_adapter(adapter)
+    try:
+        frame = service.get_recent_ohlcv(
+            "BTC/EUR",
+            "1m",
+            required_closed_candles=2,
+            now_utc=datetime.fromtimestamp(1_700_000_180, tz=timezone.utc),
+            keep_time_col=False,
+        )
+    finally:
+        service.set_adapter(None)
+
+    assert frame["Close"].tolist() == [12, 13]
 
 
 def test_kraken_health_reports_public_api_failure():

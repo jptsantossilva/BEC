@@ -810,6 +810,96 @@ def test_ast_v2_accepts_current_timeframe_operands():
     )
 
 
+def test_required_closed_candles_resolves_custom_periods_and_crossovers():
+    definition = _ast_definition(
+        [
+            _comparison(
+                _price("Close", "current"),
+                "crosses_above",
+                _indicator("SMA", {"period": 350}, timeframe="current"),
+            )
+        ],
+        [_comparison(_price("Close", "current"), "below", _price("Open", "current"))],
+    )
+
+    requirements = engine.required_closed_candles_by_timeframe(
+        definition, {}, "1h"
+    )
+
+    assert requirements == {"1h": 351}
+
+
+def test_required_closed_candles_handles_indicator_warmup_transforms_and_windows():
+    macd = _indicator(
+        "MACD",
+        {"fast": 12, "slow": 26, "signal": 9},
+        output="histogram",
+        timeframe="current",
+    )
+    definition = _ast_definition(
+        [
+            {
+                "type": "window_condition",
+                "operator": "for_n_bars",
+                "bars": 3,
+                "condition": _comparison(
+                    _transform("rolling_mean", macd, bars=5),
+                    "above",
+                    {"type": "value", "value": 0},
+                ),
+            }
+        ],
+        [_comparison(_price("Close", "current"), "below", _price("Open", "current"))],
+    )
+
+    requirements = engine.required_closed_candles_by_timeframe(
+        definition,
+        {},
+        "1h",
+        {"atr_trailing_enabled": True, "atr_period": 50},
+    )
+
+    assert requirements == {"1h": 50}
+
+
+def test_required_closed_candles_accounts_for_hma_composite_warmup():
+    definition = _ast_definition(
+        [
+            _comparison(
+                _indicator("HMA", {"period": 200}, timeframe="current"),
+                "crosses_above",
+                _price("Close", "current"),
+            )
+        ],
+        [_comparison(_price("Close", "current"), "below", _price("Open", "current"))],
+    )
+
+    requirements = engine.required_closed_candles_by_timeframe(
+        definition, {}, "1h"
+    )
+
+    assert requirements == {"1h": 214}
+
+
+def test_required_closed_candles_adds_higher_timeframe_alignment_candle():
+    definition = _ast_definition(
+        [
+            _comparison(
+                _price("Close", "1d"),
+                "above",
+                _indicator("SMA", {"period": 200}, timeframe="1d"),
+            )
+        ],
+        [_comparison(_price("Close", "current"), "below", _price("Open", "current"))],
+    )
+
+    requirements = engine.required_closed_candles_by_timeframe(
+        definition, {}, "1h"
+    )
+
+    assert requirements == {"1d": 201, "1h": 1}
+
+
 def test_optimization_parameters_round_trip_dataframe():
     parameters = {
         "ema_fast": {"type": "int", "default": 20, "min": 2, "max": 100, "step": 1, "optimizable": True},

@@ -2,6 +2,19 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-08-22]
+- Trading Settings - Renamed the production exchange display name from `OKX (Production)` to `OKX`, matching Binance and Kraken while preserving its production environment metadata.
+- Trading Diagnostics - Keep one stable public spot-market button while switching exchanges, retain interrupted checks across multipage reruns until success or failure, persist feedback, and show the number of supported and active markets loaded.
+- OKX Market Data - Clamp OHLCV history to each instrument's `listTime`, paginate through the 300-candle OKX page cap even when a partial page is returned, and deduplicate and order candles by timestamp without fabricating history before market listing.
+- OKX Reliability - Coordinate public requests from dashboard and runner processes with a shared 0.15-second throttle and retry only transient rate-limit, timeout, network and availability failures while preserving permanent error causes.
+- Exchange Market Data - Added exchange-neutral helpers for retrieving the latest required number of closed OHLCV candles and close-price frames, excluding the current incomplete candle.
+- Backtesting - Preserve the configured 1d, 4h and 1h history windows plus warm-up candles for both manual and market-phase initiated runs; Full history now paginates from the existing 2010 reference through the present, adjusted to the market listing date.
+- Market Phases - Request exactly 201 closed candles for DSMA200 calculations and quietly skip recently listed markets with fewer than 200 usable candles.
+- Strategy Builder - Calculate live candle requirements per timeframe from resolved indicator periods, composite warm-ups, transforms, window conditions, crossovers, higher-timeframe alignment and ATR risk settings, including custom periods above 200.
+- Live Trading - Precompute the maximum history required by all BUY and SELL evaluations, reuse each exchange/symbol/timeframe response through a cycle-local cache, and skip all signal evaluation and order submission for markets with empty, unavailable or insufficient history.
+- Telegram - Aggregate live OHLCV failures into one exchange-neutral warning per trading cycle, grouped by cause, and distinguish empty or insufficient history from exhausted transient retries without exposing token-bearing URLs.
+- Tests - Added regression coverage for OKX listing-time clamping, 300-candle pagination, retries and throttling, dynamic strategy warm-ups, full-history backtesting, market-phase lookbacks, cycle caching, grouped notifications and fail-closed BUY/SELL execution.
+
 ## [2026-08-21]
 - Balances - Added exchange-neutral daily balance snapshots for the active Binance, Kraken, OKX Production, or OKX Demo identity, with transient read retries and USD/BTC valuation through direct, inverse, or BTC-bridged spot markets.
 - Balances - Isolated snapshot persistence by an explicitly captured `Exchange_Id`, preventing a concurrent active-exchange change from attributing balances to the wrong exchange while preserving atomic daily replacement.

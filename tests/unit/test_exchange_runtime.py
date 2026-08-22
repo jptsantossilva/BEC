@@ -12,7 +12,10 @@ from bec.db.backtesting_context_schema import apply_backtesting_context_schema
 from bec.db.exchange_schema import apply_exchange_aware_schema
 from bec.db.live_execution_schema import apply_live_execution_schema
 from bec.db.order_fills_schema import apply_durable_order_fills_schema
-from bec.db.okx_configuration_schema import apply_okx_configuration_schema
+from bec.db.okx_configuration_schema import (
+    apply_okx_configuration_schema,
+    apply_okx_display_name,
+)
 from bec.db.okx_demo_execution_schema import apply_okx_demo_execution_schema
 
 
@@ -56,6 +59,7 @@ def _runtime_database(tmp_path):
     apply_live_execution_schema(connection)
     apply_durable_order_fills_schema(connection)
     apply_okx_configuration_schema(connection)
+    apply_okx_display_name(connection)
     apply_okx_demo_execution_schema(connection)
     connection.execute("UPDATE Exchanges SET Enabled=1 WHERE Code IN ('binance', 'kraken')")
     for name in database.EXCHANGE_DEPENDENT_JOBS:

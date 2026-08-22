@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 from bec.exchanges.base import Balance, ExchangeCapabilities, OrderRequest
@@ -13,6 +14,7 @@ from bec.exchanges.ccxt_adapter import (
     PrivateExchangeOperationDisabled,
     _decimal,
 )
+from bec.exchanges.public_rate_limit import SharedPublicRequestThrottle
 from bec.utils.env_loader import load_env_file
 
 
@@ -27,6 +29,7 @@ class OkxAdapter(CcxtExchangeAdapter):
 
     code = "okx"
     name = "OKX"
+    ohlcv_page_limit = 300
     capabilities = ExchangeCapabilities(
         supports_private_balance_reads=True,
         supports_backtesting=True,
@@ -51,6 +54,9 @@ class OkxAdapter(CcxtExchangeAdapter):
         execution_code: str = "okx",
         sizing_buffer_pct: Decimal = Decimal("5"),
         clock=None,
+        public_request_throttle: SharedPublicRequestThrottle | None = None,
+        sleeper=None,
+        random_uniform=None,
     ):
         variant = str(adapter_id or "").strip().lower()
         if variant not in {"myokx", "okx"}:
@@ -98,6 +104,16 @@ class OkxAdapter(CcxtExchangeAdapter):
         private_access_ready = (
             bool(private_enabled) and not self.missing_private_credentials
         )
+        if public_request_throttle is None and client is None:
+            project_root = Path(__file__).resolve().parents[2]
+            public_request_throttle = SharedPublicRequestThrottle(
+                project_root
+                / "static"
+                / "backtest_results"
+                / "rate_limits"
+                / "okx-public.lock",
+                min_interval_seconds=0.15,
+            )
         kwargs = {
             "client": client,
             "name": self.name,
@@ -107,14 +123,33 @@ class OkxAdapter(CcxtExchangeAdapter):
             "api_password": api_passphrase,
             "private_enabled": private_access_ready,
             "sizing_buffer_pct": sizing_buffer_pct,
+            "public_request_throttle": public_request_throttle,
+            "public_read_retry_enabled": True,
         }
         if clock is not None:
             kwargs["clock"] = clock
+        if sleeper is not None:
+            kwargs["sleeper"] = sleeper
+        if random_uniform is not None:
+            kwargs["random_uniform"] = random_uniform
         super().__init__(variant, **kwargs)
         self.code = code
         self.adapter_id = variant
         if private_access_ready and environment == "demo":
             self._enable_demo_sandbox()
+
+    def _ohlcv_start_floor_ms(self, canonical_symbol: str) -> int | None:
+        """Clamp historical requests to the OKX instrument listing time."""
+        market = self.load_markets().get(canonical_symbol)
+        if market is None:
+            return None
+        raw = market.raw if isinstance(market.raw, dict) else {}
+        info = raw.get("info") if isinstance(raw.get("info"), dict) else {}
+        value = info.get("listTime") or raw.get("created")
+        try:
+            return int(value) if value not in (None, "") else None
+        except (TypeError, ValueError):
+            return None
 
     def _enable_demo_sandbox(self) -> None:
         """Select CCXT demo mode before any private API call is possible."""

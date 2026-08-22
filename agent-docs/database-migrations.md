@@ -116,6 +116,13 @@ recorded while one of those optional queue tables did not yet exist or had an
 older development schema. Existing rows are backfilled from their
 `Exchange_Id`; no jobs are requeued and no trading settings are changed.
 
+## OKX Display Name (Version 12)
+
+Migration `12:okx_display_name` is additive and idempotently renames the OKX
+production identity from `OKX (Production)` to `OKX`. The environment remains
+stored separately as `production`; the isolated `OKX (Demo)` identity and all
+trading settings are unchanged.
+
 ## Rollback
 
 Migration steps run in explicit SQLite transactions. A failed step rolls back

@@ -29,10 +29,14 @@ SYMBOL_COLUMNS = {
     "Availability_Status": "TEXT NOT NULL DEFAULT 'unknown'",
 }
 
+# Historical version-8 seed values. Version 12 normalizes the production name
+# without rewriting the already-released migration.
 OKX_IDENTITIES = (
     (3, "okx", "OKX (Production)", "myokx", "production"),
     (4, "okx_demo", "OKX (Demo)", "myokx", "demo"),
 )
+
+OKX_PRODUCTION_DISPLAY_NAME = "OKX"
 
 
 def _table_exists(connection: sqlite3.Connection, table: str) -> bool:
@@ -141,3 +145,23 @@ def validate_okx_configuration_schema(connection: sqlite3.Connection) -> None:
     ).fetchone()
     if configured_fee is not None:
         raise ValueError("OKX must not receive an implicit backtesting fee")
+
+
+def apply_okx_display_name(connection: sqlite3.Connection) -> None:
+    """Use the same concise production display-name convention as other exchanges."""
+    if not _table_exists(connection, "Exchanges"):
+        return
+    connection.execute(
+        "UPDATE Exchanges SET Name=? WHERE Code='okx'",
+        (OKX_PRODUCTION_DISPLAY_NAME,),
+    )
+
+
+def validate_okx_display_name(connection: sqlite3.Connection) -> None:
+    if not _table_exists(connection, "Exchanges"):
+        raise ValueError("Exchanges is missing")
+    row = connection.execute(
+        "SELECT Name FROM Exchanges WHERE Code='okx'"
+    ).fetchone()
+    if row != (OKX_PRODUCTION_DISPLAY_NAME,):
+        raise ValueError("OKX production display name is invalid")

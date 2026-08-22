@@ -148,32 +148,18 @@ def get_symbols(trade_against, settings=None):
     return symbols
 
 
-def _market_phase_start_date(timeframe, now_utc=None):
-    """Return the start date for the fixed market phase candle lookback."""
-    timeframe_minutes = strategy_engine.TIMEFRAME_MINUTES.get(str(timeframe))
-    if not timeframe_minutes:
-        return None
-
-    now_utc = now_utc or datetime.datetime.now(datetime.timezone.utc)
-    return now_utc - datetime.timedelta(
-        minutes=timeframe_minutes * MARKET_PHASE_LOOKBACK_CANDLES
-    )
-
-
 def set_market_phases_to_symbols(symbols, timeframe, warning_stats=None):
     """Compute market phase labels for a list of symbols."""
     # Empty dataframe
     df_result = pd.DataFrame()
     if warning_stats is None:
         warning_stats = {"warnings": 0}
-    start_date = _market_phase_start_date(timeframe)
-
     for symbol in symbols:
         print("Calculating " + symbol)
-        df = exchange_service.get_close_df(
+        df = exchange_service.get_recent_close_df(
             symbol=symbol,
             interval=timeframe,
-            start_date=start_date,
+            required_closed_candles=MARKET_PHASE_LOOKBACK_CANDLES,
             include_symbol=True,
             price_col="Price",            
         )
@@ -261,7 +247,10 @@ def trade_against_auto_switch(settings=None, warning_stats=None):
 
         if df_btc.empty:
             warning_stats["warnings"] = int(warning_stats.get("warnings", 0)) + 1
-            msg = f"Failed after max tries to get historical data for {btc_pair} ({btc_timeframe}). "
+            msg = (
+                f"No closed historical candles are available for {btc_pair} "
+                f"({btc_timeframe})."
+            )
             print(msg)
             telegram.send_error_event(
                 action="trade against switch OHLCV load",
@@ -759,7 +748,7 @@ def cli_main():
     except TransientPublicMarketDataError as exc:
         msg = (
             telegram.telegram_prefix_market_phases_sl
-            + "Public Kraken market data remained unavailable after retries; "
+            + "Public active-exchange market data remained unavailable after retries; "
             + "market-phase processing stopped and existing backtest approvals "
             + f"were preserved: {exc}"
         )
