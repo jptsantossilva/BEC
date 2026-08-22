@@ -22,8 +22,6 @@ import bec.utils.telegram as telegram
 
 load_env_file(override=True)
 
-st.logo("static/bec-logo.svg", size="large", icon_image=":material/currency_bitcoin:")
-
 # --- Top-of-page banner placeholder (must be above any other UI rendering)
 TOP_NOTICE = st.empty()
 
@@ -194,16 +192,16 @@ def check_app_version():
         unsafe_allow_html=True,
     )
     
-    st.sidebar.markdown(
-        f"""
-        <br>
-        <div style="line-height:1.15; margin-top:0.15rem;">
-            <div style="font-size:0.82rem; color:rgba(49, 51, 63, 0.6);">BEC - {trade_against}</div>
-            <div style="font-size:0.78rem; color:rgba(49, 51, 63, 0.6); margin-top:0.08rem;">Version {app_version}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    with st.sidebar.container(key="bec_sidebar_footer"):
+        st.markdown(
+            f"""
+            <div style="line-height:1.15;">
+                <div style="font-size:0.82rem; color:rgba(49, 51, 63, 0.6);">BEC - {trade_against}</div>
+                <div style="font-size:0.78rem; color:rgba(49, 51, 63, 0.6); margin-top:0.08rem;">Version {app_version}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     def _running_in_docker() -> bool:
         if os.getenv("BEC_UPDATE_MODE", "").lower() == "docker":

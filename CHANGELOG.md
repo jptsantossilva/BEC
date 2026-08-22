@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [2026-08-22]
+- Dashboard Navigation - Keep the BEC logo visible across Streamlit multipage reruns instead of rendering it only during the initial dashboard module import.
+- Responsive Sidebar - Keep the BEC trade-against identity and application version reachable at the bottom of the sidebar on desktop and short smartphone viewports, including mobile safe-area spacing.
 - Trading Settings - Renamed the production exchange display name from `OKX (Production)` to `OKX`, matching Binance and Kraken while preserving its production environment metadata.
 - Trading Diagnostics - Keep one stable public spot-market button while switching exchanges, retain interrupted checks across multipage reruns until success or failure, persist feedback, and show the number of supported and active markets loaded.
 - OKX Market Data - Clamp OHLCV history to each instrument's `listTime`, paginate through the 300-candle OKX page cap even when a partial page is returned, and deduplicate and order candles by timestamp without fabricating history before market listing.

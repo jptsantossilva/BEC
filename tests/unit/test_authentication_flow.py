@@ -62,6 +62,7 @@ class FakeStreamlit:
         self.switch_page_target = None
         self.page_config = None
         self.markdown_calls = []
+        self.logo_calls = []
 
     def form(self, key):
         self.form_key = key
@@ -107,6 +108,9 @@ class FakeStreamlit:
 
     def set_page_config(self, **kwargs):
         self.page_config = kwargs
+
+    def logo(self, image, **kwargs):
+        self.logo_calls.append((image, kwargs))
 
     def markdown(self, body, **kwargs):
         self.markdown_calls.append((body, kwargs))
@@ -401,7 +405,7 @@ def test_restore_login_from_cookie_clears_invalid_cookie(monkeypatch):
     ]
 
 
-def test_configure_page_uses_wide_layout(monkeypatch):
+def test_configure_page_sets_layout_logo_and_sidebar_styles(monkeypatch):
     fake_st = FakeStreamlit()
     monkeypatch.setattr("bec.page_config.st", fake_st)
 
@@ -409,11 +413,27 @@ def test_configure_page_uses_wide_layout(monkeypatch):
 
     assert fake_st.page_config["layout"] == "wide"
     assert fake_st.page_config["page_title"] == "BEC App"
+    assert fake_st.logo_calls == [
+        (
+            "static/bec-logo.svg",
+            {
+                "size": "large",
+                "icon_image": ":material/currency_bitcoin:",
+            },
+        )
+    ]
     assert any(
         ".block-container" in body
         and '[data-testid="stMainBlockContainer"]' in body
         and "max-width: none !important" in body
         and "width: 100% !important" in body
+        for body, _ in fake_st.markdown_calls
+    )
+    assert any(
+        '[data-testid="stSidebarContent"]' in body
+        and ".st-key-bec_sidebar_footer" in body
+        and "position: sticky" in body
+        and "safe-area-inset-bottom" in body
         for body, _ in fake_st.markdown_calls
     )
     assert all(kwargs.get("unsafe_allow_html") is True for _, kwargs in fake_st.markdown_calls)
