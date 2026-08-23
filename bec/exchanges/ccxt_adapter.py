@@ -397,7 +397,20 @@ class CcxtExchangeAdapter(ExchangeAdapter):
 
     def normalize_amount(self, symbol: str, amount: Decimal) -> Decimal:
         canonical = self.normalize_symbol(symbol)
-        return _decimal(self.client.amount_to_precision(canonical, str(amount)))
+        value = _decimal(amount)
+        market = self._market(canonical)
+        if value <= 0:
+            return Decimal("0")
+        if (
+            market.amount_step is not None
+            and market.amount_step > 0
+            and value < market.amount_step
+        ):
+            # CCXT raises InvalidOrder when truncation would produce zero.  Zero
+            # is a valid normalization result for BEC validation and dust logic;
+            # it must not become a fatal runtime exception.
+            return Decimal("0")
+        return _decimal(self.client.amount_to_precision(canonical, str(value)))
 
     def normalize_price(self, symbol: str, price: Decimal) -> Decimal:
         canonical = self.normalize_symbol(symbol)

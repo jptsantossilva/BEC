@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 import json
 from types import SimpleNamespace
 
@@ -12,6 +13,7 @@ import bec.main as main
 import bec.symbol_by_market_phase as market_phase
 import bec.signals.bb_width as bb_width
 import bec.utils.telegram as telegram
+from bec.exchanges.base import SellOrderOutcome, SellOutcomeStatus
 from bec.exchanges.ccxt_adapter import TransientPublicMarketDataError
 from bec.strategy_builder.templates import get_builtin_template
 from bec.utils import telegram_reporting
@@ -48,6 +50,27 @@ def _strategy_params():
 def test_manual_demo_notifications_have_a_distinct_valid_prefix():
     assert telegram.get_telegram_prefix("manual_demo") == "DEMO "
     assert telegram.get_telegram_prefix("manual_demo", multi_line=True) == "DEMO\n"
+
+
+def test_trade_summary_distinguishes_skipped_and_logically_closed_sells():
+    skipped = SellOrderOutcome(status=SellOutcomeStatus.SKIPPED)
+    closed = SellOrderOutcome(
+        status=SellOutcomeStatus.CLOSED_WITHOUT_ORDER,
+        position_closed=True,
+        closure_reason="dust",
+    )
+
+    assert main._sell_outcome_action_taken(skipped) is False
+    assert main._sell_outcome_action_taken(closed) is True
+
+
+def test_sell_all_outcome_stops_take_profit_chaining():
+    outcome = SellOrderOutcome(
+        status=SellOutcomeStatus.SUBMITTED,
+        effective_percentage=Decimal("100"),
+    )
+
+    assert main._sell_outcome_is_full_exit(outcome, 25) is True
 
 
 def _auto_switch_settings(trade_against="USDC", btc_strategy="wema20"):
@@ -882,7 +905,7 @@ def test_binance_order_functions_abort_when_run_mode_disallows_binance(monkeypat
     monkeypatch.setattr(binance, "get_client", lambda: get_client_calls.append(True))
 
     assert binance.create_buy_order("AAAUSDC", "1h") is None
-    assert binance.create_sell_order("AAAUSDC", "1h") is None
+    assert binance.create_sell_order("AAAUSDC", "1h").skipped is True
     assert get_client_calls == []
 
 

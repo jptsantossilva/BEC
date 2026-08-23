@@ -2,6 +2,10 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-08-23]
+- Sell Execution - Added exchange-neutral residual dust handling for Binance, Kraken, OKX and OKX Demo: effective 100% exits can close positions below the market amount step without submitting a synthetic order or changing realized PnL, while preserving safeguards for locked balances, unsettled intents and tradable remainders.
+- Trading Reliability - Standardized sell outcomes across automatic and manual workflows, prevented below-step precision errors and false take-profit execution, and added atomic position closure, operator notifications and regression coverage for partial fills and partial-sell policies.
+
 ## [2026-08-22]
 - Dashboard Navigation - Keep the BEC logo visible across Streamlit multipage reruns instead of rendering it only during the initial dashboard module import.
 - Responsive Sidebar - Keep the BEC trade-against identity and application version reachable at the bottom of the sidebar on desktop and short smartphone viewports, including mobile safe-area spacing.

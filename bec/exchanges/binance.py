@@ -6,8 +6,10 @@ from dateutil.relativedelta import relativedelta
 import time
 from typing import Optional, Union, Callable
 import sqlite3
+from decimal import Decimal
 
 from bec.exchanges.binance_adapter import (
+    BinanceAdapter,
     BinanceAPIException,
     BinanceOrderException,
     BinanceRequestException,
@@ -15,6 +17,17 @@ from bec.exchanges.binance_adapter import (
     connect,
     get_client,
     round_step_size,
+)
+from bec.exchanges.base import (
+    OrderStatus,
+    SellOrderOutcome,
+    SellOutcomeStatus,
+    SubmissionState,
+)
+from bec.exchanges.sell_sizing import (
+    SellSizingStatus,
+    format_position_close_without_order,
+    prepare_sell_quantity,
 )
 
 import bec.utils.config as config
@@ -393,45 +406,138 @@ def create_sell_order(
 
     run_mode = settings.run_mode
     if run_mode in {"test", "demo"}:
-        print("Exiting the function because run_mode does not permit Binance orders.")
-        return
+        message = "Exiting the function because run_mode does not permit Binance orders."
+        print(message)
+        return SellOrderOutcome(
+            status=SellOutcomeStatus.SKIPPED,
+            reason=message,
+            effective_percentage=Decimal(str(percentage)),
+        )
     
     telegram_token = telegram.get_telegram_token()
 
+    sell_qty = Decimal("0")
+    order_submitted = False
+    decision = None
     try:
-        symbol_only, symbol_trade_against = separate_symbol_and_trade_against(symbol)
+        exchange = database.get_active_exchange(required=True)
+        adapter = BinanceAdapter(client=get_client())
+        market = adapter.load_markets()[adapter.normalize_symbol(symbol)]
         df_pos = pd.DataFrame()
-        # get balance
-        balance_qty = get_symbol_balance(symbol=symbol_only)  
-        
-        # verify sell quantity
-        if convert_all_balance:
-            sell_qty = balance_qty
-        else:
+        position = None
+        if not convert_all_balance:
             df_pos = database.get_position_by_id(position_id) if position_id is not None else database.get_positions_by_bot_symbol_position( bot=bot, symbol=symbol, position=1)
-            if not df_pos.empty:
-                pos_qty = df_pos['Qty'].iloc[0]
-            else:
-                pos_qty = 0
-            
-            sell_qty = pos_qty
+            if df_pos.empty:
+                raise RuntimeError("Open position not found")
+            position = df_pos.iloc[0]
+        balance = adapter.fetch_balance(market.base_asset)
+        ticker = adapter.fetch_ticker(market.symbol)
+        decision = prepare_sell_quantity(
+            market=market,
+            balance=balance,
+            position_quantity=(position["Qty"] if position is not None else 0),
+            percentage=percentage,
+            partial_sell_policy=str(exchange.get("partial_sell_policy") or "accumulate"),
+            validation_price=ticker.last,
+            normalize_amount=adapter.normalize_amount,
+            validate_order=adapter.validate_order,
+            convert_all_balance=convert_all_balance,
+        )
+        if decision.status in {SellSizingStatus.DUST, SellSizingStatus.ZERO_BALANCE}:
+            if position is None:
+                return SellOrderOutcome(
+                    status=SellOutcomeStatus.SKIPPED,
+                    reason="No position is available for a logical close",
+                    effective_percentage=decision.effective_percentage,
+                )
+            closure_reason = (
+                "dust" if decision.status == SellSizingStatus.DUST else "zero_balance"
+            )
+            closed = database.close_position_without_order(
+                position_id=int(position["Id"]),
+                expected_qty=decision.position_quantity,
+                closure_reason=closure_reason,
+                amount_step=decision.amount_step,
+            )
+            if not closed["closed"]:
+                message = f"Position close skipped: {closed['reason']}"
+                return SellOrderOutcome(
+                    status=SellOutcomeStatus.SKIPPED,
+                    reason=message,
+                    reconciliation_required=closed["reason"] == "unsettled_sell_intent",
+                    requested_quantity=decision.requested_quantity,
+                    residual_quantity=decision.position_quantity,
+                    effective_percentage=decision.effective_percentage,
+                )
+            message = format_position_close_without_order(
+                exchange=str(exchange.get("name") or "Binance"),
+                symbol=market.symbol,
+                timeframe=bot,
+                decision=decision,
+                closure_reason=closure_reason,
+            )
+            print(database.exchange_log_prefix(), message.replace("\n", " | "))
+            try:
+                telegram.send_telegram_message(
+                    telegram_token, telegram.EMOJI_INFORMATION, message
+                )
+            except Exception as exc:
+                print(
+                    database.exchange_log_prefix(),
+                    f"Position closure notification failed ({type(exc).__name__})",
+                )
+            return SellOrderOutcome(
+                status=SellOutcomeStatus.CLOSED_WITHOUT_ORDER,
+                reason=message,
+                position_closed=True,
+                closure_reason=closure_reason,
+                requested_quantity=decision.requested_quantity,
+                residual_quantity=decision.position_quantity,
+                effective_percentage=decision.effective_percentage,
+            )
+        if not decision.ready:
+            message = (
+                f"Exchange sell skipped by {exchange.get('partial_sell_policy') or 'accumulate'} policy: "
+                + "; ".join(decision.errors or (decision.status.value,))
+            )
+            if decision.status in {
+                SellSizingStatus.LOCKED_BALANCE,
+                SellSizingStatus.BALANCE_MISMATCH,
+            }:
+                telegram.send_error_event(
+                    action="prepare exchange sell order",
+                    symbol=market.symbol,
+                    timeframe=bot,
+                    strategy=strategy_name or strategy_id,
+                    reason="Exchange balance cannot satisfy the position sell",
+                    impact="No order was submitted and the position remains open.",
+                    next_step="Review exchange open orders, locked balance, and BEC reconciliation.",
+                    main_token=telegram_token,
+                    main_prefix=telegram.get_telegram_prefix(bot),
+                )
+            return SellOrderOutcome(
+                status=SellOutcomeStatus.SKIPPED,
+                reason=message,
+                requested_quantity=decision.requested_quantity,
+                residual_quantity=decision.position_quantity,
+                effective_percentage=decision.effective_percentage,
+                details={"policy": str(exchange.get("partial_sell_policy") or "accumulate")},
+            )
 
-            if balance_qty < pos_qty:
-                sell_qty = balance_qty
-
-        # sell by percentage
-        if percentage < 100:
-            sell_qty = sell_qty*(percentage/100)
-
-        sell_qty = adjust_size(symbol, sell_qty)
-
+        sell_qty = decision.normalized_quantity
+        percentage = float(decision.effective_percentage)
         if sell_qty > 0:
+            position_closed = False
+            dust_closed = False
+            remaining_qty = Decimal("0")
             order = get_client().create_order(
-                symbol=symbol,
+                symbol=market.exchange_symbol,
                 side=Client.SIDE_SELL,
                 type=Client.ORDER_TYPE_MARKET,
-                quantity = sell_qty
+                quantity=float(sell_qty),
             )
+            order_submitted = True
+            order_result = adapter._parse_order(order, market.symbol)
             
             result = True
             msg = "Sold Successfully"
@@ -462,37 +568,47 @@ def create_sell_order(
                 else:
                     buy_order_id = str(0)
                 
-                if percentage == 100:
-                    # update position as closed position
-                    database.set_position_sell( bot=bot, symbol=symbol, position_id=position_id)
-                    
-                    # release all locked values from position
-                    if not df_pos.empty:
-                        database.release_value( df_pos['Id'].iloc[0])
-                else: # percentage < 100     
-                    if not df_pos.empty:
-                        # if we are selling a position percentage we must update the qty
-                        previous_qty = float(df_pos['Qty'].iloc[0])
-                        new_qty = previous_qty - order_qty
-                        database.set_position_qty( bot=bot, symbol=symbol, qty=new_qty, position_id=position_id)
-
-                        # Mark the fired take-profit level. The JSON state supports any level;
-                        # legacy TP1..TP4 columns are kept in sync by the database helper.
+                previous_qty = Decimal(str(df_pos['Qty'].iloc[0]))
+                remaining_qty = max(
+                    Decimal("0"), previous_qty - Decimal(str(order_qty))
+                )
+                full_exit = Decimal(str(percentage)) >= 100
+                dust_closed = bool(
+                    full_exit
+                    and order_result.status in {
+                        OrderStatus.FILLED,
+                        OrderStatus.CANCELED,
+                        OrderStatus.REJECTED,
+                        OrderStatus.EXPIRED,
+                    }
+                    and decision.amount_step is not None
+                    and remaining_qty > Decimal("1e-12")
+                    and remaining_qty < decision.amount_step
+                )
+                position_closed = remaining_qty <= Decimal("1e-12") or dust_closed
+                if position_closed:
+                    database.set_position_sell(bot=bot, symbol=symbol, position_id=position_id)
+                    database.release_value(df_pos['Id'].iloc[0])
+                else:
+                    database.set_position_qty(
+                        bot=bot,
+                        symbol=symbol,
+                        qty=float(remaining_qty),
+                        position_id=position_id,
+                    )
+                    if percentage < 100 and take_profit_num > 0:
                         database.mark_position_take_profit(
                             bot=bot,
                             symbol=symbol,
                             take_profit_num=take_profit_num,
                             position_id=position_id,
                         )
-                        
-                        # lock values from parcial sales amounts
-                        lock_values = settings.lock_values
-                        if lock_values:
-                            database.lock_value(
-                                position_id=df_pos['Id'].iloc[0],
-                                buy_order_id=buy_order_id,
-                                amount=order_avg_price*order_qty
-                            )
+                    if settings.lock_values:
+                        database.lock_value(
+                            position_id=df_pos['Id'].iloc[0],
+                            buy_order_id=buy_order_id,
+                            amount=order_avg_price*order_qty,
+                        )
     
             stop_type = "other"
             if reason.startswith("ATR Trailing Stop"):
@@ -595,6 +711,12 @@ def create_sell_order(
                 if "Duration" in df_pos.columns:
                     duration = str(df_pos["Duration"].iloc[0] or "")
 
+            event_reason = reason or "Strategy exit"
+            if dust_closed:
+                event_reason += (
+                    f" | Position closed with non-tradable residual {remaining_qty} "
+                    f"(amount step {decision.amount_step})"
+                )
             telegram.send_trade_event(
                 telegram_token=telegram_token,
                 telegram_prefix=telegram_prefix,
@@ -603,7 +725,7 @@ def create_sell_order(
                 symbol=order_symbol,
                 timeframe=bot,
                 strategy=strategy_name,
-                reason=reason or "Strategy exit",
+                reason=event_reason,
                 unit_price=order_avg_price,
                 quantity=order_qty,
                 notional_value=order_avg_price * order_qty,
@@ -612,15 +734,20 @@ def create_sell_order(
                 entry_price=entry_price,
                 duration=duration,
             )
-        else:
-            # if there is no qty on balance to sell we set the qty on positions table to zero
-            # this can happen if we sell on the exchange before the bot sells it. 
-            database.set_position_sell(bot=bot, symbol=symbol, position_id=position_id)
-            result = False
-            msg = "Unable to sell position. The position size in your balance is currently zero. No sell order was placed, and the position was removed from the unrealized PnL table."
+            return SellOrderOutcome(
+                status=SellOutcomeStatus.SUBMITTED,
+                submission_state=SubmissionState.SUBMITTED,
+                reason=event_reason,
+                position_closed=position_closed,
+                closure_reason="dust" if dust_closed else "",
+                requested_quantity=decision.requested_quantity,
+                submitted_quantity=decision.normalized_quantity,
+                residual_quantity=remaining_qty,
+                effective_percentage=decision.effective_percentage,
+                order_result=order_result,
+            )
         
     except BinanceAPIException as e:
-        result = False
         # customize error message based on the exception
         if e.code == -1013:
             error_description = "Sorry, your sell order cannot be placed because the total value of the trade (notional) is too low. Please adjust the quantity or price to meet the minimum notional value requirement set by the exchange."
@@ -640,8 +767,17 @@ def create_sell_order(
             main_token=telegram_token,
             main_prefix=telegram.get_telegram_prefix(bot),
         )
+        return SellOrderOutcome(
+            status=SellOutcomeStatus.FAILED,
+            submission_state=(SubmissionState.SUBMITTED if order_submitted else SubmissionState.NOT_SUBMITTED),
+            reason=msg,
+            requested_quantity=(decision.requested_quantity if decision else Decimal("0")),
+            submitted_quantity=sell_qty,
+            effective_percentage=(
+                decision.effective_percentage if decision else Decimal(str(percentage))
+            ),
+        )
     except BinanceOrderException as e:
-        result = False
         msg = f"create_sell_order - {bot} - {symbol} - {repr(e)}"
         # print(msg)
         telegram.send_error_event(
@@ -656,8 +792,17 @@ def create_sell_order(
             main_token=telegram_token,
             main_prefix=telegram.get_telegram_prefix(bot),
         )
+        return SellOrderOutcome(
+            status=SellOutcomeStatus.FAILED,
+            submission_state=(SubmissionState.SUBMITTED if order_submitted else SubmissionState.NOT_SUBMITTED),
+            reason=msg,
+            requested_quantity=(decision.requested_quantity if decision else Decimal("0")),
+            submitted_quantity=sell_qty,
+            effective_percentage=(
+                decision.effective_percentage if decision else Decimal(str(percentage))
+            ),
+        )
     except Exception as e:
-        result = False
         msg = f"create_sell_order - {bot} - {symbol} - {repr(e)}"
         # print(msg)
         telegram.send_error_event(
@@ -672,8 +817,17 @@ def create_sell_order(
             main_token=telegram_token,
             main_prefix=telegram.get_telegram_prefix(bot),
         )
-
-    return result, msg
+        return SellOrderOutcome(
+            status=SellOutcomeStatus.FAILED,
+            submission_state=(SubmissionState.SUBMITTED if order_submitted else SubmissionState.UNKNOWN),
+            reason=msg,
+            reconciliation_required=not order_submitted,
+            requested_quantity=(decision.requested_quantity if decision else Decimal("0")),
+            submitted_quantity=sell_qty,
+            effective_percentage=(
+                decision.effective_percentage if decision else Decimal(str(percentage))
+            ),
+        )
 
 def _get_ohlcv_raw(
     symbol: str,

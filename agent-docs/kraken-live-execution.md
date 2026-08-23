@@ -40,6 +40,13 @@ Below-minimum partial sells use one of these per-exchange policies:
 - `sell_all`: retry validation with the full available position quantity.
 - `skip`: leave the position unchanged.
 
+These policies are exchange-neutral and also apply to Binance and OKX. A full
+exit whose remaining position is below the market amount step is closed
+logically without another exchange order. No synthetic fill or PnL is created;
+the residual stays in the exchange wallet and is reported once to the operator.
+Amounts below a current minimum amount or notional, but not below the amount
+step, remain open under the selected policy.
+
 ## Rollout
 
 Apply migration `6:gated_kraken_live_execution`, leave both live flags off and

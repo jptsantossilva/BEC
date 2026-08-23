@@ -199,6 +199,7 @@ def test_kraken_adapter_implements_contract_and_maps_aliases_and_limits():
     assert adapter.normalize_amount("BTC/EUR", Decimal("0.00129")) == Decimal(
         "0.0012"
     )
+    assert adapter.normalize_amount("BTC/EUR", Decimal("0.00001")) == Decimal("0")
     assert adapter.normalize_price("BTC/EUR", Decimal("60000.29")) == Decimal(
         "60000.2"
     )

@@ -7,6 +7,7 @@ import pytest
 
 from bec.exchanges import live_execution
 from bec.exchanges.base import (
+    Balance,
     ExchangeCapabilities,
     MarketInfo,
     OrderFill,
@@ -14,6 +15,7 @@ from bec.exchanges.base import (
     OrderStatus,
     OrderValidation,
     OrderBook,
+    SellOutcomeStatus,
     Ticker,
 )
 
@@ -642,11 +644,11 @@ def test_manual_demo_ioc_sell_uses_explicit_limit_order_not_market_order(monkeyp
     )
     monkeypatch.setattr(
         live_execution,
-        "_sell_amount",
+        "_sell_inputs",
         lambda **kwargs: (
-            Decimal("0.1"),
             market,
-            SimpleNamespace(get=lambda key, default="": ""),
+            Balance("BTC", Decimal("0.1")),
+            {"Id": 9, "Qty": Decimal("0.1"), "Strategy_Params_JSON": ""},
         ),
     )
     monkeypatch.setattr(
@@ -655,6 +657,7 @@ def test_manual_demo_ioc_sell_uses_explicit_limit_order_not_market_order(monkeyp
         lambda **kwargs: {"symbol": "BTC/USDC", "best_bid": Decimal("99"), "best_ask": Decimal("101")},
     )
     monkeypatch.setattr(live_execution.service, "normalize_price", lambda _symbol, price: price)
+    monkeypatch.setattr(live_execution.service, "normalize_amount", lambda _symbol, amount: amount)
     monkeypatch.setattr(
         live_execution.service,
         "validate_order",
@@ -710,8 +713,12 @@ def test_manual_demo_limit_ioc_rejects_a_price_above_the_latest_bid(monkeypatch)
     )
     monkeypatch.setattr(
         live_execution,
-        "_sell_amount",
-        lambda **kwargs: (Decimal("0.1"), market, SimpleNamespace()),
+        "_sell_inputs",
+        lambda **kwargs: (
+            market,
+            Balance("BTC", Decimal("0.1")),
+            {"Id": 9, "Qty": Decimal("0.1"), "Strategy_Params_JSON": ""},
+        ),
     )
     monkeypatch.setattr(live_execution.service, "normalize_price", lambda _symbol, price: price)
     monkeypatch.setattr(
@@ -764,14 +771,19 @@ def test_below_minimum_accumulate_policy_skips_without_creating_intent(monkeypat
     )
     monkeypatch.setattr(
         live_execution,
-        "_sell_amount",
-        lambda **kwargs: (Decimal("0.0001"), market, SimpleNamespace()),
+        "_sell_inputs",
+        lambda **kwargs: (
+            market,
+            Balance("BTC", Decimal("0.0002")),
+            {"Id": 10, "Qty": Decimal("0.0002"), "Strategy_Params_JSON": ""},
+        ),
     )
     monkeypatch.setattr(
         live_execution.service,
         "fetch_ticker",
         lambda symbol: Ticker(symbol, Decimal("100"), bid=Decimal("100")),
     )
+    monkeypatch.setattr(live_execution.service, "normalize_amount", lambda _symbol, amount: amount)
     monkeypatch.setattr(
         live_execution.service,
         "validate_order",
@@ -793,7 +805,6 @@ def test_below_minimum_accumulate_policy_skips_without_creating_intent(monkeypat
 
 def test_sell_all_policy_revalidates_full_position_before_submission(monkeypatch):
     market = MarketInfo("BTC/USDC", "XBTUSDC", "BTC", "USDC", True)
-    amounts = iter((Decimal("0.1"), Decimal("0.2")))
     created = []
     monkeypatch.setattr(
         live_execution,
@@ -802,14 +813,19 @@ def test_sell_all_policy_revalidates_full_position_before_submission(monkeypatch
     )
     monkeypatch.setattr(
         live_execution,
-        "_sell_amount",
-        lambda **kwargs: (next(amounts), market, SimpleNamespace(get=lambda *args: "")),
+        "_sell_inputs",
+        lambda **kwargs: (
+            market,
+            Balance("BTC", Decimal("0.2")),
+            {"Id": 10, "Qty": Decimal("0.2"), "Strategy_Params_JSON": ""},
+        ),
     )
     monkeypatch.setattr(
         live_execution.service,
         "fetch_ticker",
         lambda symbol: Ticker(symbol, Decimal("100"), bid=Decimal("100")),
     )
+    monkeypatch.setattr(live_execution.service, "normalize_amount", lambda _symbol, amount: amount)
     monkeypatch.setattr(
         live_execution.service,
         "validate_order",
@@ -842,6 +858,74 @@ def test_sell_all_policy_revalidates_full_position_before_submission(monkeypatch
 
     assert created[0]["requested_qty"] == pytest.approx(0.2)
     assert created[0]["sell_percentage"] == 100
+
+
+def test_pengus_dust_closes_without_intent_order_or_fatal_error(monkeypatch):
+    market = MarketInfo(
+        "PENGU/USDC",
+        "PENGUUSDC",
+        "PENGU",
+        "USDC",
+        True,
+        amount_step=Decimal("0.0001"),
+        min_amount=Decimal("0.0002"),
+        min_cost=Decimal("5"),
+    )
+    notifications = []
+    monkeypatch.setattr(
+        live_execution,
+        "_live_exchange",
+        lambda side: _exchange(name="Kraken", sell_enabled=True),
+    )
+    monkeypatch.setattr(
+        live_execution,
+        "_sell_inputs",
+        lambda **kwargs: (
+            market,
+            Balance("PENGU", Decimal("0.0001")),
+            {
+                "Id": 10,
+                "Qty": Decimal("0.000070"),
+                "Strategy_Params_JSON": "",
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        live_execution.service,
+        "fetch_ticker",
+        lambda symbol: Ticker(symbol, Decimal("0.01012"), bid=Decimal("0.01012")),
+    )
+    monkeypatch.setattr(
+        live_execution.database,
+        "close_position_without_order",
+        lambda **kwargs: {"closed": True, "reason": "dust"},
+    )
+    monkeypatch.setattr(live_execution.database, "exchange_log_prefix", lambda: "[test]")
+    monkeypatch.setattr(
+        live_execution.database,
+        "create_order_intent",
+        lambda **kwargs: pytest.fail("dust must not create an order intent"),
+    )
+    monkeypatch.setattr(
+        live_execution.service,
+        "create_market_sell",
+        lambda *args, **kwargs: pytest.fail("dust must not call the exchange"),
+    )
+    monkeypatch.setattr(
+        live_execution.telegram,
+        "send_telegram_message",
+        lambda token, emoji, message: notifications.append(message),
+    )
+
+    outcome = live_execution.create_sell_order(
+        symbol="PENGU/USDC", bot="1h", percentage=100, position_id=10
+    )
+
+    assert outcome.status == SellOutcomeStatus.CLOSED_WITHOUT_ORDER
+    assert outcome.position_closed is True
+    assert outcome.residual_quantity == Decimal("0.000070")
+    assert len(notifications) == 1
+    assert "No order was submitted" in notifications[0]
 
 
 def test_uncertain_submission_is_marked_for_reconciliation(monkeypatch):

@@ -28,6 +28,28 @@ To roll back PR 4, stop dashboard and jobs-runner together and deploy the PR 3
 application image. The PR 3 schema remains compatible, but records written by
 other exchanges must not exist before rollback.
 
+## Exchange-Neutral Sell Remainders
+
+All supported spot exchanges use the active market's amount step before a sell
+intent is created. A positive amount below that step normalizes to zero and is
+handled as a validation result, never as an unhandled adapter exception.
+
+An effective 100% exit closes the BEC position without creating a synthetic
+order when the position quantity itself is below the amount step. The residual
+remains in the exchange wallet, realized PnL contains only genuine fills, and
+the operator receives one informational message. A successful full sell also
+closes a remainder below the step after persisting the actual executed amount.
+
+Amounts that satisfy the step but are below the exchange's current minimum
+amount or notional are not written off. They remain open under the configured
+`accumulate`, `sell_all`, or `skip` policy because they may become tradable
+later. A zero total exchange balance may close a full-exit position as an
+external-balance reconciliation event; a positive locked balance never does.
+
+Before any close without an order, BEC rechecks that the position is unchanged
+and no unsettled sell intent exists. Partial sells that normalize to zero leave
+the position and take-profit state unchanged.
+
 ## Validation
 
 Automated tests must cover exchange isolation, first activation, switch

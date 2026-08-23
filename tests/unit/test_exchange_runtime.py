@@ -1508,3 +1508,160 @@ def test_partial_sell_reconciliation_decrements_position_once_and_keeps_remainde
     finally:
         connection.close()
         _restore_connection(original)
+
+
+def test_full_sell_closes_only_the_non_tradable_residual_and_is_idempotent(
+    tmp_path, monkeypatch
+):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        database.set_active_exchange(2)
+        monkeypatch.setattr(
+            database,
+            "_exchange_symbol_metadata",
+            lambda symbol: (2, "PENGU/USDC", "PENGUUSDC", "PENGU", "USDC"),
+        )
+        position_id = connection.execute(
+            """
+            INSERT INTO Positions
+                (Symbol, Position, Exchange_Id, Qty, Buy_Price, Buy_Order_Id, Bot)
+            VALUES ('PENGU/USDC',1,2,1629.77437,0.007754,'BUY-PENGU','1h')
+            """
+        ).lastrowid
+        connection.commit()
+        intent = database.create_order_intent(
+            side="SELL",
+            symbol="PENGU/USDC",
+            bot="1h",
+            position_id=position_id,
+            requested_qty=1629.7743,
+            sell_percentage=100,
+            client_order_id="bec-pengu-close",
+        )
+        database.mark_order_intent_submitting(intent["Id"])
+        result = _kraken_order_result(
+            OrderStatus.FILLED,
+            "1629.7743",
+            "0",
+            "SELL-PENGU",
+            side="sell",
+            fee_asset="USDC",
+        )
+
+        first = database.apply_order_result(
+            intent["Id"], result, amount_step=Decimal("0.0001")
+        )
+        repeated = database.apply_order_result(
+            intent["Id"], result, amount_step=Decimal("0.0001")
+        )
+
+        assert first["closed_position"] is True
+        assert first["dust_closed"] is True
+        assert first["dust_quantity"] == pytest.approx(0.00007)
+        assert repeated["closed_position"] is False
+        assert repeated["dust_closed"] is False
+        assert repeated["delta_executed_qty"] == 0
+        assert connection.execute(
+            "SELECT Position, Qty FROM Positions WHERE Id=?", (position_id,)
+        ).fetchone() == (0, 0.0)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM Orders WHERE Id=?", (intent["Id"],)
+        ).fetchone()[0] == 1
+    finally:
+        connection.close()
+        _restore_connection(original)
+
+
+def test_close_position_without_order_rechecks_intents_and_releases_locks(tmp_path):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        database.set_active_exchange(2)
+        position_id = connection.execute(
+            """
+            INSERT INTO Positions
+                (Symbol, Position, Exchange_Id, Qty, Buy_Price, Buy_Order_Id, Bot)
+            VALUES ('PENGU/USDC',1,2,0.00007,0.007754,'BUY-PENGU','1h')
+            """
+        ).lastrowid
+        connection.execute(
+            """
+            INSERT INTO Locked_Values
+                (Position_Id, Buy_Order_Id, Locked_Amount, Exchange_Id)
+            VALUES (?, 'BUY-PENGU', 10, 2)
+            """,
+            (position_id,),
+        )
+        connection.commit()
+
+        closed = database.close_position_without_order(
+            position_id=position_id,
+            expected_qty=Decimal("0.00007"),
+            closure_reason="dust",
+            amount_step=Decimal("0.0001"),
+        )
+        repeated = database.close_position_without_order(
+            position_id=position_id,
+            expected_qty=Decimal("0.00007"),
+            closure_reason="dust",
+            amount_step=Decimal("0.0001"),
+        )
+
+        assert closed["closed"] is True
+        assert repeated == {"closed": False, "reason": "position_not_open"}
+        assert connection.execute(
+            "SELECT Position, Qty FROM Positions WHERE Id=?", (position_id,)
+        ).fetchone() == (0, 0.0)
+        assert connection.execute(
+            "SELECT Released FROM Locked_Values WHERE Position_Id=?", (position_id,)
+        ).fetchone()[0] == 1
+    finally:
+        connection.close()
+        _restore_connection(original)
+
+
+def test_close_position_without_order_refuses_an_unsettled_sell_intent(
+    tmp_path, monkeypatch
+):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        database.set_active_exchange(2)
+        monkeypatch.setattr(
+            database,
+            "_exchange_symbol_metadata",
+            lambda symbol: (2, "PENGU/USDC", "PENGUUSDC", "PENGU", "USDC"),
+        )
+        position_id = connection.execute(
+            """
+            INSERT INTO Positions
+                (Symbol, Position, Exchange_Id, Qty, Buy_Price, Buy_Order_Id, Bot)
+            VALUES ('PENGU/USDC',1,2,0.00007,0.007754,'BUY-PENGU','1h')
+            """
+        ).lastrowid
+        connection.commit()
+        database.create_order_intent(
+            side="SELL",
+            symbol="PENGU/USDC",
+            bot="1h",
+            position_id=position_id,
+            requested_qty=0.00007,
+            sell_percentage=100,
+            client_order_id="bec-pengu-pending",
+        )
+
+        outcome = database.close_position_without_order(
+            position_id=position_id,
+            expected_qty=Decimal("0.00007"),
+            closure_reason="dust",
+            amount_step=Decimal("0.0001"),
+        )
+
+        assert outcome == {"closed": False, "reason": "unsettled_sell_intent"}
+        assert connection.execute(
+            "SELECT Position, Qty FROM Positions WHERE Id=?", (position_id,)
+        ).fetchone() == (1, pytest.approx(0.00007))
+    finally:
+        connection.close()
+        _restore_connection(original)

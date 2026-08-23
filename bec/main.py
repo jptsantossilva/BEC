@@ -632,6 +632,19 @@ def _new_trade_cycle_summary(timeframe: str, routine_log_mode: str) -> dict:
     }
 
 
+def _sell_outcome_action_taken(outcome) -> bool:
+    """Read the canonical sell outcome while tolerating isolated legacy mocks."""
+    if outcome is None:
+        return True
+    return bool(getattr(outcome, "action_taken", False))
+
+
+def _sell_outcome_is_full_exit(outcome, requested_percentage: float) -> bool:
+    return float(
+        getattr(outcome, "effective_percentage", requested_percentage)
+    ) >= 100.0
+
+
 def _track_trade_cycle_example(summary: dict, msg: str):
     if len(summary["examples"]) < 5:
         summary["examples"].append(msg)
@@ -894,8 +907,7 @@ def trade(timeframe, run_mode, settings=None, send_summary=True):
 
             # stop loss
             if sell_stop_loss:
-                cycle_summary["sell_actions"] += 1
-                binance.create_sell_order(
+                outcome = binance.create_sell_order(
                     symbol=symbol,
                     bot=timeframe,
                     strategy_id=strategy_id,
@@ -903,18 +915,25 @@ def trade(timeframe, run_mode, settings=None, send_summary=True):
                     position_id=position_id,
                     reason=stop_loss_reason,
                 )
+                if _sell_outcome_action_taken(outcome):
+                    cycle_summary["sell_actions"] += 1
+                else:
+                    cycle_summary["sell_no_action"] += 1
                 continue
 
             # sell_codition
             if sell_condition:
-                cycle_summary["sell_actions"] += 1
-                binance.create_sell_order(
+                outcome = binance.create_sell_order(
                     symbol=symbol,
                     bot=timeframe,
                     strategy_id=strategy_id,
                     strategy_name=strategy_name,
                     position_id=position_id,
                 )
+                if _sell_outcome_action_taken(outcome):
+                    cycle_summary["sell_actions"] += 1
+                else:
+                    cycle_summary["sell_no_action"] += 1
                 continue
 
             # Take-Profits in cascade.
@@ -927,7 +946,7 @@ def trade(timeframe, run_mode, settings=None, send_summary=True):
                 if tp_amount <= 0.0:
                     continue
 
-                binance.create_sell_order(
+                outcome = binance.create_sell_order(
                     symbol=symbol,
                     bot=timeframe,
                     strategy_id=strategy_id,
@@ -938,11 +957,14 @@ def trade(timeframe, run_mode, settings=None, send_summary=True):
                     take_profit_num=tp_num,
                 )
 
+                if not _sell_outcome_action_taken(outcome):
+                    cycle_summary["sell_no_action"] += 1
+                    continue
                 tp_executed = True
                 cycle_summary["sell_actions"] += 1
                 cycle_summary["take_profit_actions"] += 1
                 # If this level sold 100%, there's no remaining position; stop chaining TPs
-                if tp_amount >= 100.0:
+                if _sell_outcome_is_full_exit(outcome, tp_amount):
                     break
 
             # If any TP executed, skip the rest of this loop iteration (avoid redundant actions)

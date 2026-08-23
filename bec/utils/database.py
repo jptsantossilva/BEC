@@ -9,6 +9,7 @@ import sqlite3
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 import pandas as pd
 import yaml
@@ -2098,7 +2099,7 @@ def _persist_order_fills(connection, intent: dict, result) -> dict[str, float]:
     return {str(asset): float(amount) for asset, amount in rows}
 
 
-def apply_order_result(intent_id: int, result) -> dict:
+def apply_order_result(intent_id: int, result, *, amount_step=None) -> dict:
     """Persist one canonical result and idempotently apply its fill delta."""
     from bec.exchanges.base import OrderStatus
 
@@ -2116,6 +2117,11 @@ def apply_order_result(intent_id: int, result) -> dict:
     raw_json = json.dumps(dict(result.raw), ensure_ascii=True, default=str)
     remaining_qty = None
     closed_position = False
+    dust_closed = False
+    dust_quantity = 0.0
+    amount_step_decimal = (
+        Decimal(str(amount_step)) if amount_step not in (None, "") else None
+    )
 
     with connection:
         fee_totals = _persist_order_fills(connection, intent, result)
@@ -2131,7 +2137,25 @@ def apply_order_result(intent_id: int, result) -> dict:
         delta_net = net_qty - old_applied_net
         fees_json = json.dumps(fee_totals, sort_keys=True, separators=(",", ":"))
 
-        if intent.get("Position_Id") is not None and (delta_executed != 0 or delta_net != 0):
+        previous_status = str(intent.get("Order_Status") or "unknown").lower()
+        terminal_transition = previous_status not in {
+            OrderStatus.FILLED.value,
+            OrderStatus.CANCELED.value,
+            OrderStatus.REJECTED.value,
+            OrderStatus.EXPIRED.value,
+        }
+        terminal_full_sell = (
+            str(intent["Side"]).upper() == "SELL"
+            and terminal
+            and terminal_transition
+            and executed > 0
+            and float(intent.get("Sell_Perc") or 0) >= 100
+            and amount_step_decimal is not None
+            and amount_step_decimal > 0
+        )
+        if intent.get("Position_Id") is not None and (
+            delta_executed != 0 or delta_net != 0 or terminal_full_sell
+        ):
             position = connection.execute(
                 "SELECT Qty, Buy_Price, Buy_Order_Id FROM Positions WHERE Id=?",
                 (int(intent["Position_Id"]),),
@@ -2166,10 +2190,23 @@ def apply_order_result(intent_id: int, result) -> dict:
                     ),
                 )
             else:
-                remaining = max(0.0, float(position[0] or 0) - delta_executed)
+                remaining_decimal = max(
+                    Decimal("0"),
+                    Decimal(str(position[0] or 0)) - Decimal(str(delta_executed)),
+                )
+                remaining = float(remaining_decimal)
                 # A canceled/rejected full-sell request may still be only partially
-                # filled. Close the position only when no base quantity remains.
-                close_position = terminal and remaining <= 1e-12
+                # filled. Close only an exact remainder or a structurally
+                # non-tradable remainder from an effective 100% exit.
+                close_position = terminal and remaining_decimal <= Decimal("1e-12")
+                dust_closed = bool(
+                    terminal_full_sell
+                    and remaining_decimal > Decimal("1e-12")
+                    and remaining_decimal < amount_step_decimal
+                )
+                if dust_closed:
+                    close_position = True
+                    dust_quantity = remaining
                 if close_position:
                     closed_position = True
                     connection.execute(
@@ -2248,6 +2285,8 @@ def apply_order_result(intent_id: int, result) -> dict:
         "terminal": terminal,
         "remaining_qty": remaining_qty,
         "closed_position": closed_position,
+        "dust_closed": dust_closed,
+        "dust_quantity": dust_quantity,
     }
 
 
@@ -3269,6 +3308,84 @@ def set_position_sell(bot: str, symbol: str, position_id: int | None = None):
             )
         else:
             connection.execute(sql_set_position_sell, (bot, symbol))
+
+
+def close_position_without_order(
+    *, position_id: int, expected_qty, closure_reason: str, amount_step=None
+) -> dict:
+    """Atomically close a stale/dust position without fabricating an order."""
+    if closure_reason not in {"dust", "zero_balance"}:
+        raise ValueError("Unsupported position closure reason")
+    expected = Decimal(str(expected_qty))
+    step = Decimal(str(amount_step)) if amount_step not in (None, "") else None
+    connection = _get_conn()
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        row = connection.execute(
+            f"""
+            SELECT Id, Exchange_Id, Symbol, Qty, Position
+            FROM Positions
+            WHERE Id=? AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
+            """,
+            (int(position_id),),
+        ).fetchone()
+        if row is None or int(row[4] or 0) != 1:
+            connection.rollback()
+            return {"closed": False, "reason": "position_not_open"}
+        current = Decimal(str(row[3] or 0))
+        if current != expected:
+            connection.rollback()
+            return {"closed": False, "reason": "position_changed"}
+        unsettled = connection.execute(
+            """
+            SELECT 1 FROM Orders
+            WHERE Exchange_Id=? AND Position_Id=? AND Side='SELL'
+              AND lower(COALESCE(Order_Status, 'unknown'))
+                  IN ('pending','open','partially_filled','unknown')
+            LIMIT 1
+            """,
+            (int(row[1]), int(position_id)),
+        ).fetchone()
+        if unsettled is not None:
+            connection.rollback()
+            return {"closed": False, "reason": "unsettled_sell_intent"}
+        if closure_reason == "dust" and (
+            step is None or step <= 0 or current >= step
+        ):
+            connection.rollback()
+            return {"closed": False, "reason": "position_is_not_dust"}
+        cursor = connection.execute(
+            """
+            UPDATE Positions
+            SET Date=NULL, Position=0, Buy_Price=0, Curr_Price=0, Qty=0,
+                PnL_Perc=0, PnL_Value=0, Duration=0, Buy_Order_Id=NULL,
+                Take_Profits_JSON='[]', Highest_Price_Since_Entry=0,
+                Trail_Stop_ATR=0
+            WHERE Id=? AND Position=1 AND Qty=? AND Exchange_Id=?
+            """,
+            (int(position_id), float(expected), int(row[1])),
+        )
+        if cursor.rowcount != 1:
+            connection.rollback()
+            return {"closed": False, "reason": "position_changed"}
+        connection.execute(
+            """
+            UPDATE Locked_Values
+            SET Released=1, Released_At=CURRENT_TIMESTAMP
+            WHERE Position_Id=? AND Exchange_Id=? AND Released=0
+            """,
+            (str(position_id), int(row[1])),
+        )
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    return {
+        "closed": True,
+        "reason": closure_reason,
+        "position_id": int(position_id),
+        "residual_qty": float(expected),
+    }
 
 
 sql_set_position_qty = f"""

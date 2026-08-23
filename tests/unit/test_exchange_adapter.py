@@ -187,6 +187,9 @@ def test_binance_adapter_normalizes_markets_amounts_prices_and_limits():
     assert adapter.normalize_amount("BTC/USDC", Decimal("0.00129")) == Decimal(
         "0.00120000"
     )
+    assert adapter.normalize_amount("BTC/USDC", Decimal("0.00001")) == Decimal(
+        "0E-8"
+    )
     assert adapter.normalize_price("BTC/USDC", Decimal("60000.259")) == Decimal(
         "60000.25000000"
     )
@@ -200,6 +203,7 @@ def test_binance_adapter_normalizes_markets_amounts_prices_and_limits():
         )
     )
     assert invalid.valid is False
+    assert "amount must be greater than zero" in invalid.errors
     assert "amount is below the exchange minimum" in invalid.errors
     assert "cost is below the exchange minimum" in invalid.errors
 

@@ -7,7 +7,19 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from bec.exchanges import service
-from bec.exchanges.base import OrderRequest, OrderStatus
+from bec.exchanges.base import (
+    OrderRequest,
+    OrderStatus,
+    SellOrderOutcome,
+    SellOutcomeStatus,
+    SubmissionState,
+)
+from bec.exchanges.sell_sizing import (
+    SellSizingDecision,
+    SellSizingStatus,
+    format_position_close_without_order,
+    prepare_sell_quantity,
+)
 from bec.utils import config, database, telegram
 
 
@@ -21,6 +33,7 @@ TERMINAL_ORDER_STATUSES = {
     OrderStatus.REJECTED,
     OrderStatus.EXPIRED,
 }
+_UNRESOLVED_AMOUNT_STEP = object()
 
 
 def _live_exchange(side: str) -> dict:
@@ -230,11 +243,13 @@ def _record_submission_failure(
 
 
 def _post_apply_sell(intent: dict, applied: dict, average_price: float) -> None:
-    if applied["delta_executed_qty"] <= 0 or intent.get("Position_Id") is None:
+    if intent.get("Position_Id") is None:
         return
     position_id = int(intent["Position_Id"])
     if applied["closed_position"]:
         database.release_value(position_id)
+        return
+    if applied["delta_executed_qty"] <= 0:
         return
     take_profit_num = int(intent.get("Take_Profit_Num") or 0)
     if take_profit_num > 0 and applied["terminal"]:
@@ -434,8 +449,24 @@ def _apply_order_result_and_notify(
     confirmation_source: str,
     strategy_name: str = "",
     reason: str = "",
+    amount_step=_UNRESOLVED_AMOUNT_STEP,
 ) -> dict:
-    applied = database.apply_order_result(intent["Id"], result)
+    if amount_step is _UNRESOLVED_AMOUNT_STEP:
+        amount_step = None
+        if str(intent.get("Side") or "").upper() == "SELL":
+            try:
+                market = service.load_markets()[service.normalize_symbol(result.symbol)]
+                amount_step = market.amount_step
+            except Exception:
+                # Fill persistence must never fail only because public market
+                # metadata is temporarily unavailable. A later full-exit
+                # attempt can still close the dust.
+                amount_step = None
+    applied = (
+        database.apply_order_result(intent["Id"], result, amount_step=amount_step)
+        if amount_step is not None
+        else database.apply_order_result(intent["Id"], result)
+    )
     if str(intent.get("Side") or "").upper() == "SELL":
         _post_apply_sell(intent, applied, float(result.average_price or 0))
     persisted_intent = database.get_order_intent(intent["Id"])
@@ -450,6 +481,17 @@ def _apply_order_result_and_notify(
         and float(applied.get("delta_executed_qty") or 0) > 0
     )
     if not first_fill:
+        if applied.get("dust_closed"):
+            # The real fill was already notified when it first appeared. Keep
+            # terminal reconciliation idempotent and avoid a second Telegram
+            # message for the same exchange execution.
+            print(
+                database.exchange_log_prefix(),
+                result.symbol,
+                "Position closed during reconciliation with non-tradable "
+                f"residual {applied.get('dust_quantity')} "
+                f"(amount step {amount_step})",
+            )
         return applied
 
     side = str(intent.get("Side") or result.side).upper()
@@ -482,6 +524,12 @@ def _apply_order_result_and_notify(
         )
     else:
         pnl_value = float(persisted_intent.get("PnL_Value") or 0)
+        event_reason = reason
+        if applied.get("dust_closed"):
+            event_reason = (
+                f"{reason} | Position closed with non-tradable residual "
+                f"{applied.get('dust_quantity')} (amount step {amount_step})"
+            ).strip(" |")
         event.update(
             emoji=(
                 telegram.EMOJI_TRADE_WITH_PROFIT
@@ -490,6 +538,7 @@ def _apply_order_result_and_notify(
             ),
             pnl_perc=float(persisted_intent.get("PnL_Perc") or 0),
             pnl_value=pnl_value,
+            reason=event_reason,
         )
     _send_trade_notification(**event)
     return applied
@@ -502,6 +551,7 @@ def _persist_submitted_order(
     exchange: dict,
     strategy_name: str,
     reason: str,
+    amount_step=_UNRESOLVED_AMOUNT_STEP,
 ):
     result = acknowledgement
     confirmation_source = (
@@ -543,6 +593,7 @@ def _persist_submitted_order(
                 confirmation_source=confirmation_source,
                 strategy_name=strategy_name,
                 reason=reason,
+                amount_step=amount_step,
             )
         return {
             "result": result,
@@ -557,6 +608,7 @@ def _persist_submitted_order(
         confirmation_source=confirmation_source,
         strategy_name=strategy_name,
         reason=reason,
+        amount_step=amount_step,
     )
     return {"result": result, "applied": applied, "exchange": exchange}
 
@@ -831,17 +883,14 @@ def create_okx_demo_manual_sell(*, position_id: int, limit_price: Decimal):
     )
 
 
-def _sell_amount(
-    *, symbol: str, position_id: int | None, bot: str, percentage: float,
+def _sell_inputs(
+    *, symbol: str, position_id: int | None, bot: str,
     convert_all_balance: bool,
-) -> tuple[Decimal, object, object]:
+) -> tuple[object, object, object]:
     market = service.load_markets()[service.normalize_symbol(symbol)]
     balance = service.fetch_balance(market.base_asset)
-    available = Decimal(str(balance.free))
     position = None
-    if convert_all_balance:
-        requested = available
-    else:
+    if not convert_all_balance:
         df = (
             database.get_position_by_id(position_id)
             if position_id is not None
@@ -850,9 +899,60 @@ def _sell_amount(
         if df.empty:
             raise RuntimeError("Open position not found")
         position = df.iloc[0]
-        requested = min(available, Decimal(str(position["Qty"])))
-    requested *= Decimal(str(percentage)) / Decimal("100")
-    return service.normalize_amount(market.symbol, requested), market, position
+    return market, balance, position
+
+
+def _close_without_exchange_order(
+    *, exchange: dict, market, position, bot: str, decision: SellSizingDecision,
+) -> SellOrderOutcome:
+    closure_reason = (
+        "dust" if decision.status == SellSizingStatus.DUST else "zero_balance"
+    )
+    closed = database.close_position_without_order(
+        position_id=int(position["Id"]),
+        expected_qty=decision.position_quantity,
+        closure_reason=closure_reason,
+        amount_step=decision.amount_step,
+    )
+    if not closed["closed"]:
+        message = f"Position close skipped: {closed['reason']}"
+        print(database.exchange_log_prefix(), market.symbol, message)
+        return SellOrderOutcome(
+            status=SellOutcomeStatus.SKIPPED,
+            reason=message,
+            reconciliation_required=closed["reason"] == "unsettled_sell_intent",
+            requested_quantity=decision.requested_quantity,
+            residual_quantity=decision.position_quantity,
+            effective_percentage=decision.effective_percentage,
+            details={"policy": exchange["partial_sell_policy"]},
+        )
+    message = format_position_close_without_order(
+        exchange=str(exchange.get("name") or exchange.get("code") or ""),
+        symbol=market.symbol,
+        timeframe=bot,
+        decision=decision,
+        closure_reason=closure_reason,
+    )
+    print(database.exchange_log_prefix(), message.replace("\n", " | "))
+    try:
+        telegram.send_telegram_message(
+            telegram.get_telegram_token(), telegram.EMOJI_INFORMATION, message
+        )
+    except Exception as exc:
+        print(
+            database.exchange_log_prefix(),
+            f"Position closure notification failed ({type(exc).__name__})",
+        )
+    return SellOrderOutcome(
+        status=SellOutcomeStatus.CLOSED_WITHOUT_ORDER,
+        reason=message,
+        position_closed=True,
+        closure_reason=closure_reason,
+        requested_quantity=decision.requested_quantity,
+        residual_quantity=decision.position_quantity,
+        effective_percentage=decision.effective_percentage,
+        details={"policy": exchange["partial_sell_policy"]},
+    )
 
 
 def create_sell_order(
@@ -871,15 +971,18 @@ def create_sell_order(
 ):
     exchange, skipped = _guarded_live_exchange("sell")
     if skipped:
-        return skipped
+        return SellOrderOutcome(
+            status=SellOutcomeStatus.SKIPPED,
+            reason=str(skipped["reason"]),
+            effective_percentage=Decimal(str(percentage)),
+        )
     _require_okx_production_strategy_gate(
         exchange, bot=bot, symbol=symbol, strategy_id=strategy_id, side="sell"
     )
-    amount, market, position = _sell_amount(
+    market, balance, position = _sell_inputs(
         symbol=symbol,
         position_id=position_id,
         bot=bot,
-        percentage=percentage,
         convert_all_balance=convert_all_balance,
     )
     if execution_style not in {"market", "okx_demo_limit_ioc"}:
@@ -904,36 +1007,63 @@ def create_sell_order(
     if validation_price is None or Decimal(str(validation_price)) <= 0:
         raise RuntimeError("A current exchange price is unavailable for the sell validation")
 
-    def validate(value: Decimal):
-        return service.validate_order(
-            OrderRequest(
-                symbol=market.symbol,
-                side="sell",
-                amount=value,
-                price=validation_price,
+    decision = prepare_sell_quantity(
+        market=market,
+        balance=balance,
+        position_quantity=(position["Qty"] if position is not None else 0),
+        percentage=percentage,
+        partial_sell_policy=exchange["partial_sell_policy"],
+        validation_price=validation_price,
+        normalize_amount=service.normalize_amount,
+        validate_order=service.validate_order,
+        convert_all_balance=convert_all_balance,
+    )
+    if decision.status in {SellSizingStatus.DUST, SellSizingStatus.ZERO_BALANCE}:
+        if position is None:
+            return SellOrderOutcome(
+                status=SellOutcomeStatus.SKIPPED,
+                reason="No position is available for a logical close",
+                effective_percentage=decision.effective_percentage,
             )
+        return _close_without_exchange_order(
+            exchange=exchange,
+            market=market,
+            position=position,
+            bot=bot,
+            decision=decision,
+        )
+    if not decision.ready:
+        message = (
+            f"Exchange sell skipped by {exchange['partial_sell_policy']} policy: "
+            + "; ".join(decision.errors or (decision.status.value,))
+        )
+        print(database.exchange_log_prefix(), message)
+        if decision.status in {
+            SellSizingStatus.LOCKED_BALANCE,
+            SellSizingStatus.BALANCE_MISMATCH,
+        }:
+            telegram.send_error_event(
+                action="prepare exchange sell order",
+                symbol=market.symbol,
+                timeframe=bot,
+                strategy=strategy_name or strategy_id,
+                reason="Exchange balance cannot satisfy the position sell",
+                impact="No order was submitted and the position remains open.",
+                next_step="Review exchange open orders, locked balance, and BEC reconciliation.",
+                main_token=telegram.get_telegram_token(),
+                main_prefix=telegram.get_telegram_prefix(bot),
+            )
+        return SellOrderOutcome(
+            status=SellOutcomeStatus.SKIPPED,
+            reason=message,
+            requested_quantity=decision.requested_quantity,
+            residual_quantity=decision.position_quantity,
+            effective_percentage=decision.effective_percentage,
+            details={"policy": exchange["partial_sell_policy"]},
         )
 
-    validation = validate(amount)
-    if not validation.valid:
-        policy = exchange["partial_sell_policy"]
-        if policy == "sell_all" and percentage < 100:
-            amount, market, position = _sell_amount(
-                symbol=symbol,
-                position_id=position_id,
-                bot=bot,
-                percentage=100,
-                convert_all_balance=convert_all_balance,
-            )
-            validation = validate(amount)
-            percentage = 100
-        if not validation.valid:
-            message = (
-                f"Exchange sell skipped by {policy} policy: "
-                + "; ".join(validation.errors)
-            )
-            print(database.exchange_log_prefix(), message)
-            return {"skipped": True, "policy": policy, "reason": message}
+    amount = decision.normalized_quantity
+    percentage = float(decision.effective_percentage)
 
     limit_ioc_creator = None
     if execution_style == "okx_demo_limit_ioc":
@@ -957,7 +1087,15 @@ def create_sell_order(
         take_profit_num=take_profit_num,
     )
     if duplicate:
-        return duplicate
+        return SellOrderOutcome(
+            status=SellOutcomeStatus.SKIPPED,
+            reason=str(duplicate["reason"]),
+            reconciliation_required=True,
+            requested_quantity=decision.requested_quantity,
+            submitted_quantity=amount,
+            residual_quantity=decision.position_quantity,
+            effective_percentage=decision.effective_percentage,
+        )
     database.mark_order_intent_submitting(intent["Id"])
     try:
         if limit_ioc_creator is not None:
@@ -982,13 +1120,63 @@ def create_sell_order(
             timeframe=bot,
             strategy=strategy_name or strategy_id,
         )
-        return None
-    return _persist_submitted_order(
+        persisted_intent = database.get_order_intent(intent["Id"])
+        unknown = str(persisted_intent.get("Order_Status") or "") == "unknown"
+        return SellOrderOutcome(
+            status=SellOutcomeStatus.FAILED,
+            submission_state=(
+                SubmissionState.UNKNOWN if unknown else SubmissionState.NOT_SUBMITTED
+            ),
+            reason=str(persisted_intent.get("Error_Message") or repr(exc)),
+            reconciliation_required=unknown,
+            requested_quantity=decision.requested_quantity,
+            submitted_quantity=amount,
+            residual_quantity=decision.position_quantity,
+            effective_percentage=decision.effective_percentage,
+        )
+    persisted = _persist_submitted_order(
         intent=intent,
         acknowledgement=result,
         exchange=exchange,
         strategy_name=strategy_name or strategy_id,
         reason=reason or "Exit condition fulfilled",
+        amount_step=decision.amount_step,
+    )
+    if persisted is None:
+        latest = database.get_order_intent(intent["Id"])
+        unknown = str(latest.get("Order_Status") or "") == "unknown"
+        return SellOrderOutcome(
+            status=SellOutcomeStatus.FAILED,
+            submission_state=(
+                SubmissionState.UNKNOWN if unknown else SubmissionState.NOT_SUBMITTED
+            ),
+            reason=str(latest.get("Error_Message") or "Order persistence failed"),
+            reconciliation_required=unknown,
+            requested_quantity=decision.requested_quantity,
+            submitted_quantity=amount,
+            residual_quantity=decision.position_quantity,
+            effective_percentage=decision.effective_percentage,
+        )
+    applied = persisted.get("applied") or {}
+    residual = applied.get("dust_quantity") or applied.get("remaining_qty")
+    return SellOrderOutcome(
+        status=SellOutcomeStatus.SUBMITTED,
+        submission_state=SubmissionState.SUBMITTED,
+        reason=reason or "Exit condition fulfilled",
+        position_closed=bool(applied.get("closed_position")),
+        reconciliation_required=bool(persisted.get("confirmation_deferred")),
+        closure_reason="dust" if applied.get("dust_closed") else "",
+        requested_quantity=decision.requested_quantity,
+        submitted_quantity=amount,
+        residual_quantity=Decimal(str(residual or 0)),
+        effective_percentage=decision.effective_percentage,
+        order_result=persisted.get("result"),
+        details={
+            "applied": applied,
+            "exchange": exchange,
+            "confirmation_deferred": bool(persisted.get("confirmation_deferred")),
+            "policy": exchange["partial_sell_policy"],
+        },
     )
 
 

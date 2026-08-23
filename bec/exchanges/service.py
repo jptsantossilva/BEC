@@ -300,7 +300,16 @@ def create_sell_order(*args: Any, **kwargs: Any):
     from bec.utils import database
 
     if not database.get_active_exchange(required=True)["sell_enabled"]:
-        raise RuntimeError("Sell operations are disabled in Trading Settings")
+        from bec.exchanges.base import SellOrderOutcome, SellOutcomeStatus
+
+        requested_percentage = kwargs.get(
+            "percentage", args[3] if len(args) > 3 else 100
+        )
+        return SellOrderOutcome(
+            status=SellOutcomeStatus.SKIPPED,
+            reason="Sell operations are disabled in Trading Settings",
+            effective_percentage=Decimal(str(requested_percentage)),
+        )
     return _legacy_binance.create_sell_order(*args, **kwargs)
 
 

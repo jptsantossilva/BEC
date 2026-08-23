@@ -165,6 +165,73 @@ class OrderResult:
     raw: Mapping[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
 
+class SellOutcomeStatus(str, Enum):
+    SUBMITTED = "submitted"
+    SKIPPED = "skipped"
+    CLOSED_WITHOUT_ORDER = "closed_without_order"
+    FAILED = "failed"
+
+
+class SubmissionState(str, Enum):
+    NOT_SUBMITTED = "not_submitted"
+    SUBMITTED = "submitted"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class SellOrderOutcome:
+    """Exchange-neutral result returned by every position sell workflow."""
+
+    status: SellOutcomeStatus
+    submission_state: SubmissionState = SubmissionState.NOT_SUBMITTED
+    reason: str = ""
+    position_closed: bool = False
+    reconciliation_required: bool = False
+    closure_reason: str = ""
+    requested_quantity: Decimal = Decimal("0")
+    submitted_quantity: Decimal = Decimal("0")
+    residual_quantity: Decimal = Decimal("0")
+    effective_percentage: Decimal = Decimal("100")
+    order_result: OrderResult | None = None
+    details: Mapping[str, Any] = field(default_factory=dict, repr=False, compare=False)
+
+    @property
+    def action_taken(self) -> bool:
+        return bool(
+            self.position_closed
+            or self.submission_state in {SubmissionState.SUBMITTED, SubmissionState.UNKNOWN}
+        )
+
+    @property
+    def skipped(self) -> bool:
+        return self.status == SellOutcomeStatus.SKIPPED
+
+    def get(self, key: str, default=None):
+        """Small compatibility bridge while internal callers move from dictionaries."""
+        aliases = {
+            "skipped": self.skipped,
+            "result": self.order_result,
+            "position_closed": self.position_closed,
+            "reconciliation_required": self.reconciliation_required,
+            "reason": self.reason,
+        }
+        if key in aliases:
+            return aliases[key]
+        return self.details.get(key, default)
+
+    def __getitem__(self, key: str):
+        value = self.get(key, None)
+        if value is None and key not in self.details and key not in {
+            "skipped",
+            "result",
+            "position_closed",
+            "reconciliation_required",
+            "reason",
+        }:
+            raise KeyError(key)
+        return value
+
+
 @dataclass(frozen=True)
 class ExchangeHealth:
     available: bool

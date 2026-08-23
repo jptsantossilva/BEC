@@ -147,6 +147,7 @@ def test_okx_public_adapter_normalizes_native_symbols_and_filters_non_spot_marke
     assert adapter.normalize_symbol("btc/usdc") == "BTC/USDC"
     assert adapter.normalize_symbol("BTC-USDC") == "BTC/USDC"
     assert adapter.normalize_amount("BTC-USDC", Decimal("0.00129")) == Decimal("0.0012")
+    assert adapter.normalize_amount("BTC-USDC", Decimal("0.00001")) == Decimal("0")
     assert adapter.normalize_price("BTC/USDC", Decimal("60000.29")) == Decimal("60000.2")
 
 

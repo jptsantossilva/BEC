@@ -16,7 +16,7 @@ import bec.utils.config as config
 import bec.utils.database as database
 import bec.exchanges.service as binance
 from bec.exchanges.registry import get_adapter_for_code, get_registered_exchange_codes
-from bec.exchanges.base import SpotMarketAvailability
+from bec.exchanges.base import SellOutcomeStatus, SpotMarketAvailability
 import bec.utils.trading_service as trading_service
 from bec.page_config import configure_page
 from bec.utils.take_profit import (
@@ -521,20 +521,18 @@ def forced_sale_position(
             strategy_name=strategy_name,
             position_id=int(position_id),
         )
-        if sell_result is None:
-            st.warning("No sell order was placed.")
-            return
-
-        result, msg = sell_result
-
-        if result:
+        if sell_result.status == SellOutcomeStatus.SUBMITTED:
             st.success(
                 f"SOLD **{sell_amount_perc}%** of {symbol} from **{timeframe}** bot!"
             )
             time.sleep(1)
             st.rerun()
+        elif sell_result.status == SellOutcomeStatus.CLOSED_WITHOUT_ORDER:
+            st.info(sell_result.reason)
+            time.sleep(1)
+            st.rerun()
         else:
-            st.error(msg)
+            st.error(sell_result.reason or "No sell order was placed.")
 
 
 def unrealized_pnl():
