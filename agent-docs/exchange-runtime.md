@@ -50,6 +50,20 @@ Before any close without an order, BEC rechecks that the position is unchanged
 and no unsettled sell intent exists. Partial sells that normalize to zero leave
 the position and take-profit state unchanged.
 
+## Batched Live Market Data
+
+The scheduler can group simultaneously due `main_1h`, `main_4h` and `main_1d`
+jobs into one process. Strategy requirements are recalculated for every run,
+deduplicated by symbol and timeframe, held only in memory and discarded when
+the process exits. Public OHLCV reads are bounded by the active adapter policy;
+all trading decisions, persistence writes and private exchange calls remain
+sequential, with every sell phase completing before any buy phase starts.
+
+The rollout allowlist enables this path for Kraken, OKX and Binance after their
+read-only benchmark validation. OKX Demo and unknown exchanges remain on the
+legacy per-timeframe scheduler path. Removing an exchange from the allowlist is
+the immediate rollback.
+
 ## Validation
 
 Automated tests must cover exchange isolation, first activation, switch

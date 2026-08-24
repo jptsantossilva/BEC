@@ -489,6 +489,31 @@ def test_rankings_balances_backtests_and_queues_are_exchange_isolated(tmp_path):
         _restore_connection(original)
 
 
+def test_top_performers_are_returned_in_rank_order(tmp_path):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        database.set_active_exchange(1)
+        connection.executemany(
+            "INSERT INTO Symbols_By_Market_Phase "
+            "(Symbol, Rank, Exchange_Id) VALUES (?, ?, 1)",
+            [("THIRDUSDC", 3), ("FIRSTUSDC", 1), ("SECONDUSDC", 2)],
+        )
+        connection.commit()
+
+        result = database.get_all_symbols_by_market_phase()
+
+        assert result["Rank"].tolist() == [1, 2, 3]
+        assert result["Symbol"].tolist() == [
+            "FIRSTUSDC",
+            "SECONDUSDC",
+            "THIRDUSDC",
+        ]
+    finally:
+        connection.close()
+        _restore_connection(original)
+
+
 def test_candidate_cleanup_does_not_use_other_exchange_rankings(tmp_path):
     connection = _runtime_database(tmp_path)
     original = _use_connection(connection)

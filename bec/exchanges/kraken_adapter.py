@@ -11,6 +11,7 @@ from typing import Any
 import ccxt
 
 from bec.exchanges.ccxt_adapter import CcxtExchangeAdapter
+from bec.exchanges.base import OhlcvBatchPolicy
 from bec.exchanges.public_rate_limit import SharedPublicRequestThrottle
 from bec.utils.env_loader import load_env_file
 
@@ -22,6 +23,11 @@ class KrakenAdapter(CcxtExchangeAdapter):
         "XBT": "BTC",
         "XDG": "DOGE",
     }
+    ohlcv_batch_policy = OhlcvBatchPolicy(
+        max_workers=3,
+        throttle_scope="symbol",
+        min_start_interval_seconds=1.1,
+    )
     _INVALID_CLIENT_ORDER_ID_ERROR = "egeneral:invalid arguments:cl_ord_id"
     _REGIONAL_TRADING_RESTRICTION = re.compile(
         r"eaccount:invalid permissions:"
@@ -46,7 +52,7 @@ class KrakenAdapter(CcxtExchangeAdapter):
     ):
         # An injected client is a test/integration boundary. Do not silently
         # import process credentials into it unless the caller explicitly asks.
-        use_environment_credentials = client is None
+        use_environment_credentials = client is None and private_enabled is not False
         if use_environment_credentials:
             load_env_file()
         api_key = (
@@ -69,7 +75,8 @@ class KrakenAdapter(CcxtExchangeAdapter):
                 / "backtest_results"
                 / "rate_limits"
                 / "kraken-public.lock",
-                min_interval_seconds=1.1,
+                min_interval_seconds=self.ohlcv_batch_policy.min_start_interval_seconds,
+                keyed=self.ohlcv_batch_policy.throttle_scope == "symbol",
             )
         kwargs = {
             "client": client,

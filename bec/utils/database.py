@@ -2793,7 +2793,7 @@ sql_get_positions_by_bot_position = f"""
         Bot = ?
         AND Position = ?
         AND Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
-    ORDER BY Rank
+    ORDER BY Rank IS NULL ASC, Rank ASC, Symbol ASC
 """
 
 
@@ -5064,7 +5064,9 @@ sql_get_all_symbols_by_market_phase = f"""
         Perc_Above_DSMA200,
         ROC_30,
         ROC_60
-    FROM Symbols_By_Market_Phase WHERE Exchange_Id={ACTIVE_EXCHANGE_ID_SQL};
+    FROM Symbols_By_Market_Phase
+    WHERE Exchange_Id={ACTIVE_EXCHANGE_ID_SQL}
+    ORDER BY Rank IS NULL ASC, Rank ASC, Symbol ASC;
 """
 
 

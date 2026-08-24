@@ -41,7 +41,7 @@ def test_shared_throttle_honors_interval_and_cooldown(tmp_path):
     assert sleeps == pytest.approx([1.1, 5.0])
 
 
-def test_shared_throttle_serializes_independent_processes(tmp_path):
+def test_shared_throttle_spaces_request_starts_across_processes(tmp_path):
     state_path = tmp_path / "kraken-public.lock"
     process_context = multiprocessing.get_context("spawn")
     output = process_context.Queue()
@@ -61,5 +61,57 @@ def test_shared_throttle_serializes_independent_processes(tmp_path):
 
     starts = sorted(output.get(timeout=1) for _ in processes)
     gaps = [later - earlier for earlier, later in zip(starts, starts[1:])]
-    assert gaps[0] >= 0.045
-    assert gaps[1] >= 0.045
+    assert gaps[0] >= 0.035
+    assert gaps[1] >= 0.035
+
+
+def test_keyed_throttle_does_not_block_unrelated_symbols(tmp_path):
+    now = [100.0]
+    sleeps = []
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    throttle = SharedPublicRequestThrottle(
+        tmp_path / "kraken-public.lock",
+        min_interval_seconds=1.1,
+        keyed=True,
+        clock=lambda: now[0],
+        sleeper=sleep,
+    )
+
+    with throttle.request_slot("BTC/USDC"):
+        pass
+    with throttle.request_slot("ETH/USDC"):
+        pass
+    with throttle.request_slot("BTC/USDC"):
+        pass
+
+    assert sleeps == pytest.approx([1.1])
+
+
+def test_keyed_cooldown_only_defers_the_affected_symbol(tmp_path):
+    now = [100.0]
+    sleeps = []
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    throttle = SharedPublicRequestThrottle(
+        tmp_path / "kraken-public.lock",
+        min_interval_seconds=1.1,
+        keyed=True,
+        clock=lambda: now[0],
+        sleeper=sleep,
+    )
+
+    with throttle.request_slot("BTC/USDC") as lease:
+        lease.defer(5)
+    with throttle.request_slot("ETH/USDC"):
+        pass
+    with throttle.request_slot("BTC/USDC"):
+        pass
+
+    assert sleeps == pytest.approx([5.0])

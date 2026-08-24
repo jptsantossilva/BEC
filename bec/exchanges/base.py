@@ -45,6 +45,15 @@ class ExchangeCapabilities:
 
 
 @dataclass(frozen=True)
+class OhlcvBatchPolicy:
+    """Conservative public OHLCV concurrency policy for one exchange."""
+
+    max_workers: int = 1
+    throttle_scope: str = "global"
+    min_start_interval_seconds: float = 0.0
+
+
+@dataclass(frozen=True)
 class MarketInfo:
     symbol: str
     exchange_symbol: str
@@ -245,6 +254,15 @@ class ExchangeAdapter(ABC):
     code: str
     name: str
     capabilities = ExchangeCapabilities()
+    ohlcv_batch_policy = OhlcvBatchPolicy()
+
+    def share_market_catalog_from(self, source: "ExchangeAdapter") -> None:
+        """Reuse immutable public market metadata in another worker adapter.
+
+        Adapters that maintain a market catalogue can override this hook.  The
+        safe default performs no sharing and lets the worker load its own data.
+        """
+        del source
 
     def validate_client_order_id(self, client_order_id: str) -> str:
         """Validate an idempotency key before it is persisted or submitted.

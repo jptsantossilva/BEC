@@ -8,7 +8,12 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from bec.exchanges.base import Balance, ExchangeCapabilities, OrderRequest
+from bec.exchanges.base import (
+    Balance,
+    ExchangeCapabilities,
+    OhlcvBatchPolicy,
+    OrderRequest,
+)
 from bec.exchanges.ccxt_adapter import (
     CcxtExchangeAdapter,
     PrivateExchangeOperationDisabled,
@@ -30,6 +35,11 @@ class OkxAdapter(CcxtExchangeAdapter):
     code = "okx"
     name = "OKX"
     ohlcv_page_limit = 300
+    ohlcv_batch_policy = OhlcvBatchPolicy(
+        max_workers=2,
+        throttle_scope="global",
+        min_start_interval_seconds=0.15,
+    )
     capabilities = ExchangeCapabilities(
         supports_private_balance_reads=True,
         supports_backtesting=True,
@@ -112,7 +122,8 @@ class OkxAdapter(CcxtExchangeAdapter):
                 / "backtest_results"
                 / "rate_limits"
                 / "okx-public.lock",
-                min_interval_seconds=0.15,
+                min_interval_seconds=self.ohlcv_batch_policy.min_start_interval_seconds,
+                keyed=self.ohlcv_batch_policy.throttle_scope == "symbol",
             )
         kwargs = {
             "client": client,

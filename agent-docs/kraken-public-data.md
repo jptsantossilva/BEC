@@ -35,10 +35,12 @@ public API without credentials.
 
 ## Public Rate-Limit Resilience
 
-Kraken public reads are serialized across dashboard, jobs-runner and manual
-processes through a shared lock under `static/backtest_results/rate_limits/`.
-Normal requests are spaced by at least 1.1 seconds. The directory is backed by
-the shared persistence volume in Docker, so coordination also applies across
+Kraken public reads are coordinated across dashboard, jobs-runner and manual
+processes through shared state under `static/backtest_results/rate_limits/`.
+OHLC request starts for the same currency pair are spaced by at least 1.1
+seconds; different pairs may be read concurrently. The lock is held only while
+reserving the next start time, never during network I/O. The directory is backed
+by the shared persistence volume in Docker, so coordination also applies across
 the dashboard and jobs-runner containers.
 
 Read-only CCXT failures classified as rate limiting, DDoS protection, request
@@ -52,3 +54,9 @@ previous backtest result, revoking its approval, or marking remaining symbols
 complete. Rerunning resumes through the normal current-result cache. Invalid
 symbols, authentication failures and other non-transient exchange errors are
 not retried.
+
+Live trading can group due `1h`, `4h` and `1d` schedules into one in-memory
+OHLCV batch. Kraken is the first exchange enabled for this rollout and uses at
+most three public workers. Private operations remain sequential. Use
+`python -m bec.trade_batch --market-data-only 1h 4h 1d` for a read-only timing
+check; it does not evaluate trades, submit orders or perform trading writes.

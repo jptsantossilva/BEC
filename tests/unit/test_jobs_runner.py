@@ -1,4 +1,5 @@
 import io
+from datetime import datetime, timezone
 
 import pandas as pd
 
@@ -16,6 +17,126 @@ def test_resolve_schedule_script_supports_legacy_signals_path():
 
 def test_resolve_schedule_script_keeps_unknown_path_for_subprocess_error():
     assert jobs_runner._resolve_schedule_script("missing/script.py") == "missing/script.py"
+
+
+def _live_schedules():
+    return pd.DataFrame(
+        [
+            {
+                "name": "main_1d",
+                "script": "main.py",
+                "script_args": "1d",
+                "cadence": "1d",
+                "enabled": 1,
+                "last_run": None,
+            },
+            {
+                "name": "main_4h",
+                "script": "main.py",
+                "script_args": "4h",
+                "cadence": "4h",
+                "enabled": 1,
+                "last_run": None,
+            },
+            {
+                "name": "main_1h",
+                "script": "main.py",
+                "script_args": "1h",
+                "cadence": "1h",
+                "enabled": 1,
+                "last_run": None,
+            },
+        ]
+    )
+
+
+def test_due_main_schedules_are_grouped_in_timeframe_order():
+    entries = jobs_runner._collect_due_main_batch(
+        _live_schedules(),
+        datetime(2025, 1, 2, tzinfo=timezone.utc),
+        "kraken",
+    )
+
+    assert [timeframe for _row, timeframe, _slot in entries] == ["1h", "4h", "1d"]
+
+
+def test_batch_rollout_allowlist_groups_validated_exchanges():
+    for exchange_code in ("kraken", "okx", "binance"):
+        entries = jobs_runner._collect_due_main_batch(
+            _live_schedules(),
+            datetime(2025, 1, 2, tzinfo=timezone.utc),
+            exchange_code,
+        )
+
+        assert [timeframe for _row, timeframe, _slot in entries] == [
+            "1h",
+            "4h",
+            "1d",
+        ]
+
+
+def test_batch_rollout_allowlist_keeps_unvalidated_exchange_on_legacy_path():
+    entries = jobs_runner._collect_due_main_batch(
+        _live_schedules(),
+        datetime(2025, 1, 2, tzinfo=timezone.utc),
+        "okx_demo",
+    )
+
+    assert entries == []
+
+
+def test_disabled_main_schedule_is_batched_when_an_exit_is_still_open(monkeypatch):
+    schedules = _live_schedules().iloc[[2]].copy()
+    schedules.loc[:, "enabled"] = 0
+    monkeypatch.setattr(
+        jobs_runner.database,
+        "get_num_open_positions_by_bot",
+        lambda timeframe: 1 if timeframe == "1h" else 0,
+    )
+
+    entries = jobs_runner._collect_due_main_batch(
+        schedules,
+        datetime(2025, 1, 2, 1, tzinfo=timezone.utc),
+        "kraken",
+    )
+
+    assert [timeframe for _row, timeframe, _slot in entries] == ["1h"]
+
+
+def test_start_main_batch_updates_each_slot_after_process_start(monkeypatch):
+    entries = jobs_runner._collect_due_main_batch(
+        _live_schedules(),
+        datetime(2025, 1, 2, tzinfo=timezone.utc),
+        "kraken",
+    )
+    calls = []
+    process = object()
+    monkeypatch.setattr(jobs_runner, "_print_log", lambda message: None)
+    monkeypatch.setattr(
+        jobs_runner.subprocess,
+        "Popen",
+        lambda command, cwd: calls.append(("popen", command, cwd)) or process,
+    )
+    monkeypatch.setattr(
+        jobs_runner.database,
+        "update_job_last_run",
+        lambda name, slot: calls.append(("last_run", name, slot)),
+    )
+
+    name, returned_process = jobs_runner._start_main_batch(entries)
+
+    assert name == "main_batch[1h,4h,1d]"
+    assert returned_process is process
+    assert calls[0][0] == "popen"
+    assert calls[0][1] == [
+        jobs_runner.PYTHON,
+        "-m",
+        "bec.trade_batch",
+        "1h",
+        "4h",
+        "1d",
+    ]
+    assert [call[1] for call in calls[1:]] == ["main_1h", "main_4h", "main_1d"]
 
 
 def test_run_loop_exits_when_runner_lock_unavailable(monkeypatch, capsys):

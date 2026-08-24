@@ -4,6 +4,7 @@ import math
 import sys
 import time
 import timeit
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
 import numpy as np
@@ -115,10 +116,24 @@ def get_data(
 class _TradeCycleMarketData:
     """One-run OHLCV cache and failure collector for fail-closed trading."""
 
-    def __init__(self, requirements: dict[tuple[str, str], int]):
+    def __init__(
+        self,
+        requirements: dict[tuple[str, str], int],
+        *,
+        frames: dict[tuple[str, str], pd.DataFrame] | None = None,
+        failures: dict[tuple[str, str], dict] | None = None,
+        allow_network: bool = True,
+    ):
         self.requirements = dict(requirements)
-        self.cache: dict[tuple[str, str], pd.DataFrame] = {}
-        self.failures: dict[tuple[str, str], dict] = {}
+        self.cache: dict[tuple[str, str], pd.DataFrame] = {
+            self._key(*key): frame.copy()
+            for key, frame in (frames or {}).items()
+        }
+        self.failures: dict[tuple[str, str], dict] = {
+            self._key(*key): dict(failure)
+            for key, failure in (failures or {}).items()
+        }
+        self.allow_network = bool(allow_network)
 
     @staticmethod
     def _key(symbol: str, timeframe: str) -> tuple[str, str]:
@@ -152,6 +167,15 @@ class _TradeCycleMarketData:
             int(self.requirements.get(key, MIN_LIVE_CLOSED_CANDLES)),
             MIN_LIVE_CLOSED_CANDLES,
         )
+        if not self.allow_network:
+            self._record_failure(
+                key,
+                reason="OHLCV requirement was not prefetched",
+                required=required,
+            )
+            frame = pd.DataFrame()
+            self.cache[key] = frame
+            return frame.copy()
         try:
             frame = get_data(
                 symbol=key[0],
@@ -714,6 +738,38 @@ def _live_history_requirements(
     return requirements
 
 
+@dataclass
+class _PreparedTradeCycle:
+    timeframe: str
+    df_sell: pd.DataFrame
+    df_buy: pd.DataFrame
+    requirements: dict[tuple[str, str], int]
+    summary: dict
+
+
+def prepare_trade_cycle(timeframe: str, settings) -> _PreparedTradeCycle:
+    """Resolve one timeframe's candidates and current strategy requirements."""
+    routine_log_mode = getattr(settings, "telegram_routine_trade_logs", "summary")
+    df_sell = database.get_positions_by_bot_position(bot=timeframe, position=1)
+    df_buy = database.get_positions_by_bot_position(bot=timeframe, position=0)
+    if not database.is_trade_main_timeframe_enabled(timeframe):
+        df_buy = df_buy.iloc[0:0].copy()
+    else:
+        df_buy = _filter_buy_candidates_for_active_strategies(df_buy, settings)
+    return _PreparedTradeCycle(
+        timeframe=timeframe,
+        df_sell=df_sell,
+        df_buy=df_buy,
+        requirements=_live_history_requirements(
+            df_sell,
+            df_buy,
+            timeframe,
+            settings,
+        ),
+        summary=_new_trade_cycle_summary(timeframe, routine_log_mode),
+    )
+
+
 def format_trade_cycle_summary(summary: dict) -> str:
     lines = [
         "Cycle",
@@ -732,34 +788,41 @@ def format_trade_cycle_summary(summary: dict) -> str:
     return "\n".join(lines)
 
 
-def trade(timeframe, run_mode, settings=None, send_summary=True):
+def trade(
+    timeframe,
+    run_mode,
+    settings=None,
+    send_summary=True,
+    *,
+    prepared_cycle: _PreparedTradeCycle | None = None,
+    market_data: _TradeCycleMarketData | None = None,
+    execute_sells: bool = True,
+    execute_buys: bool = True,
+    finalize_market_data: bool = True,
+):
     del run_mode  # Kept for compatibility with older callers; exchange order functions enforce settings.run_mode.
     if settings is None:
         settings = config.load_settings(refresh=True)
-    routine_log_mode = getattr(settings, "telegram_routine_trade_logs", "summary")
-    cycle_summary = _new_trade_cycle_summary(timeframe, routine_log_mode)
+    if prepared_cycle is None:
+        # Preserve the standalone main.py behavior.  Batch execution performs
+        # this cleanup once before preparing all due timeframes.
+        database.delete_positions_not_top_rank()
+        prepared_cycle = prepare_trade_cycle(timeframe, settings)
+    cycle_summary = prepared_cycle.summary
     send_detailed_routine_logs = cycle_summary["routine_log_mode"] == "detailed"
 
-    # Make sure we are only trying to buy positions on symbols included on market phases table
-    database.delete_positions_not_top_rank()
-
-    # list of symbols in position - SELL
-    df_sell = database.get_positions_by_bot_position(bot=timeframe, position=1)
-
-    # list of symbols in position - BUY
-    df_buy = database.get_positions_by_bot_position(bot=timeframe, position=0)
-
-    # if trading by time frame is
-    # Enabled: Buy new positions and sell existing ones.
-    # Disabled: Will not buy new positions but will continue to attempt to sell existing positions based on sell strategy conditions.disabled => Will not buy new positions but will continue to attempt to sell existing positions based on sell strategy conditions.
-    if not database.is_trade_main_timeframe_enabled(timeframe):
-        df_buy = df_buy.iloc[0:0].copy()
-    else:
-        df_buy = _filter_buy_candidates_for_active_strategies(df_buy, settings)
-
-    market_data = _TradeCycleMarketData(
-        _live_history_requirements(df_sell, df_buy, timeframe, settings)
+    df_sell = (
+        prepared_cycle.df_sell
+        if execute_sells
+        else prepared_cycle.df_sell.iloc[0:0].copy()
     )
+    df_buy = (
+        prepared_cycle.df_buy
+        if execute_buys
+        else prepared_cycle.df_buy.iloc[0:0].copy()
+    )
+    if market_data is None:
+        market_data = _TradeCycleMarketData(prepared_cycle.requirements)
 
     # check open positions and SELL if conditions are fulfilled
     for _, pos_row in df_sell.iterrows():
@@ -1090,11 +1153,12 @@ def trade(timeframe, run_mode, settings=None, send_summary=True):
             if send_detailed_routine_logs:
                 telegram.send_telegram_message(telegram_token, "", msg)
 
-    market_data.send_failure_summary(timeframe)
-    if market_data.failures:
-        cycle_summary["warnings"] += len(market_data.failures)
-    if send_summary and not send_detailed_routine_logs:
-        _send_trade_cycle_summary(cycle_summary)
+    if finalize_market_data:
+        market_data.send_failure_summary(timeframe)
+        relevant_failures = set(prepared_cycle.requirements) & set(market_data.failures)
+        cycle_summary["warnings"] += len(relevant_failures)
+        if send_summary and not send_detailed_routine_logs:
+            _send_trade_cycle_summary(cycle_summary)
     return cycle_summary
 
 
@@ -1117,6 +1181,23 @@ def send_daily_summary(settings=None):
     telegram.send_telegram_message(telegram_token, "", msg)
 
 
+def send_trade_report(timeframe: str, cycle_summary: dict, settings, total_seconds: float):
+    """Send the existing per-timeframe report format for any execution mode."""
+    duration = " ".join(
+        str(database.calc_duration(total_seconds, decimal_places=2)).split()
+    )
+    summary_msg = (
+        "Report\n"
+        f"Status: completed in {duration}\n\n"
+        + format_trade_cycle_summary(cycle_summary)
+        + "\n\n"
+        + positions_summary(timeframe, settings=settings, send=False)
+    )
+    msg = telegram_prefix_sl + summary_msg
+    print(msg)
+    telegram.send_telegram_message(telegram_token, "", msg)
+
+
 def run(timeframe, run_mode=None):
     del run_mode  # Kept for compatibility with existing callers.
     settings = config.load_settings(refresh=True)
@@ -1129,22 +1210,8 @@ def run(timeframe, run_mode=None):
     # exchange.create_balance_snapshot(telegram_prefix="")
 
     # calculate execution time
-    stop = timeit.default_timer()
-    total_seconds = stop - start
-    duration = " ".join(
-        str(database.calc_duration(total_seconds, decimal_places=2)).split()
-    )
-
-    summary_msg = (
-        "Report\n"
-        f"Status: completed in {duration}\n\n"
-        + format_trade_cycle_summary(cycle_summary)
-        + "\n\n"
-        + positions_summary(timeframe, settings=settings, send=False)
-    )
-    msg = telegram_prefix_sl + summary_msg
-    print(msg)
-    telegram.send_telegram_message(telegram_token, "", msg)
+    total_seconds = timeit.default_timer() - start
+    send_trade_report(timeframe, cycle_summary, settings, total_seconds)
 
 
 def _send_fatal_notification(message: str, context: str) -> None:

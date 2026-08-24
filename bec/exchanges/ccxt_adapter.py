@@ -84,6 +84,17 @@ class CcxtExchangeAdapter(ExchangeAdapter):
         uses_gated_live_execution=True,
     )
 
+    def share_market_catalog_from(self, source: ExchangeAdapter) -> None:
+        if not isinstance(source, CcxtExchangeAdapter):
+            return
+        source.load_markets()
+        set_markets = getattr(self.client, "set_markets_from_exchange", None)
+        if callable(set_markets):
+            set_markets(source.client)
+        self._markets = dict(source._markets or {})
+        self._market_lookup = dict(source._market_lookup)
+        self._markets_loaded_at = float(self._clock())
+
     def __init__(
         self,
         exchange_id: str,
@@ -164,6 +175,7 @@ class CcxtExchangeAdapter(ExchangeAdapter):
         backoff_sec: float = 2.0,
         max_backoff_sec: float = 60.0,
         context: str = "",
+        throttle_key: str | None = None,
     ):
         if (
             not self._public_read_retry_enabled
@@ -177,7 +189,7 @@ class CcxtExchangeAdapter(ExchangeAdapter):
 
         for retry_index in range(retries + 1):
             throttle_context = (
-                self._public_request_throttle.request_slot()
+                self._public_request_throttle.request_slot(throttle_key)
                 if self._public_request_throttle is not None
                 else nullcontext(None)
             )
@@ -525,6 +537,7 @@ class CcxtExchangeAdapter(ExchangeAdapter):
                 backoff_sec=backoff_sec,
                 max_backoff_sec=max_backoff_sec,
                 context=f"{canonical} {interval}",
+                throttle_key=canonical,
             )
             if not batch:
                 break

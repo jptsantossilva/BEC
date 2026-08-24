@@ -1,4 +1,5 @@
 import ast
+from contextlib import contextmanager
 import inspect
 from decimal import Decimal
 from pathlib import Path
@@ -242,6 +243,41 @@ def test_binance_adapter_returns_canonical_market_and_account_data():
     assert book.asks == ((Decimal("60001"), Decimal("0.1")),)
 
 
+def test_binance_ohlcv_rate_limit_cooldown_is_shared():
+    from binance.exceptions import BinanceAPIException
+
+    deferred = []
+
+    class Lease:
+        def defer(self, seconds):
+            deferred.append(seconds)
+
+    class Throttle:
+        @contextmanager
+        def request_slot(self, scope_key=None):
+            assert scope_key == "BTCUSDC"
+            yield Lease()
+
+    class RateLimitedClient:
+        def get_historical_klines(self, *args, **kwargs):
+            response = type("Response", (), {"headers": {"Retry-After": "2"}})()
+            raise BinanceAPIException(response, 429, '{"code":-1003,"msg":"rate"}')
+
+    adapter = BinanceAdapter(
+        client=RateLimitedClient(),
+        public_request_throttle=Throttle(),
+    )
+    frame = adapter.fetch_ohlcv(
+        "BTCUSDC",
+        "1h",
+        max_retries=1,
+        backoff_sec=0,
+    )
+
+    assert frame.empty
+    assert deferred == [2.0]
+
+
 def test_exchange_service_filters_tradable_symbols_without_raw_exchange_data(monkeypatch):
     markets = {
         "BTC/USDC": MarketInfo("BTC/USDC", "BTCUSDC", "BTC", "USDC", True),
@@ -323,6 +359,21 @@ def test_adapter_capabilities_describe_existing_exchange_routing():
     assert KrakenAdapter.capabilities.requires_explicit_live_flags is True
     assert KrakenAdapter.capabilities.supports_private_balance_reads is True
     assert OkxAdapter.capabilities.supports_private_balance_reads is True
+
+
+def test_kraken_public_worker_never_imports_process_credentials(monkeypatch):
+    from bec.exchanges.registry import get_public_adapter_for_exchange
+
+    monkeypatch.setenv("KRAKEN_API_KEY", "must-not-be-used")
+    monkeypatch.setenv("KRAKEN_API_SECRET", "must-not-be-used")
+
+    adapter = get_public_adapter_for_exchange(
+        {"code": "kraken", "adapter_id": "kraken", "sizing_buffer_pct": 1}
+    )
+
+    assert adapter.private_enabled is False
+    assert getattr(adapter.client, "apiKey", None) in (None, "")
+    assert getattr(adapter.client, "secret", None) in (None, "")
 
 
 def test_binance_adapter_normalizes_order_results():

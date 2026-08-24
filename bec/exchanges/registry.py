@@ -37,17 +37,21 @@ def get_adapter_for_code(
     *,
     sizing_buffer_pct: Decimal = Decimal("1"),
     adapter_id: str | None = None,
-    private_enabled: bool = False,
+    private_enabled: bool | None = None,
+    public_only: bool = False,
 ) -> ExchangeAdapter:
     code = str(code or "").strip().lower()
     if code == "binance":
         from bec.exchanges.binance_adapter import BinanceAdapter
 
-        return BinanceAdapter()
+        return BinanceAdapter(public_only=public_only)
     if code == "kraken":
         from bec.exchanges.kraken_adapter import KrakenAdapter
 
-        return KrakenAdapter(sizing_buffer_pct=sizing_buffer_pct)
+        return KrakenAdapter(
+            sizing_buffer_pct=sizing_buffer_pct,
+            private_enabled=private_enabled,
+        )
     if code in {"okx", "okx_demo"}:
         from bec.exchanges.okx_adapter import OkxAdapter
 
@@ -56,10 +60,22 @@ def get_adapter_for_code(
             adapter_id=adapter_id or "myokx",
             execution_environment="demo" if demo else "production",
             execution_code=code,
-            private_enabled=private_enabled,
+            private_enabled=bool(private_enabled),
             sizing_buffer_pct=sizing_buffer_pct,
         )
     raise RuntimeError(f"No adapter is available for exchange: {code}")
+
+
+def get_public_adapter_for_exchange(exchange: dict) -> ExchangeAdapter:
+    """Build a credential-free adapter for parallel public market reads."""
+    code = str(exchange.get("code") or "").strip().lower()
+    return get_adapter_for_code(
+        code,
+        sizing_buffer_pct=Decimal(str(exchange.get("sizing_buffer_pct", 1.0))),
+        adapter_id=str(exchange.get("adapter_id") or ""),
+        private_enabled=False,
+        public_only=True,
+    )
 
 
 def get_default_adapter() -> ExchangeAdapter:
@@ -80,7 +96,9 @@ def get_default_adapter() -> ExchangeAdapter:
         # The app-wide adapter is the only adapter used by the durable private
         # execution and reconciliation workflow. Public callers use the
         # factory default above, which remains credential-free.
-        private_enabled=code in {"okx", "okx_demo"},
+        private_enabled=(
+            None if code == "kraken" else code in {"okx", "okx_demo"}
+        ),
     )
     return _default_adapter
 

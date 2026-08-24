@@ -7,6 +7,7 @@ import time
 from typing import Optional, Union, Callable
 import sqlite3
 from decimal import Decimal
+from contextlib import nullcontext
 
 from bec.exchanges.binance_adapter import (
     BinanceAdapter,
@@ -29,6 +30,7 @@ from bec.exchanges.sell_sizing import (
     format_position_close_without_order,
     prepare_sell_quantity,
 )
+from bec.exchanges.public_rate_limit import SharedPublicRequestThrottle
 
 import bec.utils.config as config
 import bec.utils.telegram as telegram
@@ -841,6 +843,9 @@ def _get_ohlcv_raw(
     notify: bool = True,
     telegram_token: Optional[str] = None,
     telegram_prefix: str = "",
+    client: Client | None = None,
+    public_request_throttle: SharedPublicRequestThrottle | None = None,
+    raise_on_failure: bool = False,
 ) -> pd.DataFrame:
     """
     Fetch historical OHLCV from Binance and return a clean, typed DataFrame.
@@ -858,15 +863,38 @@ def _get_ohlcv_raw(
       - unconditionally drop the last row (useful for bespoke workflows/tests).
     """
     last_exc = None
+    request_client = client or get_client()
     for attempt in range(1, max_retries + 1):
         try:
             interval_norm = _normalize_interval(interval)
-            raw = get_client().get_historical_klines(
-                symbol, 
-                interval_norm, 
-                start_str=_to_binance_param(start_date), 
-                end_str=_to_binance_param(end_date)
+            throttle_context = (
+                public_request_throttle.request_slot(symbol)
+                if public_request_throttle is not None
+                else nullcontext(None)
             )
+            with throttle_context as lease:
+                try:
+                    raw = request_client.get_historical_klines(
+                        symbol,
+                        interval_norm,
+                        start_str=_to_binance_param(start_date),
+                        end_str=_to_binance_param(end_date),
+                    )
+                except BinanceAPIException as exc:
+                    response = getattr(exc, "response", None)
+                    retry_after = (
+                        response.headers.get("Retry-After")
+                        if response is not None
+                        else None
+                    )
+                    if lease is not None and getattr(exc, "status_code", None) in (418, 429):
+                        delay = (
+                            float(retry_after)
+                            if retry_after is not None and str(retry_after).isdigit()
+                            else backoff_sec * (2 ** (attempt - 1))
+                        )
+                        lease.defer(delay)
+                    raise
             if not raw:
                 msg = f"[get_OHLCV] Empty result for {symbol} {interval} {start_date}→{end_date}"
                 msg = msg + sys._getframe(  ).f_code.co_name+" - "+symbol
@@ -964,6 +992,8 @@ def _get_ohlcv_raw(
     if notify:
         token = telegram_token or telegram.telegram_token_main
         telegram.send_telegram_message(token, telegram.EMOJI_WARNING, msg)
+    if raise_on_failure and last_exc is not None:
+        raise last_exc
     return pd.DataFrame(columns=["timestamp","open","high","low","close","volume","symbol"]).set_index(
         pd.DatetimeIndex([], name="timestamp")
     )
@@ -1039,6 +1069,9 @@ def get_ohlcv(
     include_symbol: bool = False,
     set_index: bool = True,
     keep_time_col: bool = True,
+    client: Client | None = None,
+    public_request_throttle: SharedPublicRequestThrottle | None = None,
+    raise_on_failure: bool = False,
 ) -> pd.DataFrame:
     if start_date is None:
         start_date = "1 Jan, 2010"
@@ -1052,6 +1085,9 @@ def get_ohlcv(
         force_drop_last=drop_last,
         only_closed=drop_incomplete,
         notify=False,
+        client=client,
+        public_request_throttle=public_request_throttle,
+        raise_on_failure=raise_on_failure,
     )
     if df.empty:
         return df

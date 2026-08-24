@@ -12,6 +12,8 @@ import bec.utils.telegram as telegram
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PYTHON = sys.executable
 MAX_PARALLEL = 10
+BATCH_ENABLED_EXCHANGES = frozenset({"binance", "kraken", "okx"})
+BATCH_TIMEFRAME_ORDER = ("1h", "4h", "1d")
 BACKTESTING_JOBS_DIR = os.path.join("static", "backtest_results", "jobs")
 MONTE_CARLO_JOBS_DIR = os.path.join("static", "backtest_results", "monte_carlo", "jobs")
 RUNNER_LOCK_PATH = os.path.join(ROOT_DIR, "static", "backtest_results", "jobs_runner.lock")
@@ -72,6 +74,58 @@ def _extract_main_timeframe(schedule_name: str):
     if timeframe in {"1d", "4h", "1h"}:
         return timeframe
     return None
+
+
+def _due_schedule_slot(row, now_utc):
+    """Return the due slot for a schedule, including exit-only main jobs."""
+    if not row.script:
+        return None
+    timeframe = _extract_main_timeframe(str(row.name))
+    if not row.enabled:
+        if timeframe is None:
+            return None
+        if database.get_num_open_positions_by_bot(timeframe) <= 0:
+            return None
+    if not _on_schedule(now_utc, row.cadence):
+        return None
+    slot = _current_slot(now_utc, row.cadence)
+    if slot is None:
+        return None
+    last_run = _parse_last_run(row.last_run)
+    if last_run and last_run >= slot:
+        return None
+    return slot
+
+
+def _collect_due_main_batch(schedules, now_utc, exchange_code: str):
+    if str(exchange_code).strip().lower() not in BATCH_ENABLED_EXCHANGES:
+        return []
+    entries = []
+    for row in schedules.itertuples(index=False):
+        timeframe = _extract_main_timeframe(str(row.name))
+        if timeframe is None:
+            continue
+        slot = _due_schedule_slot(row, now_utc)
+        if slot is not None:
+            entries.append((row, timeframe, slot))
+    order = {timeframe: index for index, timeframe in enumerate(BATCH_TIMEFRAME_ORDER)}
+    return sorted(entries, key=lambda entry: order[entry[1]])
+
+
+def _start_main_batch(entries):
+    timeframes = [timeframe for _row, timeframe, _slot in entries]
+    fired_at = datetime.now(timezone.utc)
+    batch_name = "main_batch[" + ",".join(timeframes) + "]"
+    _print_log(f"[{fired_at.isoformat()}] Running {batch_name}")
+    process = subprocess.Popen(
+        [PYTHON, "-m", "bec.trade_batch", *timeframes],
+        cwd=ROOT_DIR,
+    )
+    # Preserve the existing scheduler contract: a slot is consumed only after
+    # the subprocess has started successfully.
+    for row, _timeframe, slot in entries:
+        database.update_job_last_run(row.name, slot.isoformat())
+    return batch_name, process
 
 def _parse_last_run(value):
     if not value:
@@ -432,8 +486,35 @@ def run_loop():
             time.sleep(1)
             continue
 
+        active_exchange_code = database.get_active_exchange_code()
+        due_main_batch = _collect_due_main_batch(
+            schedules,
+            now_utc,
+            active_exchange_code,
+        )
+        batched_schedule_names = {
+            row.name for row, _timeframe, _slot in due_main_batch
+        }
+        if due_main_batch and len(running) < MAX_PARALLEL:
+            try:
+                batch_name, process = _start_main_batch(due_main_batch)
+                running.append((batch_name, process))
+            except Exception as e:
+                msg = f"[signals_runner] live trade batch failed to start: {repr(e)}"
+                _print_log(msg)
+                try:
+                    telegram.send_telegram_message(
+                        telegram.telegram_token_errors,
+                        telegram.EMOJI_WARNING,
+                        msg,
+                    )
+                except Exception:
+                    pass
+
         for row in schedules.itertuples(index=False):
             name = row.name
+            if name in batched_schedule_names:
+                continue
             if not row.script:
                 continue
             cadence = row.cadence

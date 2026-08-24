@@ -8,6 +8,7 @@ import re
 import time
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
+from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from binance.client import Client
@@ -25,6 +26,7 @@ from bec.exchanges.base import (
     ExchangeCapabilities,
     ExchangeHealth,
     MarketInfo,
+    OhlcvBatchPolicy,
     OrderBook,
     OrderFill,
     OrderRequest,
@@ -33,6 +35,7 @@ from bec.exchanges.base import (
     OrderValidation,
     Ticker,
 )
+from bec.exchanges.public_rate_limit import SharedPublicRequestThrottle
 
 _client: Optional[Client] = None
 
@@ -125,14 +128,55 @@ class BinanceAdapter(ExchangeAdapter):
         uses_native_private_workflows=True,
         uses_exchange_symbols_for_legacy_workflows=True,
     )
+    ohlcv_batch_policy = OhlcvBatchPolicy(
+        max_workers=2,
+        throttle_scope="global",
+        min_start_interval_seconds=0.20,
+    )
 
-    def __init__(self, client: Client | None = None):
+    def __init__(
+        self,
+        client: Client | None = None,
+        *,
+        public_only: bool = False,
+        public_request_throttle: SharedPublicRequestThrottle | None = None,
+    ):
         self._injected_client = client
+        self._public_only = bool(public_only)
+        self._public_client: Client | None = None
         self._markets: dict[str, MarketInfo] | None = None
+        if public_request_throttle is None and client is None:
+            project_root = Path(__file__).resolve().parents[2]
+            public_request_throttle = SharedPublicRequestThrottle(
+                project_root
+                / "static"
+                / "backtest_results"
+                / "rate_limits"
+                / "binance-public.lock",
+                min_interval_seconds=self.ohlcv_batch_policy.min_start_interval_seconds,
+                keyed=self.ohlcv_batch_policy.throttle_scope == "symbol",
+            )
+        self._public_request_throttle = public_request_throttle
 
     @property
     def client(self) -> Client:
-        return self._injected_client or get_client()
+        if self._injected_client is not None:
+            return self._injected_client
+        if not self._public_only:
+            return get_client()
+        if self._public_client is None:
+            self._public_client = Client(
+                api_key=None,
+                api_secret=None,
+                requests_params={"timeout": 15},
+                ping=False,
+            )
+        return self._public_client
+
+    def share_market_catalog_from(self, source: ExchangeAdapter) -> None:
+        if isinstance(source, BinanceAdapter):
+            source.load_markets()
+            self._markets = dict(source._markets or {})
 
     def get_exchange_info(self) -> Mapping[str, Any]:
         return self.client.get_exchange_info()
@@ -195,7 +239,14 @@ class BinanceAdapter(ExchangeAdapter):
         from bec.exchanges import binance as legacy_binance
 
         exchange_symbol = self.to_exchange_symbol(symbol) if "/" in symbol else symbol
-        return legacy_binance.get_ohlcv(exchange_symbol, interval, **kwargs)
+        kwargs.setdefault("raise_on_failure", self._public_only)
+        return legacy_binance.get_ohlcv(
+            exchange_symbol,
+            interval,
+            client=self.client,
+            public_request_throttle=self._public_request_throttle,
+            **kwargs,
+        )
 
     def fetch_balance(self, asset: str | None = None) -> Balance | Mapping[str, Balance]:
         if asset is not None:
