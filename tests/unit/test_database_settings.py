@@ -756,3 +756,163 @@ def test_position_cleanup_refuses_to_orphan_active_locked_values(tmp_path):
                 pass
         else:
             database._thread_local.conn = original_conn
+
+
+@pytest.fixture
+def position_candidate_database(tmp_path):
+    original_conn = getattr(database._thread_local, "conn", None)
+    test_conn = sqlite3.connect(tmp_path / "candidate.db", check_same_thread=False)
+    test_conn.execute(database.sql_create_positions_table)
+    test_conn.execute(database.sql_create_symbols_by_market_phase_table)
+    test_conn.execute(database.sql_create_backtesting_results_table)
+    test_conn.execute("BEGIN IMMEDIATE")
+    apply_exchange_aware_schema(test_conn, upgraded_install=True)
+    test_conn.commit()
+    test_conn.execute(
+        """
+        INSERT INTO Symbols_By_Market_Phase (
+            Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset,
+            Quote_Asset, Symbol, Rank
+        ) VALUES (1, 'BTC/USDC', 'BTCUSDC', 'BTC', 'USDC', 'BTCUSDC', 3)
+        """
+    )
+    test_conn.execute(
+        """
+        INSERT INTO Backtesting_Results (
+            Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset,
+            Quote_Asset, Symbol, Time_Frame, Return_Perc, Strategy_Id,
+            Backtest_Config_JSON
+        ) VALUES (
+            1, 'BTC/USDC', 'BTCUSDC', 'BTC', 'USDC', 'BTCUSDC', '4h',
+            12.5, 'ema_cross', '{}'
+        )
+        """
+    )
+    test_conn.commit()
+    database._thread_local.conn = test_conn
+
+    try:
+        yield test_conn
+    finally:
+        test_conn.close()
+        if original_conn is None:
+            try:
+                delattr(database._thread_local, "conn")
+            except AttributeError:
+                pass
+        else:
+            database._thread_local.conn = original_conn
+
+
+def test_sync_top_performer_candidate_inserts_idempotently(
+    position_candidate_database,
+):
+    connection = position_candidate_database
+
+    first = database.sync_top_performer_position_candidate(
+        exchange_id=1,
+        symbol="btcusdc",
+        timeframe="4h",
+        strategy_id="ema_cross",
+        strategy_name="EMA Cross",
+        strategy_params_json='{"parameters":{"ema_fast":10}}',
+    )
+    second = database.sync_top_performer_position_candidate(
+        exchange_id=1,
+        symbol="BTCUSDC",
+        timeframe="4h",
+        strategy_id="ema_cross",
+        strategy_name="EMA Cross",
+        strategy_params_json='{"parameters":{"ema_fast":10}}',
+    )
+
+    assert first == ("inserted", "candidate_created")
+    assert second == ("updated", "candidate_refreshed")
+    rows = connection.execute(
+        """
+        SELECT Position, Rank, Strategy_Name, Strategy_Params_JSON
+        FROM Positions
+        WHERE Exchange_Id=1 AND Symbol='BTCUSDC' AND Bot='4h'
+          AND Strategy_Id='ema_cross'
+        """
+    ).fetchall()
+    assert rows == [
+        (0, 3, "EMA Cross", '{"parameters":{"ema_fast":10}}')
+    ]
+
+
+def test_sync_top_performer_candidate_preserves_open_position_state(
+    position_candidate_database,
+):
+    connection = position_candidate_database
+    connection.execute(
+        """
+        INSERT INTO Positions (
+            Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset,
+            Quote_Asset, Bot, Symbol, Position, Rank, Buy_Price, Curr_Price,
+            Qty, Strategy_Id, Strategy_Name, Strategy_Params_JSON, Buy_Order_Id
+        ) VALUES (
+            1, 'BTC/USDC', 'BTCUSDC', 'BTC', 'USDC', '4h', 'BTCUSDC', 1,
+            9, 50000, 51000, 0.01, 'ema_cross', 'EMA Cross', '{}', 'order-1'
+        )
+        """
+    )
+    connection.execute(
+        "UPDATE Symbols_By_Market_Phase SET Rank=1 WHERE Symbol='BTCUSDC'"
+    )
+    connection.commit()
+
+    outcome = database.sync_top_performer_position_candidate(
+        exchange_id=1,
+        symbol="BTCUSDC",
+        timeframe="4h",
+        strategy_id="ema_cross",
+        strategy_name="EMA Cross renamed",
+        strategy_params_json='{"parameters":{"ema_fast":20}}',
+    )
+
+    assert outcome == ("updated", "candidate_refreshed")
+    row = connection.execute(
+        """
+        SELECT Position, Rank, Buy_Price, Curr_Price, Qty, Strategy_Name,
+               Strategy_Params_JSON, Buy_Order_Id
+        FROM Positions WHERE Symbol='BTCUSDC' AND Bot='4h'
+        """
+    ).fetchone()
+    assert row == (
+        1,
+        1,
+        50000,
+        51000,
+        0.01,
+        "EMA Cross",
+        '{"parameters":{"ema_fast":20}}',
+        "order-1",
+    )
+
+
+def test_sync_top_performer_candidate_rechecks_exchange_and_membership(
+    position_candidate_database,
+):
+    connection = position_candidate_database
+
+    assert database.sync_top_performer_position_candidate(
+        exchange_id=2,
+        symbol="BTCUSDC",
+        timeframe="4h",
+        strategy_id="ema_cross",
+        strategy_name="EMA Cross",
+        strategy_params_json="{}",
+    ) == ("skipped", "active_exchange_mismatch")
+
+    connection.execute("DELETE FROM Symbols_By_Market_Phase")
+    connection.commit()
+    assert database.sync_top_performer_position_candidate(
+        exchange_id=1,
+        symbol="BTCUSDC",
+        timeframe="4h",
+        strategy_id="ema_cross",
+        strategy_name="EMA Cross",
+        strategy_params_json="{}",
+    ) == ("skipped", "not_current_top_performer")
+    assert connection.execute("SELECT COUNT(*) FROM Positions").fetchone()[0] == 0

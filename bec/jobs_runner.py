@@ -6,6 +6,7 @@ import subprocess
 import shlex
 import fcntl
 
+import bec.utils.config as config
 import bec.utils.database as database
 import bec.utils.telegram as telegram
 
@@ -262,57 +263,143 @@ def _write_backtesting_job_log(log_file, message: str):
     log_file.flush()
 
 
-def _sync_backtesting_result_to_existing_position(job, log_file=None):
+def _sync_backtesting_result_to_position_candidate(job, log_file=None):
     strategy_id = str(job["strategy_id"]).strip()
     symbol = str(job["symbol"]).strip().upper()
     timeframe = str(job["timeframe"]).strip()
+    target = f"{strategy_id} - {symbol} - {timeframe}"
+
+    def skipped(reason):
+        _write_backtesting_job_log(
+            log_file,
+            f"Position candidate skipped ({reason}): {target}.",
+        )
+        return "skipped", reason
 
     try:
+        active_exchange = database.get_active_exchange(required=True)
+        job_exchange_context = {
+            "id": int(job["exchange_id"]),
+            "code": str(job["exchange_code"]),
+            "adapter_id": str(job.get("exchange_adapter_id", "") or ""),
+            "quote_asset": str(job.get("exchange_quote_asset", "") or ""),
+            "execution_environment": str(
+                job.get("exchange_execution_environment", "") or ""
+            ),
+        }
+        if any(
+            str(active_exchange.get(field, "") or "") != str(value)
+            for field, value in job_exchange_context.items()
+        ):
+            return skipped("active_exchange_mismatch")
+
+        if timeframe not in BATCH_TIMEFRAME_ORDER:
+            return skipped("unsupported_live_timeframe")
+        if not database.is_trade_main_timeframe_enabled(timeframe):
+            return skipped("live_timeframe_disabled")
+
+        settings = config.load_settings(refresh=True)
+        selected_strategy_ids = {
+            str(selected_id).strip()
+            for selected_id in settings.main_strategies
+            if str(selected_id).strip()
+        }
+        if strategy_id not in selected_strategy_ids:
+            return skipped("strategy_not_selected")
+
+        df_strategy = database.get_strategy_by_id(strategy_id)
+        if df_strategy.empty:
+            return skipped("strategy_unavailable")
+        strategy_row = df_strategy.iloc[0]
+        if not bool(int(strategy_row.get("Main_Strategy", 0) or 0)):
+            return skipped("strategy_not_available_for_main")
+        strategy_type = str(strategy_row.get("Type", "builtin") or "builtin")
+        if strategy_type != "builtin" and str(
+            strategy_row.get("Status", "draft") or "draft"
+        ) != "approved":
+            return skipped("strategy_not_approved")
+
         df_result = database.get_backtesting_results_by_symbol_timeframe_strategy(
             symbol=symbol,
             time_frame=timeframe,
             strategy_id=strategy_id,
         )
         if df_result.empty:
-            _write_backtesting_job_log(
-                log_file,
-                "No backtesting result found; existing position strategy params not synced.",
-            )
-            return False
+            return skipped("missing_backtest_result")
+        result_row = df_result.iloc[0]
+        try:
+            if not float(result_row.get("Return_Perc")) > 0:
+                return skipped("non_positive_return")
+        except (TypeError, ValueError):
+            return skipped("invalid_return")
 
-        position_exists = database.get_all_positions_by_bot_symbol_strategy(
-            bot=timeframe,
-            symbol=symbol,
-            strategy_id=strategy_id,
+        backtesting_settings = database.get_backtesting_settings(
+            require_explicit_fee=True
         )
-        if not position_exists:
-            _write_backtesting_job_log(
-                log_file,
-                "No existing matching position found; strategy params not synced.",
-            )
-            return False
+        current_commission = float(backtesting_settings["Commission_Value"])
+        optimize = bool(int(strategy_row.get("Backtest_Optimize", 0) or 0))
+        current_fingerprint = database.build_backtesting_work_fingerprint(
+            strategy_id,
+            optimize,
+            backtesting_settings,
+            strategy_row=strategy_row,
+        )
+        if (
+            str(job.get("work_fingerprint", "") or "") != current_fingerprint
+            or abs(float(job["commission_value"]) - current_commission) > 1e-12
+        ):
+            return skipped("queued_backtest_context_stale")
+        if not database.backtesting_result_matches_context(
+            result_row,
+            work_fingerprint=current_fingerprint,
+            commission_value=current_commission,
+            exchange_context=active_exchange,
+        ):
+            return skipped("backtest_context_mismatch")
+
+        approved, rejection_reasons = database.is_backtest_approved(
+            timeframe, result_row
+        )
+        if not approved:
+            reason_suffix = ",".join(rejection_reasons) or "approval_rules"
+            return skipped(f"backtest_rejected:{reason_suffix}")
 
         strategy_params_json = database.build_strategy_params_json_from_backtest_result(
             strategy_id,
-            df_result.iloc[0],
+            result_row,
         )
-        database.set_backtesting_results_from_position_strategy(
+        action, reason = database.sync_top_performer_position_candidate(
+            exchange_id=int(job["exchange_id"]),
             symbol=symbol,
             timeframe=timeframe,
             strategy_id=strategy_id,
+            strategy_name=str(strategy_row.get("Name") or strategy_id),
             strategy_params_json=strategy_params_json,
         )
+        if action == "skipped":
+            return skipped(reason)
+
+        verb = "inserted" if action == "inserted" else "updated"
         _write_backtesting_job_log(
             log_file,
-            "Updated existing position strategy params.",
+            f"Position candidate {verb}: {target}.",
         )
-        return True
+        return action, reason
     except Exception as exc:
         _write_backtesting_job_log(
             log_file,
-            f"Failed to sync existing position strategy params: {repr(exc)}",
+            f"Failed to sync backtesting result to position candidate: {repr(exc)}",
         )
-        return False
+        return "failed", "technical_error"
+
+
+def _sync_backtesting_result_to_existing_position(job, log_file=None):
+    """Compatibility wrapper for the former update-only synchronization."""
+    action, _reason = _sync_backtesting_result_to_position_candidate(
+        job,
+        log_file=log_file,
+    )
+    return action in {"inserted", "updated"}
 
 
 def _finish_backtesting_job(running_job):
@@ -333,7 +420,7 @@ def _finish_backtesting_job(running_job):
     )
     log_file.flush()
     if return_code == 0:
-        _sync_backtesting_result_to_existing_position(job, log_file=log_file)
+        _sync_backtesting_result_to_position_candidate(job, log_file=log_file)
     error_message = "" if return_code == 0 else "Backtest subprocess failed. Check the job log."
     database.complete_backtesting_job(job["id"], return_code, error_message)
     log_file.close()

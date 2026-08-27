@@ -3111,6 +3111,123 @@ def set_backtesting_results_from_position_strategy(
         )
 
 
+def sync_top_performer_position_candidate(
+    *,
+    exchange_id: int,
+    symbol: str,
+    timeframe: str,
+    strategy_id: str,
+    strategy_name: str,
+    strategy_params_json: str,
+) -> tuple[str, str]:
+    """Insert or refresh one current top-performer position candidate.
+
+    Eligibility outside current top-performer membership and active-exchange
+    scope is checked by the caller.  Both constraints are rechecked in the
+    write transaction so a completed backtest cannot promote stale work.
+    """
+    connection = _get_conn()
+    exchange_id = int(exchange_id)
+    symbol = str(symbol).strip().upper()
+    timeframe = str(timeframe).strip()
+    strategy_id = str(strategy_id).strip()
+
+    with connection:
+        updated = connection.execute(
+            """
+            UPDATE Positions
+            SET Rank=(
+                    SELECT mp.Rank
+                    FROM Symbols_By_Market_Phase mp
+                    WHERE mp.Exchange_Id=Positions.Exchange_Id
+                      AND mp.Symbol=Positions.Symbol
+                ),
+                Strategy_Params_JSON=?
+            WHERE Exchange_Id=? AND Symbol=? AND Bot=? AND Strategy_Id=?
+              AND Exchange_Id=(
+                  SELECT Id FROM Exchanges
+                  WHERE Enabled=1 AND Is_Default=1
+                  ORDER BY Id LIMIT 1
+              )
+              AND EXISTS (
+                  SELECT 1
+                  FROM Symbols_By_Market_Phase mp
+                  WHERE mp.Exchange_Id=Positions.Exchange_Id
+                    AND mp.Symbol=Positions.Symbol
+              )
+            """,
+            (
+                str(strategy_params_json),
+                exchange_id,
+                symbol,
+                timeframe,
+                strategy_id,
+            ),
+        )
+        if updated.rowcount:
+            return "updated", "candidate_refreshed"
+
+        inserted = connection.execute(
+            """
+            INSERT INTO Positions (
+                Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset,
+                Quote_Asset, Bot, Symbol, Position, Rank, Strategy_Id,
+                Strategy_Name, Strategy_Params_JSON
+            )
+            SELECT
+                br.Exchange_Id, br.Symbol_Normalized, br.Exchange_Symbol,
+                br.Base_Asset, br.Quote_Asset, br.Time_Frame, br.Symbol, 0,
+                mp.Rank, br.Strategy_Id, ?, ?
+            FROM Backtesting_Results br
+            JOIN Symbols_By_Market_Phase mp
+              ON mp.Exchange_Id=br.Exchange_Id AND mp.Symbol=br.Symbol
+            WHERE br.Exchange_Id=? AND br.Symbol=? AND br.Time_Frame=?
+              AND br.Strategy_Id=?
+              AND br.Exchange_Id=(
+                  SELECT Id FROM Exchanges
+                  WHERE Enabled=1 AND Is_Default=1
+                  ORDER BY Id LIMIT 1
+              )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM Positions pos
+                  WHERE pos.Exchange_Id=br.Exchange_Id
+                    AND pos.Symbol=br.Symbol
+                    AND pos.Bot=br.Time_Frame
+                    AND pos.Strategy_Id=br.Strategy_Id
+              )
+            """,
+            (
+                str(strategy_name or strategy_id),
+                str(strategy_params_json),
+                exchange_id,
+                symbol,
+                timeframe,
+                strategy_id,
+            ),
+        )
+        if inserted.rowcount:
+            return "inserted", "candidate_created"
+
+        active_exchange_id = connection.execute(
+            f"SELECT {ACTIVE_EXCHANGE_ID_SQL}"
+        ).fetchone()[0]
+        if active_exchange_id is None or int(active_exchange_id) != exchange_id:
+            return "skipped", "active_exchange_mismatch"
+        top_performer_exists = connection.execute(
+            """
+            SELECT 1
+            FROM Symbols_By_Market_Phase
+            WHERE Exchange_Id=? AND Symbol=?
+            """,
+            (exchange_id, symbol),
+        ).fetchone()
+        if top_performer_exists is None:
+            return "skipped", "not_current_top_performer"
+
+        return "skipped", "candidate_not_inserted"
+
+
 sql_update_position_pnl = f"""
     UPDATE Positions
     SET 

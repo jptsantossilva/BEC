@@ -2,6 +2,13 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-08-27]
+- Backtesting Queue - Successful queued backtests now automatically create or refresh eligible top-performer candidates in `Positions`, making them available to the next live cycle without waiting for another market-phase run.
+- Trading Safety - Candidate promotion requires the active exchange context, an enabled `1h`, `4h` or `1d` schedule, an approved and selected Main Strategy, current top-performer membership, positive return, matching commission/fingerprint metadata and passing approval rules.
+- Position Persistence - Added atomic, idempotent candidate synchronization without a schema migration; existing rows receive only the latest rank and strategy-parameter snapshot while position, order, quantity, price and PnL state remain unchanged.
+- Backtesting Operations - Job logs now report whether position synchronization inserted, updated or skipped a candidate and why; synchronization errors remain isolated from successfully completed backtests.
+- Documentation and Tests - Documented the top-performer queue workflow and added regression coverage for eligibility gates, exchange/context mismatches, open-position preservation, duplicate prevention and partial synchronization failures.
+
 ## [2026-08-24]
 - Live Trading Performance - Added an exchange-neutral batch engine to reduce execution time and react sooner to price changes by processing due `1h`, `4h` and `1d` cycles together while keeping all sell and buy decisions sequential.
 - Market Data Efficiency - Consolidated duplicate symbol/timeframe requirements, reused candles in memory during each execution and fetched public OHLCV concurrently, reducing repeated exchange requests without introducing a persistent candle cache.

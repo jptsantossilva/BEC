@@ -1,7 +1,9 @@
 import io
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
 import bec.jobs_runner as jobs_runner
 import bec.exchanges.live_execution as live_execution
@@ -247,10 +249,55 @@ def test_monte_carlo_subprocess_command_carries_exchange_identity():
     assert command[command.index("--exchange-adapter-id") + 1] == "kraken"
 
 
-def test_sync_backtesting_result_updates_existing_position(monkeypatch):
+def _mock_eligible_backtest_candidate(monkeypatch, *, database_action="inserted"):
+    strategy = pd.DataFrame(
+        [
+            {
+                "Id": "ema_cross",
+                "Name": "EMA Cross",
+                "Type": "builtin",
+                "Status": "approved",
+                "Main_Strategy": 1,
+                "Backtest_Optimize": 1,
+            }
+        ]
+    )
+    result = pd.DataFrame(
+        [
+            {
+                "Return_Perc": 12.5,
+                "Backtest_Config_JSON": "{}",
+                "Backtest_Work_Fingerprint": "kraken-work",
+                "Backtest_Commission_Value": 0.0026,
+                "Backtest_Adapter_Id": "kraken",
+                "Backtest_Quote_Asset": "USDC",
+                "Backtest_Execution_Environment": "production",
+            }
+        ]
+    )
     calls = []
-    result = pd.DataFrame([{"Backtest_Config_JSON": "{}"}])
-
+    monkeypatch.setattr(
+        jobs_runner.database,
+        "get_active_exchange",
+        lambda required=True: {
+            "id": 2,
+            "code": "kraken",
+            "adapter_id": "kraken",
+            "quote_asset": "USDC",
+            "execution_environment": "production",
+        },
+    )
+    monkeypatch.setattr(
+        jobs_runner.database, "is_trade_main_timeframe_enabled", lambda timeframe: True
+    )
+    monkeypatch.setattr(
+        jobs_runner.config,
+        "load_settings",
+        lambda refresh=True: SimpleNamespace(main_strategies=["ema_cross"]),
+    )
+    monkeypatch.setattr(
+        jobs_runner.database, "get_strategy_by_id", lambda strategy_id: strategy
+    )
     monkeypatch.setattr(
         jobs_runner.database,
         "get_backtesting_results_by_symbol_timeframe_strategy",
@@ -258,92 +305,238 @@ def test_sync_backtesting_result_updates_existing_position(monkeypatch):
     )
     monkeypatch.setattr(
         jobs_runner.database,
-        "get_all_positions_by_bot_symbol_strategy",
-        lambda **kwargs: True,
+        "get_backtesting_settings",
+        lambda require_explicit_fee=True: {"Commission_Value": 0.0026},
+    )
+    monkeypatch.setattr(
+        jobs_runner.database,
+        "build_backtesting_work_fingerprint",
+        lambda *args, **kwargs: "kraken-work",
+    )
+    monkeypatch.setattr(
+        jobs_runner.database,
+        "backtesting_result_matches_context",
+        lambda *args, **kwargs: True,
+    )
+    monkeypatch.setattr(
+        jobs_runner.database, "is_backtest_approved", lambda *args: (True, [])
     )
     monkeypatch.setattr(
         jobs_runner.database,
         "build_strategy_params_json_from_backtest_result",
-        lambda strategy_id, row: '{"parameters":{"ema_fast":10}}',
+        lambda *args: '{"parameters":{"ema_fast":10}}',
     )
     monkeypatch.setattr(
         jobs_runner.database,
-        "set_backtesting_results_from_position_strategy",
-        lambda **kwargs: calls.append(kwargs),
+        "sync_top_performer_position_candidate",
+        lambda **kwargs: calls.append(kwargs)
+        or (database_action, f"candidate_{database_action}"),
+    )
+    return strategy, result, calls
+
+
+@pytest.mark.parametrize("database_action", ["inserted", "updated"])
+def test_sync_backtesting_result_promotes_eligible_candidate(
+    monkeypatch, database_action
+):
+    _strategy, _result, calls = _mock_eligible_backtest_candidate(
+        monkeypatch, database_action=database_action
     )
 
     log_file = io.StringIO()
-    synced = jobs_runner._sync_backtesting_result_to_existing_position(
-        _backtesting_job(),
-        log_file=log_file,
+    outcome = jobs_runner._sync_backtesting_result_to_position_candidate(
+        _backtesting_job(), log_file=log_file
     )
 
-    assert synced is True
+    assert outcome == (database_action, f"candidate_{database_action}")
     assert calls == [
         {
+            "exchange_id": 2,
             "symbol": "BTCUSDC",
             "timeframe": "4h",
             "strategy_id": "ema_cross",
+            "strategy_name": "EMA Cross",
             "strategy_params_json": '{"parameters":{"ema_fast":10}}',
         }
     ]
-    assert "Updated existing position strategy params." in log_file.getvalue()
+    assert f"Position candidate {database_action}" in log_file.getvalue()
 
 
-def test_sync_backtesting_result_skips_when_result_missing(monkeypatch):
-    calls = []
+@pytest.mark.parametrize(
+    ("timeframe", "enabled", "reason"),
+    [
+        ("15m", True, "unsupported_live_timeframe"),
+        ("4h", False, "live_timeframe_disabled"),
+    ],
+)
+def test_sync_backtesting_result_skips_ineligible_timeframe(
+    monkeypatch, timeframe, enabled, reason
+):
+    _mock_eligible_backtest_candidate(monkeypatch)
+    monkeypatch.setattr(
+        jobs_runner.database,
+        "is_trade_main_timeframe_enabled",
+        lambda selected_timeframe: enabled,
+    )
+    job = {**_backtesting_job(), "timeframe": timeframe}
+
+    outcome = jobs_runner._sync_backtesting_result_to_position_candidate(job)
+
+    assert outcome == ("skipped", reason)
+
+
+@pytest.mark.parametrize(
+    ("strategy_change", "reason"),
+    [
+        ({"Status": "draft", "Type": "custom"}, "strategy_not_approved"),
+        ({"Main_Strategy": 0}, "strategy_not_available_for_main"),
+    ],
+)
+def test_sync_backtesting_result_skips_ineligible_strategy(
+    monkeypatch, strategy_change, reason
+):
+    strategy, _result, calls = _mock_eligible_backtest_candidate(monkeypatch)
+    for column, value in strategy_change.items():
+        strategy.loc[0, column] = value
+
+    outcome = jobs_runner._sync_backtesting_result_to_position_candidate(
+        _backtesting_job()
+    )
+
+    assert outcome == ("skipped", reason)
+    assert calls == []
+
+
+def test_sync_backtesting_result_requires_selected_strategy(monkeypatch):
+    _strategy, _result, calls = _mock_eligible_backtest_candidate(monkeypatch)
+    monkeypatch.setattr(
+        jobs_runner.config,
+        "load_settings",
+        lambda refresh=True: SimpleNamespace(main_strategies=["another_strategy"]),
+    )
+
+    outcome = jobs_runner._sync_backtesting_result_to_position_candidate(
+        _backtesting_job()
+    )
+
+    assert outcome == ("skipped", "strategy_not_selected")
+    assert calls == []
+
+
+def test_sync_backtesting_result_requires_available_strategy(monkeypatch):
+    _strategy, _result, calls = _mock_eligible_backtest_candidate(monkeypatch)
+    monkeypatch.setattr(
+        jobs_runner.database,
+        "get_strategy_by_id",
+        lambda strategy_id: pd.DataFrame(),
+    )
+
+    outcome = jobs_runner._sync_backtesting_result_to_position_candidate(
+        _backtesting_job()
+    )
+
+    assert outcome == ("skipped", "strategy_unavailable")
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("result_change", "reason"),
+    [
+        ({"Return_Perc": 0}, "non_positive_return"),
+        ({"Return_Perc": -1}, "non_positive_return"),
+    ],
+)
+def test_sync_backtesting_result_requires_positive_return(
+    monkeypatch, result_change, reason
+):
+    _strategy, result, calls = _mock_eligible_backtest_candidate(monkeypatch)
+    for column, value in result_change.items():
+        result.loc[0, column] = value
+
+    outcome = jobs_runner._sync_backtesting_result_to_position_candidate(
+        _backtesting_job()
+    )
+
+    assert outcome == ("skipped", reason)
+    assert calls == []
+
+
+def test_sync_backtesting_result_skips_missing_or_stale_result(monkeypatch):
+    _strategy, _result, calls = _mock_eligible_backtest_candidate(monkeypatch)
     monkeypatch.setattr(
         jobs_runner.database,
         "get_backtesting_results_by_symbol_timeframe_strategy",
         lambda **kwargs: pd.DataFrame(),
     )
+    assert jobs_runner._sync_backtesting_result_to_position_candidate(
+        _backtesting_job()
+    ) == ("skipped", "missing_backtest_result")
+
+    _mock_eligible_backtest_candidate(monkeypatch)
     monkeypatch.setattr(
         jobs_runner.database,
-        "set_backtesting_results_from_position_strategy",
-        lambda **kwargs: calls.append(kwargs),
+        "build_backtesting_work_fingerprint",
+        lambda *args, **kwargs: "new-work",
     )
-
-    log_file = io.StringIO()
-    synced = jobs_runner._sync_backtesting_result_to_existing_position(
-        _backtesting_job(),
-        log_file=log_file,
-    )
-
-    assert synced is False
+    assert jobs_runner._sync_backtesting_result_to_position_candidate(
+        _backtesting_job()
+    ) == ("skipped", "queued_backtest_context_stale")
     assert calls == []
-    assert "No backtesting result found" in log_file.getvalue()
 
 
-def test_sync_backtesting_result_skips_when_position_missing(monkeypatch):
-    calls = []
-    monkeypatch.setattr(
-        jobs_runner.database,
-        "get_backtesting_results_by_symbol_timeframe_strategy",
-        lambda **kwargs: pd.DataFrame([{"Backtest_Config_JSON": "{}"}]),
-    )
-    monkeypatch.setattr(
-        jobs_runner.database,
-        "get_all_positions_by_bot_symbol_strategy",
-        lambda **kwargs: False,
-    )
-    monkeypatch.setattr(
-        jobs_runner.database,
-        "set_backtesting_results_from_position_strategy",
-        lambda **kwargs: calls.append(kwargs),
-    )
+def test_sync_backtesting_result_skips_changed_commission(monkeypatch):
+    _strategy, _result, calls = _mock_eligible_backtest_candidate(monkeypatch)
+    job = {**_backtesting_job(), "commission_value": 0.004}
 
-    log_file = io.StringIO()
-    synced = jobs_runner._sync_backtesting_result_to_existing_position(
-        _backtesting_job(),
-        log_file=log_file,
-    )
+    outcome = jobs_runner._sync_backtesting_result_to_position_candidate(job)
 
-    assert synced is False
+    assert outcome == ("skipped", "queued_backtest_context_stale")
     assert calls == []
-    assert "No existing matching position found" in log_file.getvalue()
+
+
+def test_sync_backtesting_result_checks_result_context_and_approval(monkeypatch):
+    _mock_eligible_backtest_candidate(monkeypatch)
+    monkeypatch.setattr(
+        jobs_runner.database,
+        "backtesting_result_matches_context",
+        lambda *args, **kwargs: False,
+    )
+    assert jobs_runner._sync_backtesting_result_to_position_candidate(
+        _backtesting_job()
+    ) == ("skipped", "backtest_context_mismatch")
+
+    _mock_eligible_backtest_candidate(monkeypatch)
+    monkeypatch.setattr(
+        jobs_runner.database,
+        "is_backtest_approved",
+        lambda *args: (False, ["Min_Trades"]),
+    )
+    assert jobs_runner._sync_backtesting_result_to_position_candidate(
+        _backtesting_job()
+    ) == ("skipped", "backtest_rejected:Min_Trades")
+
+
+def test_sync_backtesting_result_rechecks_exchange_and_top_performer(monkeypatch):
+    _strategy, _result, calls = _mock_eligible_backtest_candidate(monkeypatch)
+    mismatched_job = {**_backtesting_job(), "exchange_id": 99}
+    assert jobs_runner._sync_backtesting_result_to_position_candidate(
+        mismatched_job
+    ) == ("skipped", "active_exchange_mismatch")
+
+    _mock_eligible_backtest_candidate(monkeypatch, database_action="skipped")
+    monkeypatch.setattr(
+        jobs_runner.database,
+        "sync_top_performer_position_candidate",
+        lambda **kwargs: ("skipped", "not_current_top_performer"),
+    )
+    assert jobs_runner._sync_backtesting_result_to_position_candidate(
+        _backtesting_job()
+    ) == ("skipped", "not_current_top_performer")
+    assert calls == []
 
 
 def test_sync_backtesting_result_logs_errors_without_raising(monkeypatch):
+    _mock_eligible_backtest_candidate(monkeypatch)
     monkeypatch.setattr(
         jobs_runner.database,
         "get_backtesting_results_by_symbol_timeframe_strategy",
@@ -351,13 +544,12 @@ def test_sync_backtesting_result_logs_errors_without_raising(monkeypatch):
     )
 
     log_file = io.StringIO()
-    synced = jobs_runner._sync_backtesting_result_to_existing_position(
-        _backtesting_job(),
-        log_file=log_file,
+    outcome = jobs_runner._sync_backtesting_result_to_position_candidate(
+        _backtesting_job(), log_file=log_file
     )
 
-    assert synced is False
-    assert "Failed to sync existing position strategy params" in log_file.getvalue()
+    assert outcome == ("failed", "technical_error")
+    assert "Failed to sync backtesting result to position candidate" in log_file.getvalue()
 
 
 class _FinishedProcess:
@@ -374,8 +566,9 @@ def test_finish_backtesting_job_syncs_successful_job(monkeypatch):
 
     monkeypatch.setattr(
         jobs_runner,
-        "_sync_backtesting_result_to_existing_position",
-        lambda job, log_file=None: sync_calls.append((job, log_file)) or True,
+        "_sync_backtesting_result_to_position_candidate",
+        lambda job, log_file=None: sync_calls.append((job, log_file))
+        or ("inserted", "candidate_created"),
     )
     monkeypatch.setattr(
         jobs_runner.database,
@@ -399,14 +592,42 @@ def test_finish_backtesting_job_syncs_successful_job(monkeypatch):
     assert complete_calls == [(42, 0, "")]
 
 
+def test_finish_backtesting_job_keeps_success_when_candidate_sync_fails(monkeypatch):
+    complete_calls = []
+    monkeypatch.setattr(
+        jobs_runner,
+        "_sync_backtesting_result_to_position_candidate",
+        lambda job, log_file=None: ("failed", "technical_error"),
+    )
+    monkeypatch.setattr(
+        jobs_runner.database,
+        "complete_backtesting_job",
+        lambda job_id, return_code, error_message: complete_calls.append(
+            (job_id, return_code, error_message)
+        ),
+    )
+
+    finished = jobs_runner._finish_backtesting_job(
+        {
+            "job": _backtesting_job(),
+            "process": _FinishedProcess(0),
+            "log_file": io.StringIO(),
+        }
+    )
+
+    assert finished is True
+    assert complete_calls == [(42, 0, "")]
+
+
 def test_finish_backtesting_job_does_not_sync_failed_job(monkeypatch):
     sync_calls = []
     complete_calls = []
 
     monkeypatch.setattr(
         jobs_runner,
-        "_sync_backtesting_result_to_existing_position",
-        lambda job, log_file=None: sync_calls.append((job, log_file)) or True,
+        "_sync_backtesting_result_to_position_candidate",
+        lambda job, log_file=None: sync_calls.append((job, log_file))
+        or ("inserted", "candidate_created"),
     )
     monkeypatch.setattr(
         jobs_runner.database,

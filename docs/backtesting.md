@@ -38,9 +38,25 @@ After each run, BEC stores the result in the database and can generate an HTML r
 
 Backtesting is queued. When you select rows in **Backtesting Results** and start a run, the dashboard adds jobs to the queue and the background `jobs_runner` executes them one by one. Use the queue panel to check progress and logs.
 
+After a queued backtest succeeds, BEC automatically creates an inactive
+`Positions` candidate or refreshes its matching position row when all
+live-trading gates pass. The strategy must be approved and selected in Main
+Strategies, the timeframe schedule must be enabled, the symbol must still be a
+current top performer, and the current exchange-scoped backtest must have a
+positive return and pass the configured approval rules. The job log records
+whether the candidate was inserted, updated, or skipped.
+
+This makes the candidate available to the next live cycle for its timeframe.
+It does not place an order immediately: entry signals, position limits, and all
+other live risk controls still apply.
+
 ## Backtesting Results
 
 Open **Backtesting > Backtesting Results** to filter, select, and queue backtests.
+
+Use **Load Top Performers** to populate the symbol filter from the current
+market-phase ranking. Select the approved strategy and the enabled `1h`, `4h`,
+or `1d` timeframes, then use **Run Selected Backtests** to queue the work.
 
 Use the grid to compare:
 
