@@ -52,6 +52,7 @@ class Migration:
     apply: MigrationCallable
     signature: str
     validate: MigrationCallable | None = None
+    validate_new_database: bool = True
 
     @property
     def checksum(self) -> str:
@@ -441,7 +442,7 @@ def mark_new_database_current(
     try:
         connection.execute("BEGIN IMMEDIATE")
         for migration in pending:
-            if migration.validate is not None:
+            if migration.validate is not None and migration.validate_new_database:
                 migration.validate(connection)
             connection.execute(
                 f"""

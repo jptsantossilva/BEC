@@ -1025,8 +1025,6 @@ def _check_exchange_public_apis(exchanges: pd.DataFrame) -> tuple[dict, dict]:
 def _save_exchange_editor(
     edited: pd.DataFrame,
     quote_assets: dict,
-    *,
-    confirm_okx_production_live_flags: bool = False,
 ) -> None:
     current = database.get_exchange_settings_table().set_index("Code")
     records = []
@@ -1059,12 +1057,7 @@ def _save_exchange_editor(
         if adapter_id:
             record["Adapter_Id"] = adapter_id
         records.append(record)
-    if confirm_okx_production_live_flags:
-        database.update_exchange_settings(
-            records, confirm_okx_production_live_flags=True
-        )
-    else:
-        database.update_exchange_settings(records)
+    database.update_exchange_settings(records)
 
 
 def _prepare_okx_public_markets_for_save(
@@ -1141,46 +1134,10 @@ def _prepare_okx_public_markets_for_save(
 
 
 def _standard_exchange_rows(exchanges: pd.DataFrame) -> pd.DataFrame:
-    """Hide internal validation identities from normal exchange management."""
+    """Show only exchanges supported by the current runtime."""
     return exchanges[
-        exchanges["Code"].astype(str) != "okx_demo"
+        exchanges["Code"].astype(str).isin(get_registered_exchange_codes())
     ].copy()
-
-
-def _okx_validation_environment_record(
-    demo_row: pd.Series,
-    production_row: pd.Series,
-    *,
-    enabled: bool,
-    buy_enabled: bool = False,
-    sell_enabled: bool = False,
-) -> dict:
-    """Build isolated demo settings aligned with the production identity."""
-    raw_fee = demo_row.get("Taker_Fee")
-    fee = None if raw_fee is None or pd.isna(raw_fee) else float(raw_fee)
-    raw_sizing_buffer = demo_row.get("Sizing_Buffer_Pct")
-    sizing_buffer = (
-        5.0
-        if raw_sizing_buffer is None or pd.isna(raw_sizing_buffer)
-        else float(raw_sizing_buffer)
-    )
-    return {
-        "Id": int(demo_row["Id"]),
-        "Enabled": bool(enabled),
-        "Quote_Asset": str(production_row.get("Quote_Asset") or "USDC")
-        .strip()
-        .upper(),
-        "Taker_Fee": fee,
-        "Adapter_Id": str(production_row.get("Adapter_Id") or "myokx")
-        .strip()
-        .lower(),
-        "Buy_Enabled": bool(buy_enabled),
-        "Sell_Enabled": bool(sell_enabled),
-        "Partial_Sell_Policy": str(
-            demo_row.get("Partial_Sell_Policy") or "accumulate"
-        ),
-        "Sizing_Buffer_Pct": sizing_buffer,
-    }
 
 
 def _render_trade_schedule_toggles(*, disabled: bool = False):
@@ -1217,19 +1174,6 @@ def _render_trade_schedule_toggles(*, disabled: bool = False):
         )
 
 
-def _manual_demo_submission_feedback(outcome, success_message: str) -> tuple[str, str]:
-    """Return safe UI feedback for a durable manual-demo submission result."""
-    if outcome is None:
-        return (
-            "error",
-            "The exchange rejected the order before submission. No replacement was "
-            "submitted; review the operational log.",
-        )
-    if outcome.get("skipped"):
-        return "error", str(outcome["reason"])
-    return "success", success_message
-
-
 def _available_balance_for_settings(asset: str) -> tuple[float | None, str | None]:
     """Read the active exchange balance without hiding the shared settings UI."""
     try:
@@ -1239,33 +1183,14 @@ def _available_balance_for_settings(asset: str) -> tuple[float | None, str | Non
         return None, type(exc).__name__
 
 
-def _okx_production_arming_requested(
-    edited: pd.DataFrame, persisted: pd.DataFrame
-) -> bool:
-    """Return true only for a new OKX production side activation."""
-    edited_rows = edited[edited["Code"].astype(str) == "okx"]
-    persisted_rows = persisted[persisted["Code"].astype(str) == "okx"]
-    if edited_rows.empty or persisted_rows.empty:
-        return False
-    edited_row = edited_rows.iloc[0]
-    persisted_row = persisted_rows.iloc[0]
-    return (
-        bool(edited_row.get("Buy Enabled", False))
-        and not bool(persisted_row.get("Buy_Enabled", False))
-    ) or (
-        bool(edited_row.get("Sell Enabled", False))
-        and not bool(persisted_row.get("Sell_Enabled", False))
-    )
-
-
 def _render_okx_read_only_checks(
     exchanges: pd.DataFrame, *, key_scope: str
 ) -> None:
     st.caption(
-        "These checks read balances only. They never submit, query, amend, or "
-        "cancel an order."
+        "These checks read balances and order history only. They never submit, "
+        "amend, or cancel an order."
     )
-    okx_rows = exchanges[exchanges["Code"].isin(["okx", "okx_demo"])]
+    okx_rows = exchanges[exchanges["Code"].astype(str) == "okx"]
     for _, okx_row in okx_rows.iterrows():
         label = f"Check {okx_row['Name']} Read-Only API"
         if st.button(
@@ -1279,165 +1204,6 @@ def _render_okx_read_only_checks(
                 okx_row.to_dict(), run_mode=config.read_setting("run_mode")
             )
             (st.success if status.available else st.error)(status.message)
-
-
-def _render_okx_production_validation_management(
-    exchanges: pd.DataFrame,
-    persisted: pd.DataFrame,
-    active_exchange: dict | None,
-) -> None:
-    """Keep the isolated OKX demo identity inside an advanced validation flow."""
-    production_rows = persisted[persisted["Code"].astype(str) == "okx"]
-    demo_rows = persisted[persisted["Code"].astype(str) == "okx_demo"]
-    if production_rows.empty or demo_rows.empty:
-        st.info("The OKX production validation environment is not configured.")
-        return
-
-    production = production_rows.iloc[0]
-    demo = demo_rows.iloc[0]
-    active_code = str((active_exchange or {}).get("code") or "")
-    st.caption(
-        "OKX Demo is an internal validation environment, not a normal BEC "
-        "exchange. It uses separate demo credentials and isolated orders to "
-        "prove the order lifecycle before production trading can be enabled."
-    )
-
-    production_api_rows = exchanges[
-        exchanges["Code"].astype(str) == "okx"
-    ]
-    _render_okx_read_only_checks(
-        production_api_rows, key_scope="okx_production_validation"
-    )
-
-    if active_code == "okx_demo":
-        st.warning(
-            "The isolated OKX production validation environment is active. "
-            "Production orders cannot be submitted in this environment."
-        )
-        demo_api_rows = exchanges[
-            exchanges["Code"].astype(str) == "okx_demo"
-        ]
-        _render_okx_read_only_checks(
-            demo_api_rows, key_scope="okx_production_validation"
-        )
-
-        demo_buy_enabled = st.checkbox(
-            "Enable controlled demo buys",
-            value=bool(demo.get("Buy_Enabled", False)),
-            key="okx_validation_buy_enabled",
-        )
-        demo_sell_enabled = st.checkbox(
-            "Enable controlled demo sells",
-            value=bool(demo.get("Sell_Enabled", False)),
-            key="okx_validation_sell_enabled",
-        )
-        if st.button(
-            "Save Validation Permissions",
-            icon=":material/save:",
-            key="save_okx_validation_permissions",
-        ):
-            try:
-                database.update_exchange_settings(
-                    [
-                        _okx_validation_environment_record(
-                            demo,
-                            production,
-                            enabled=True,
-                            buy_enabled=demo_buy_enabled,
-                            sell_enabled=demo_sell_enabled,
-                        )
-                    ]
-                )
-                st.success("OKX validation permissions updated.")
-                st.rerun()
-            except ValueError as exc:
-                st.error(str(exc))
-
-        blockers = database.get_exchange_switch_blockers()
-        validation_blocked = bool(
-            blockers["open_positions"] or blockers["unsettled_orders"]
-        )
-        if validation_blocked:
-            st.warning(
-                "Finish and reconcile the validation activity before returning "
-                f"to production ({blockers['open_positions']} open positions, "
-                f"{blockers['unsettled_orders']} unsettled orders)."
-            )
-        if st.button(
-            "Finish Validation and Return to OKX Production",
-            icon=":material/exit_to_app:",
-            disabled=validation_blocked,
-            key="finish_okx_production_validation",
-        ):
-            try:
-                config.update_setting("run_mode", "test")
-                database.set_active_exchange(int(production["Id"]))
-                database.update_exchange_settings(
-                    [
-                        _okx_validation_environment_record(
-                            demo,
-                            production,
-                            enabled=False,
-                        )
-                    ]
-                )
-                st.success("Returned to OKX Production; demo permissions disabled.")
-                st.rerun()
-            except ValueError as exc:
-                st.error(str(exc))
-        return
-
-    if active_code != "okx":
-        st.info(
-            "Select OKX as the active production exchange before starting its "
-            "advanced validation workflow."
-        )
-        return
-
-    validation = database.get_compatible_okx_demo_validation(active_exchange)
-    if validation is None:
-        st.info("No compatible completed OKX production validation is recorded.")
-    else:
-        st.success(
-            f"Compatible OKX production validation record {validation['Id']} "
-            "is available."
-        )
-
-    blockers = database.get_exchange_switch_blockers()
-    validation_blocked = bool(
-        blockers["open_positions"] or blockers["unsettled_orders"]
-    )
-    if validation_blocked:
-        st.warning(
-            "Validation cannot start while production has open positions or "
-            f"unsettled orders ({blockers['open_positions']} positions, "
-            f"{blockers['unsettled_orders']} orders)."
-        )
-    if st.button(
-        "Start Controlled OKX Production Validation",
-        icon=":material/science:",
-        disabled=validation_blocked,
-        key="start_okx_production_validation",
-    ):
-        try:
-            config.update_setting("run_mode", "test")
-            database.update_exchange_settings(
-                [
-                    _okx_validation_environment_record(
-                        demo,
-                        production,
-                        enabled=True,
-                    )
-                ]
-            )
-            database.set_active_exchange(int(demo["Id"]))
-            st.success(
-                "OKX validation environment activated with demo order sides disabled."
-            )
-            st.rerun()
-        except ValueError as exc:
-            st.error(str(exc))
-
 
 def _sync_active_exchange_selector(current_exchange_id: int | None) -> None:
     """Reset only stale exchange-selector state without discarding a new choice."""
@@ -1729,26 +1495,6 @@ def _render_exchange_management(
             "include exchange trading costs for that exchange."
         )
 
-    okx_arming_requested = _okx_production_arming_requested(edited, persisted)
-    confirm_okx_live_flags = False
-    if okx_arming_requested:
-        st.warning(
-            "Enabling an OKX production side requires explicit confirmation."
-        )
-        confirm_okx_live_flags = st.checkbox(
-            "I understand that an enabled OKX production side can submit real "
-            "spot orders only after all other gates pass.",
-            key="okx_production_live_flags_confirm",
-        )
-        okx_live_phrase = st.text_input(
-            "Type ENABLE OKX SPOT to confirm production side changes",
-            key="okx_production_live_flags_phrase",
-        )
-        confirm_okx_live_flags = (
-            confirm_okx_live_flags
-            and okx_live_phrase.strip() == "ENABLE OKX SPOT"
-        )
-
     if st.button("Save Exchange Settings", icon=":material/save:"):
         try:
             with st.spinner("Validating and saving exchange settings..."):
@@ -1760,80 +1506,56 @@ def _render_exchange_management(
                     statuses = dict(statuses)
                     statuses["okx"] = "Available"
                     st.session_state["exchange_api_statuses"] = statuses
-                _save_exchange_editor(
-                    edited,
-                    quote_assets,
-                    confirm_okx_production_live_flags=confirm_okx_live_flags,
-                )
+                _save_exchange_editor(edited, quote_assets)
             st.success("Exchange settings updated.")
             st.rerun()
         except ValueError as exc:
             st.error(str(exc))
 
-    with st.expander("Advanced OKX production validation"):
-        st.caption(
-            "OKX defaults to the EEA `myokx` adapter variant. It may be changed "
-            "to global `okx` only before OKX activity has been persisted. Saving "
-            "an enabled OKX row automatically loads its credential-free public "
-            "markets. The advanced workflow below is needed only before enabling "
-            "real OKX production orders."
-        )
-        _render_okx_production_validation_management(
-            exchanges, all_persisted, active_exchange
-        )
-
-    active_code = str((active_exchange or {}).get("code") or "")
-    if active_code == "okx_demo":
-        st.info(
-            "The advanced OKX production validation environment is active. "
-            "Use the panel above to finish validation and return to production."
-        )
-    else:
-        standard_exchanges = _standard_exchange_rows(exchanges)
-        enabled_exchanges = standard_exchanges[
-            standard_exchanges["Enabled"].astype(int) == 1
-        ]
-        exchange_options = [None, *enabled_exchanges["Id"].astype(int).tolist()]
-        labels = {
-            int(row["Id"]): f"{row['Name']} ({row['Code']})"
-            for _, row in enabled_exchanges.iterrows()
-        }
-        current_exchange_id = (
-            int(active_exchange["id"]) if active_exchange else None
-        )
-        _sync_active_exchange_selector(current_exchange_id)
-        selected_exchange = st.selectbox(
-            "2. Active exchange",
-            exchange_options,
-            index=(
-                exchange_options.index(current_exchange_id)
-                if current_exchange_id in exchange_options
-                else 0
-            ),
-            format_func=lambda value: (
-                "No active exchange" if value is None else labels[int(value)]
-            ),
-            key=ACTIVE_EXCHANGE_SELECTOR_KEY,
-        )
-        selection_changed = selected_exchange != current_exchange_id
-        if selection_changed:
-            blockers = database.get_exchange_switch_blockers()
-            if blockers["open_positions"] or blockers["unsettled_orders"]:
-                st.warning(
-                    "Exchange switching is blocked while open positions or unsettled "
-                    f"orders exist ({blockers['open_positions']} positions, "
-                    f"{blockers['unsettled_orders']} orders)."
-                )
-        if st.button("Apply active exchange", disabled=not selection_changed):
-            try:
-                if selected_exchange is None:
-                    database.clear_active_exchange()
-                else:
-                    database.set_active_exchange(int(selected_exchange))
-                st.success("Active exchange updated.")
-                st.rerun()
-            except ValueError as exc:
-                st.error(str(exc))
+    standard_exchanges = _standard_exchange_rows(exchanges)
+    enabled_exchanges = standard_exchanges[
+        standard_exchanges["Enabled"].astype(int) == 1
+    ]
+    exchange_options = [None, *enabled_exchanges["Id"].astype(int).tolist()]
+    labels = {
+        int(row["Id"]): f"{row['Name']} ({row['Code']})"
+        for _, row in enabled_exchanges.iterrows()
+    }
+    current_exchange_id = int(active_exchange["id"]) if active_exchange else None
+    _sync_active_exchange_selector(current_exchange_id)
+    selected_exchange = st.selectbox(
+        "2. Active exchange",
+        width=200,
+        options=exchange_options,
+        index=(
+            exchange_options.index(current_exchange_id)
+            if current_exchange_id in exchange_options
+            else 0
+        ),
+        format_func=lambda value: (
+            "No active exchange" if value is None else labels[int(value)]
+        ),
+        key=ACTIVE_EXCHANGE_SELECTOR_KEY,
+    )
+    selection_changed = selected_exchange != current_exchange_id
+    if selection_changed:
+        blockers = database.get_exchange_switch_blockers()
+        if blockers["open_positions"] or blockers["unsettled_orders"]:
+            st.warning(
+                "Exchange switching is blocked while open positions or unsettled "
+                f"orders exist ({blockers['open_positions']} positions, "
+                f"{blockers['unsettled_orders']} orders)."
+            )
+    if st.button("Apply active exchange", disabled=not selection_changed):
+        try:
+            if selected_exchange is None:
+                database.clear_active_exchange()
+            else:
+                database.set_active_exchange(int(selected_exchange))
+            st.success("Active exchange updated.")
+            st.rerun()
+        except ValueError as exc:
+            st.error(str(exc))
 
 
 def _render_active_exchange_summary(
@@ -1843,9 +1565,6 @@ def _render_active_exchange_summary(
     run_mode = str(config.read_setting("run_mode") or "test")
     environment = str(active_exchange.get("execution_environment") or "production")
     display_name = str(active_exchange["name"])
-    if code == "okx_demo":
-        display_name = "OKX Production Validation"
-        environment = "isolated demo"
     quote_asset = str(active_exchange.get("quote_asset") or "—")
     sides = [
         label
@@ -1876,11 +1595,6 @@ def _render_active_exchange_summary(
             f"Live run mode is enabled and {display_name} order sides "
             "are armed. Real orders are possible."
         )
-    elif code == "okx_demo":
-        st.warning(
-            "The isolated OKX production validation environment is active; "
-            "production orders are unavailable."
-        )
     elif unsettled_orders:
         st.warning(
             f"{len(unsettled_orders)} unsettled order"
@@ -1891,93 +1605,27 @@ def _render_active_exchange_summary(
 def _render_live_execution_controls(active_exchange: dict, capabilities) -> bool:
     """Render production controls and return whether schedules were rendered."""
     code = str(active_exchange["code"])
-    if code == "okx_demo":
-        demo_mode_key = "okx_demo_run_mode"
-        st.session_state[demo_mode_key] = (
-            config.read_setting("run_mode") == "demo"
+    if capabilities.uses_gated_live_execution:
+        live_mode_key = f"{code}_live_run_mode"
+        st.session_state[live_mode_key] = (
+            config.read_setting("run_mode") == "live"
         )
 
-        def _set_demo_run_mode():
+        def _set_live_run_mode():
             config.update_setting(
                 "run_mode",
-                "demo" if bool(st.session_state[demo_mode_key]) else "test",
+                "live" if bool(st.session_state[live_mode_key]) else "test",
             )
 
-        demo_mode = st.toggle(
-            "Validation order submission mode",
-            key=demo_mode_key,
-            on_change=_set_demo_run_mode,
+        st.toggle(
+            "Live run mode",
+            key=live_mode_key,
+            on_change=_set_live_run_mode,
             help=(
-                "Permit submissions only to the isolated OKX Demo Trading "
-                "environment used for production validation."
+                "Master execution gate. Keep disabled except during controlled "
+                "live operation."
             ),
         )
-        if demo_mode:
-            st.warning("OKX validation order submission is enabled.")
-    elif capabilities.uses_gated_live_execution:
-        if code == "okx":
-            demo_record = database.get_compatible_okx_demo_validation(active_exchange)
-            if demo_record is None:
-                st.warning(
-                    "OKX production execution requires a compatible completed "
-                    "production-validation record."
-                )
-            run_mode = config.read_setting("run_mode")
-            if run_mode == "live":
-                if st.button(
-                    "Disable OKX Production Live Mode",
-                    icon=":material/pause_circle:",
-                ):
-                    config.update_setting("run_mode", "test")
-                    st.rerun()
-            else:
-                with st.form(
-                    "okx_production_live_mode_form", clear_on_submit=True
-                ):
-                    confirm_live_mode = st.checkbox(
-                        "I confirm this is a controlled OKX production spot operation.",
-                        key="okx_production_live_mode_confirm",
-                    )
-                    live_phrase = st.text_input(
-                        "Type ENABLE OKX LIVE to enable run mode",
-                        key="okx_production_live_mode_phrase",
-                    )
-                    submit_live_mode = st.form_submit_button(
-                        "Enable OKX Production Live Mode",
-                        icon=":material/play_circle:",
-                    )
-                if submit_live_mode:
-                    if (
-                        not confirm_live_mode
-                        or live_phrase.strip() != "ENABLE OKX LIVE"
-                    ):
-                        st.error(
-                            "Confirm the operation and type ENABLE OKX LIVE exactly."
-                        )
-                    else:
-                        config.update_setting("run_mode", "live")
-                        st.rerun()
-        else:
-            live_mode_key = f"{code}_live_run_mode"
-            st.session_state[live_mode_key] = (
-                config.read_setting("run_mode") == "live"
-            )
-
-            def _set_live_run_mode():
-                config.update_setting(
-                    "run_mode",
-                    "live" if bool(st.session_state[live_mode_key]) else "test",
-                )
-
-            st.toggle(
-                "Live run mode",
-                key=live_mode_key,
-                on_change=_set_live_run_mode,
-                help=(
-                    "Master execution gate. Keep disabled except during controlled "
-                    "live operation."
-                ),
-            )
     else:
         return False
 
@@ -2120,159 +1768,6 @@ def _render_kraken_validation_tools(active_exchange: dict) -> None:
     st.rerun()
 
 
-def _render_okx_demo_validation_tools(active_exchange: dict) -> None:
-    st.caption(
-        "These controls use the durable intent, balance, market-limit, fill, "
-        "and reconciliation workflow against OKX Demo Trading."
-    )
-    with st.form("okx_demo_manual_buy_form", clear_on_submit=False):
-        manual_buy_symbol = st.text_input(
-            "Spot symbol", value="BTC/USDC", key="okx_demo_manual_buy_symbol"
-        )
-        manual_buy_quote = st.number_input(
-            "Quote amount",
-            min_value=0.0,
-            value=10.0,
-            step=1.0,
-            key="okx_demo_manual_buy_quote",
-        )
-        confirm_manual_buy = st.checkbox(
-            "I confirm this is an OKX Demo Trading buy for controlled validation.",
-            key="okx_demo_manual_buy_confirm",
-        )
-        submit_manual_buy = st.form_submit_button(
-            "Submit Manual Demo Buy", icon=":material/shopping_cart:"
-        )
-    if submit_manual_buy:
-        if not confirm_manual_buy:
-            st.error("Confirm the controlled demo buy before submitting it.")
-        else:
-            try:
-                from bec.exchanges.live_execution import create_okx_demo_manual_buy
-
-                outcome = create_okx_demo_manual_buy(
-                    symbol=manual_buy_symbol,
-                    quote_amount=Decimal(str(manual_buy_quote)),
-                )
-                feedback_level, feedback = _manual_demo_submission_feedback(
-                    outcome,
-                    "Manual demo buy submitted through the durable order workflow.",
-                )
-                getattr(st, feedback_level)(feedback)
-            except (RuntimeError, ValueError) as exc:
-                st.error(str(exc))
-
-    open_demo_positions = database.get_positions_by_position(1)
-    if not open_demo_positions.empty:
-        position_options = {
-            int(row["Id"]): (
-                f"{row['Symbol']} · qty {row['Qty']} · {row['Bot']} · "
-                f"position {row['Id']}"
-            )
-            for _, row in open_demo_positions.iterrows()
-        }
-        manual_sell_quote = None
-        with st.form("okx_demo_manual_sell_form", clear_on_submit=False):
-            manual_sell_position_id = st.selectbox(
-                "Open demo position to close",
-                list(position_options),
-                format_func=lambda value: position_options[int(value)],
-                key="okx_demo_manual_sell_position",
-            )
-            try:
-                from bec.exchanges.live_execution import (
-                    get_okx_demo_manual_sell_quote,
-                )
-
-                selected_symbol = str(
-                    open_demo_positions.loc[
-                        open_demo_positions["Id"] == int(manual_sell_position_id),
-                        "Symbol",
-                    ].iloc[0]
-                )
-                manual_sell_quote = get_okx_demo_manual_sell_quote(
-                    symbol=selected_symbol
-                )
-                best_bid = Decimal(str(manual_sell_quote["best_bid"]))
-                best_ask = manual_sell_quote["best_ask"]
-                st.caption(
-                    f"Suggested current best bid: {best_bid}. "
-                    + (
-                        f"Best ask: {best_ask}."
-                        if best_ask is not None
-                        else "Best ask is unavailable."
-                    )
-                )
-            except Exception as exc:
-                st.warning(f"Limit price is unavailable: {exc}")
-                best_bid = Decimal("0")
-            manual_sell_limit_price = st.number_input(
-                "Explicit limit price",
-                min_value=0.0,
-                value=float(best_bid),
-                step=0.1,
-                disabled=manual_sell_quote is None,
-                key="okx_demo_manual_sell_limit_price",
-            )
-            confirm_manual_sell = st.checkbox(
-                "I confirm an explicit-price immediate-or-cancel sell for this "
-                "OKX Demo position.",
-                key="okx_demo_manual_sell_confirm",
-            )
-            submit_manual_sell = st.form_submit_button(
-                "Submit Explicit-Limit IOC Demo Sell",
-                icon=":material/sell:",
-                disabled=manual_sell_quote is None,
-            )
-        if submit_manual_sell:
-            if not confirm_manual_sell:
-                st.error(
-                    "Confirm the controlled explicit-limit IOC demo sell before "
-                    "submitting it."
-                )
-            else:
-                try:
-                    from bec.exchanges.live_execution import (
-                        create_okx_demo_manual_sell,
-                    )
-
-                    outcome = create_okx_demo_manual_sell(
-                        position_id=int(manual_sell_position_id),
-                        limit_price=Decimal(str(manual_sell_limit_price)),
-                    )
-                    feedback_level, feedback = _manual_demo_submission_feedback(
-                        outcome,
-                        "Explicit-limit IOC demo sell submitted through the "
-                        "durable order workflow.",
-                    )
-                    getattr(st, feedback_level)(feedback)
-                except (RuntimeError, ValueError) as exc:
-                    st.error(str(exc))
-                except Exception as exc:
-                    print(
-                        database.exchange_log_prefix(),
-                        "Manual OKX demo sell could not be prepared "
-                        f"({type(exc).__name__})",
-                    )
-                    st.error(
-                        "The manual demo sell was not submitted. Refresh market "
-                        "data and review the operational log."
-                    )
-    if st.button(
-        "Record Completed OKX Demo Validation",
-        icon=":material/verified:",
-    ):
-        try:
-            from bec.exchanges.live_execution import reconcile_unsettled_orders
-
-            record = database.record_okx_demo_validation(
-                reconcile_unsettled_orders()
-            )
-            st.success(f"Demo validation record {record['Id']} stored.")
-        except ValueError as exc:
-            st.error(str(exc))
-
-
 def _render_diagnostics_and_validation(
     exchanges: pd.DataFrame,
     active_exchange: dict,
@@ -2293,7 +1788,7 @@ def _render_diagnostics_and_validation(
     _render_spot_market_diagnostics(active_exchange)
 
     if capabilities.uses_gated_live_execution:
-        if code in {"okx", "okx_demo"}:
+        if code == "okx":
             active_rows = exchanges[exchanges["Code"].astype(str) == code]
             _render_okx_read_only_checks(
                 active_rows, key_scope="diagnostics"
@@ -2321,25 +1816,6 @@ def _render_diagnostics_and_validation(
     if code == "kraken":
         st.markdown("#### Kraken Live Validation")
         _render_kraken_validation_tools(active_exchange)
-    elif code == "okx_demo":
-        st.markdown("#### OKX Production Validation")
-        show_demo_tools = st.toggle(
-            "Show controlled validation tools",
-            key="show_okx_demo_validation_tools",
-        )
-        if show_demo_tools:
-            _render_okx_demo_validation_tools(active_exchange)
-    elif code == "okx":
-        record = database.get_compatible_okx_demo_validation(active_exchange)
-        if record is None:
-            st.warning(
-                "No compatible completed OKX production validation is available."
-            )
-        else:
-            st.success(
-                f"Compatible OKX production validation record {record['Id']} "
-                "is available."
-            )
 
 
 def settings():

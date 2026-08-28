@@ -85,6 +85,8 @@ def update_settings(patch: dict, *, refresh: bool = True) -> AppSettings:
     )
     if invalid:
         raise ValueError(f"Invalid setting keys: {', '.join(invalid)}")
+    if "run_mode" in patch and str(patch["run_mode"]) not in {"prod", "test", "live"}:
+        raise ValueError("run_mode must be prod, test, or live")
 
     for name, value in patch.items():
         database.set_setting(name, value)

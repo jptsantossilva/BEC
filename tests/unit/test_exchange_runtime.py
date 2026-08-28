@@ -625,7 +625,7 @@ def test_exchange_settings_reject_invalid_fees(tmp_path, fee):
         _restore_connection(original)
 
 
-def test_okx_identities_remain_configuration_only_and_lock_variant_after_activity(
+def test_okx_production_is_supported_and_archived_demo_remains_disabled(
     tmp_path,
 ):
     connection = _runtime_database(tmp_path)
@@ -696,21 +696,45 @@ def test_okx_identities_remain_configuration_only_and_lock_variant_after_activit
             database.set_active_exchange(3)
     finally:
         connection.close()
+        _restore_connection(original)
 
 
-def test_okx_live_flags_require_typed_confirmation_before_they_can_be_armed(tmp_path):
+def test_okx_live_flags_need_no_special_confirmation_or_fee(tmp_path):
     connection = _runtime_database(tmp_path)
     original = _use_connection(connection)
     try:
-        with pytest.raises(ValueError, match="typed production confirmation"):
-            database.update_exchange_settings(
-                [{"Id": 3, "Enabled": False, "Quote_Asset": "USDC", "Taker_Fee": None,
-                  "Buy_Enabled": True, "Sell_Enabled": False}]
-            )
+        connection.execute(
+            """
+            INSERT INTO Exchange_Symbols (
+                Exchange_Id, Symbol_Normalized, Exchange_Symbol, Quote_Asset,
+                Is_Tradable, Availability_Status, Last_Synced_At
+            ) VALUES (3, 'BTC/USDC', 'BTC-USDC', 'USDC', 1, 'available',
+                      CURRENT_TIMESTAMP)
+            """
+        )
+        connection.commit()
+        database.update_exchange_settings(
+            [{"Id": 3, "Enabled": True, "Quote_Asset": "USDC", "Taker_Fee": None,
+              "Buy_Enabled": True, "Sell_Enabled": False}]
+        )
         row = connection.execute(
             "SELECT Buy_Enabled, Sell_Enabled FROM Exchanges WHERE Id=3"
         ).fetchone()
-        assert row == (0, 0)
+        assert row == (1, 0)
+    finally:
+        connection.close()
+        _restore_connection(original)
+
+
+def test_archived_okx_demo_identity_cannot_be_selected(tmp_path):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        connection.execute("UPDATE Exchanges SET Enabled=1 WHERE Code='okx_demo'")
+        connection.commit()
+
+        with pytest.raises(ValueError, match="configuration only"):
+            database.set_active_exchange(4)
     finally:
         connection.close()
         _restore_connection(original)
@@ -879,113 +903,6 @@ def _kraken_order_result(
     )
 
 
-def test_okx_demo_validation_record_requires_settled_round_trip(tmp_path, monkeypatch):
-    connection = _runtime_database(tmp_path)
-    original = _use_connection(connection)
-    try:
-        connection.execute("UPDATE Exchanges SET Enabled=1 WHERE Id=4")
-        connection.commit()
-        database.set_active_exchange(4)
-        monkeypatch.setattr(
-            database,
-            "_exchange_symbol_metadata",
-            lambda symbol: (4, "BTC/USDC", "BTC-USDC", "BTC", "USDC"),
-        )
-        monkeypatch.setattr(service, "validate_client_order_id", lambda value: value)
-        for side, client_id, exchange_order_id in (
-            ("BUY", "BECDEMO1", "OKX-BUY-1"),
-            ("SELL", "BECDEMO2", "OKX-SELL-1"),
-        ):
-            intent = database.create_order_intent(
-                side=side,
-                symbol="BTC/USDC",
-                bot="1h",
-                requested_quote_qty=10 if side == "BUY" else None,
-                requested_qty=0.1 if side == "SELL" else None,
-                client_order_id=client_id,
-            )
-            database.mark_order_intent_submitting(intent["Id"])
-            database.apply_order_result(
-                intent["Id"],
-                _kraken_order_result(
-                    OrderStatus.FILLED,
-                    "0.1",
-                    exchange_order_id=exchange_order_id,
-                    side=side.lower(),
-                ),
-            )
-
-        record = database.record_okx_demo_validation(
-            {"checked": 2, "updated": 2, "unresolved": 0}
-        )
-
-        assert record["Adapter_Id"] == "myokx"
-        assert record["Tested_Symbols_JSON"] == '["BTC/USDC"]'
-        assert record["Buy_Order_Ids_JSON"] == '["OKX-BUY-1"]'
-        assert record["Sell_Order_Ids_JSON"] == '["OKX-SELL-1"]'
-        assert database.get_compatible_okx_demo_validation(
-            {
-                "code": "okx",
-                "execution_environment": "production",
-                "adapter_id": "myokx",
-                "quote_asset": "USDC",
-            }
-        )["Id"] == record["Id"]
-        assert database.get_compatible_okx_demo_validation(
-            {
-                "code": "okx",
-                "execution_environment": "production",
-                "adapter_id": "okx",
-                "quote_asset": "USDC",
-            }
-        ) is None
-    finally:
-        connection.close()
-        _restore_connection(original)
-
-
-def test_okx_demo_manual_candidate_is_exchange_scoped_and_cannot_duplicate_open_symbol(
-    tmp_path, monkeypatch
-):
-    connection = _runtime_database(tmp_path)
-    original = _use_connection(connection)
-    try:
-        connection.execute("UPDATE Exchanges SET Enabled=1 WHERE Id=4")
-        connection.commit()
-        database.set_active_exchange(4)
-        monkeypatch.setattr(
-            database,
-            "_exchange_symbol_metadata",
-            lambda symbol: (4, "BTC/USDC", "BTC-USDC", "BTC", "USDC"),
-        )
-
-        position_id = database.create_okx_demo_manual_position_candidate("BTC/USDC")
-        row = connection.execute(
-            "SELECT Bot, Position, Strategy_Id FROM Positions WHERE Id=?", (position_id,)
-        ).fetchone()
-        assert row == ("manual_demo", 0, "okx_demo_manual")
-        connection.execute("UPDATE Positions SET Position=1 WHERE Id=?", (position_id,))
-        connection.commit()
-        with pytest.raises(ValueError, match="already exists"):
-            database.create_okx_demo_manual_position_candidate("BTC/USDC")
-
-        connection.execute("UPDATE Positions SET Position=0 WHERE Id=?", (position_id,))
-        connection.execute(
-            """
-            INSERT INTO Orders (
-                Exchange_Id, Symbol_Normalized, Bot, Symbol, Side, Order_Status, Intent_State
-            ) VALUES (4, 'BTC/USDC', 'manual_demo', 'BTC/USDC', 'BUY', 'unknown',
-                      'reconcile_required')
-            """
-        )
-        connection.commit()
-        with pytest.raises(ValueError, match="reconcile it before retrying"):
-            database.create_okx_demo_manual_position_candidate("BTC/USDC")
-    finally:
-        connection.close()
-        _restore_connection(original)
-
-
 def test_kraken_manual_live_candidate_is_reused_and_rejects_open_symbol(
     tmp_path, monkeypatch
 ):
@@ -1070,60 +987,6 @@ def test_latest_manual_live_validation_is_exchange_scoped_and_settled(
         assert validation["Intent_State"] == "settled"
         assert validation["Exchange_Order_Id"] == "KRAKEN-LIVE-1"
         assert database.get_latest_manual_live_validation(1) is None
-    finally:
-        connection.close()
-        _restore_connection(original)
-
-
-def test_okx_demo_reconciliation_stays_scheduled_after_sides_are_disarmed(
-    tmp_path, monkeypatch
-):
-    connection = _runtime_database(tmp_path)
-    original = _use_connection(connection)
-    try:
-        connection.execute("UPDATE Exchanges SET Enabled=1 WHERE Id=4")
-        connection.commit()
-        database.set_active_exchange(4)
-        monkeypatch.setattr(
-            database,
-            "_exchange_symbol_metadata",
-            lambda symbol: (4, "BTC/USDC", "BTC-USDC", "BTC", "USDC"),
-        )
-        monkeypatch.setattr(service, "validate_client_order_id", lambda value: value)
-        database.update_exchange_settings(
-            [{
-                "Id": 4,
-                "Enabled": True,
-                "Quote_Asset": "USDC",
-                "Taker_Fee": None,
-                "Buy_Enabled": True,
-                "Sell_Enabled": False,
-                "Sizing_Buffer_Pct": 5.0,
-            }]
-        )
-        assert database.get_job_schedule_enabled(database.RECONCILIATION_JOB) is True
-        intent = database.create_order_intent(
-            side="BUY",
-            symbol="BTC/USDC",
-            bot="1h",
-            requested_quote_qty=10,
-            client_order_id="BECDEMO1",
-        )
-        database.mark_order_intent_unknown(intent["Id"], "timeout")
-        database.update_exchange_settings(
-            [{
-                "Id": 4,
-                "Enabled": True,
-                "Quote_Asset": "USDC",
-                "Taker_Fee": None,
-                "Buy_Enabled": False,
-                "Sell_Enabled": False,
-                "Sizing_Buffer_Pct": 5.0,
-            }]
-        )
-
-        assert database.get_job_schedule_enabled(database.RECONCILIATION_JOB) is True
-        assert database.get_unsettled_order_intents(4)[0]["Intent_State"] == "reconcile_required"
     finally:
         connection.close()
         _restore_connection(original)

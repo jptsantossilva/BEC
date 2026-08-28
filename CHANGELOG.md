@@ -3,6 +3,9 @@
 All notable changes to this project will be documented in this file.
 
 ## [2026-08-27]
+- OKX Production - Retired OKX Demo Trading and its mandatory validation record, normalized OKX live controls to the Kraken-style gated workflow, and retained balance/order-history preflight, explicit sides, durable intents and reconciliation.
+- Database Migration - Added additive migration 13 to reject active or unsettled Demo state, archive historical Demo records, disarm OKX production and live schedules during upgrade, and omit Demo entirely from new databases.
+- Trading Settings - Removed Demo credentials, sandbox/manual-order tools, validation warnings, OKX-specific typed phrases, and the exclusive fee/backtest submission gates; archived Demo identities are hidden and cannot be selected.
 - Backtesting Queue - Successful queued backtests now automatically create or refresh eligible top-performer candidates in `Positions`, making them available to the next live cycle without waiting for another market-phase run.
 - Trading Safety - Candidate promotion requires the active exchange context, an enabled `1h`, `4h` or `1d` schedule, an approved and selected Main Strategy, current top-performer membership, positive return, matching commission/fingerprint metadata and passing approval rules.
 - Position Persistence - Added atomic, idempotent candidate synchronization without a schema migration; existing rows receive only the latest rank and strategy-parameter snapshot while position, order, quantity, price and PnL state remain unchanged.

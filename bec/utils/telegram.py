@@ -73,11 +73,6 @@ telegram_prefix_bot_4h_ml = "4h\n"
 telegram_prefix_bot_1h_sl = "1h "
 telegram_prefix_bot_1h_ml = "1h\n"
 
-# Controlled OKX demo validations are not strategy timeframes. Keep their
-# notifications explicit without pretending they came from a scheduled bot.
-telegram_prefix_bot_manual_demo_sl = "DEMO "
-telegram_prefix_bot_manual_demo_ml = "DEMO\n"
-
 telegram_prefix_bot_manual_live_sl = "LIVE "
 telegram_prefix_bot_manual_live_ml = "LIVE\n"
 
@@ -133,12 +128,6 @@ def get_telegram_prefix(bot, multi_line=False):
         result = telegram_prefix_bot_4h_ml if multi_line else telegram_prefix_bot_4h_sl
     elif bot == "1d":
         result = telegram_prefix_bot_1d_ml if multi_line else telegram_prefix_bot_1d_sl
-    elif bot == "manual_demo":
-        result = (
-            telegram_prefix_bot_manual_demo_ml
-            if multi_line
-            else telegram_prefix_bot_manual_demo_sl
-        )
     elif bot == "manual_live":
         result = (
             telegram_prefix_bot_manual_live_ml

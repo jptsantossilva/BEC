@@ -1,5 +1,8 @@
 # BEC OKX Spot Trading Implementation Plan
 
+> Historical rollout record. OKX Demo and its production-validation gate were
+> retired by migration 13; the current runtime supports OKX production only.
+
 ## Summary
 
 Add OKX spot support incrementally on top of the completed multi-exchange/Kraken architecture while preserving:

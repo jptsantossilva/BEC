@@ -47,11 +47,6 @@ def _strategy_params():
     return json.dumps({"parameters": {"fast": 20, "slow": 60}})
 
 
-def test_manual_demo_notifications_have_a_distinct_valid_prefix():
-    assert telegram.get_telegram_prefix("manual_demo") == "DEMO "
-    assert telegram.get_telegram_prefix("manual_demo", multi_line=True) == "DEMO\n"
-
-
 def test_trade_summary_distinguishes_skipped_and_logically_closed_sells():
     skipped = SellOrderOutcome(status=SellOutcomeStatus.SKIPPED)
     closed = SellOrderOutcome(
@@ -2008,7 +2003,7 @@ def test_add_symbol_transient_market_failure_preserves_approval_and_pending_work
     assert int(previous_result.iloc[0]["Trading_Approved"]) == 1
 
 
-@pytest.mark.parametrize("exchange_code", ["binance", "kraken", "okx", "okx_demo"])
+@pytest.mark.parametrize("exchange_code", ["binance", "kraken", "okx"])
 def test_market_phase_builds_candidates_for_public_exchanges(monkeypatch, exchange_code):
     settings = SimpleNamespace(
         main_strategies=["hma_rsi_linreg_copy", "ema_cross_with_market_phases_copy"],
@@ -2041,7 +2036,7 @@ def test_market_phase_builds_candidates_for_public_exchanges(monkeypatch, exchan
         market_phase.database,
         "get_active_exchange",
         lambda required=True: {
-            "id": {"binance": 1, "kraken": 2, "okx": 3, "okx_demo": 4}[exchange_code],
+            "id": {"binance": 1, "kraken": 2, "okx": 3}[exchange_code],
             "code": exchange_code,
             "quote_asset": "USDC",
         },

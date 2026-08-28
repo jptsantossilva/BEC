@@ -135,7 +135,7 @@ class _FakeSnapshotAdapter:
 
 @pytest.mark.parametrize(
     "exchange_code,exchange_id",
-    [("binance", 1), ("kraken", 2), ("okx", 3), ("okx_demo", 4)],
+    [("binance", 1), ("kraken", 2), ("okx", 3)],
 )
 def test_daily_snapshot_values_and_persists_active_exchange_balances(
     monkeypatch, exchange_code, exchange_id

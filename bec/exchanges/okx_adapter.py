@@ -56,12 +56,10 @@ class OkxAdapter(CcxtExchangeAdapter):
         adapter_id: str = "myokx",
         client: Any | None = None,
         market_cache_ttl_seconds: float = 900,
-        execution_environment: str = "production",
         api_key: str | None = None,
         api_secret: str | None = None,
         api_passphrase: str | None = None,
         private_enabled: bool = False,
-        execution_code: str = "okx",
         sizing_buffer_pct: Decimal = Decimal("5"),
         clock=None,
         public_request_throttle: SharedPublicRequestThrottle | None = None,
@@ -71,37 +69,28 @@ class OkxAdapter(CcxtExchangeAdapter):
         variant = str(adapter_id or "").strip().lower()
         if variant not in {"myokx", "okx"}:
             raise ValueError("OKX adapter variant must be myokx or okx")
-        environment = str(execution_environment or "").strip().lower()
-        if environment not in {"production", "demo"}:
-            raise ValueError("OKX execution environment must be production or demo")
-        code = str(execution_code or "okx").strip().lower()
-        if code not in {"okx", "okx_demo"}:
-            raise ValueError("OKX execution code must be okx or okx_demo")
-        if code == "okx_demo" and environment != "demo":
-            raise ValueError("OKX demo execution code requires the demo environment")
 
         # A public adapter must remain credential-free even when process
         # variables exist.  An injected client is also a strict test boundary.
         use_environment_credentials = bool(private_enabled) and client is None
         if use_environment_credentials:
             load_env_file()
-        prefix = "OKX_DEMO" if environment == "demo" else "OKX"
         api_key = (
-            os.getenv(f"{prefix}_API_KEY", "")
+            os.getenv("OKX_API_KEY", "")
             if api_key is None and use_environment_credentials
             else (api_key or "")
         )
         api_secret = (
-            os.getenv(f"{prefix}_API_SECRET", "")
+            os.getenv("OKX_API_SECRET", "")
             if api_secret is None and use_environment_credentials
             else (api_secret or "")
         )
         api_passphrase = (
-            os.getenv(f"{prefix}_API_PASSPHRASE", "")
+            os.getenv("OKX_API_PASSPHRASE", "")
             if api_passphrase is None and use_environment_credentials
             else (api_passphrase or "")
         )
-        self.execution_environment = environment
+        self.execution_environment = "production"
         self.missing_private_credentials = tuple(
             name
             for name, value in (
@@ -144,10 +133,8 @@ class OkxAdapter(CcxtExchangeAdapter):
         if random_uniform is not None:
             kwargs["random_uniform"] = random_uniform
         super().__init__(variant, **kwargs)
-        self.code = code
+        self.code = "okx"
         self.adapter_id = variant
-        if private_access_ready and environment == "demo":
-            self._enable_demo_sandbox()
 
     def _ohlcv_start_floor_ms(self, canonical_symbol: str) -> int | None:
         """Clamp historical requests to the OKX instrument listing time."""
@@ -162,18 +149,8 @@ class OkxAdapter(CcxtExchangeAdapter):
         except (TypeError, ValueError):
             return None
 
-    def _enable_demo_sandbox(self) -> None:
-        """Select CCXT demo mode before any private API call is possible."""
-        set_sandbox_mode = getattr(self.client, "set_sandbox_mode", None)
-        if not callable(set_sandbox_mode):
-            raise PrivateExchangeOperationDisabled(
-                "OKX demo read-only checks require a CCXT client with sandbox support"
-            )
-        set_sandbox_mode(True)
-
     def _require_private_execution(self, operation: str) -> None:
-        expected_environment = "demo" if self.code == "okx_demo" else "production"
-        if self.code not in {"okx", "okx_demo"} or self.execution_environment != expected_environment:
+        if self.code != "okx" or self.execution_environment != "production":
             raise PrivateExchangeOperationDisabled(
                 f"OKX {operation} is unavailable for the configured execution identity"
             )
@@ -253,7 +230,7 @@ class OkxAdapter(CcxtExchangeAdapter):
         if market.contract or not market.spot or market.market_type != "spot":
             return type(validation)(
                 False,
-                (*validation.errors, "OKX demo execution requires an active spot cash market"),
+                (*validation.errors, "OKX execution requires an active spot cash market"),
                 validation.normalized_amount,
                 validation.normalized_price,
                 validation.estimated_cost,
@@ -281,7 +258,7 @@ class OkxAdapter(CcxtExchangeAdapter):
         create_with_cost = getattr(self.client, "create_market_buy_order_with_cost", None)
         if not callable(create_with_cost):
             raise PrivateExchangeOperationDisabled(
-                "OKX demo client does not support quote-cost market buys"
+                "OKX client does not support quote-cost market buys"
             )
         raw = create_with_cost(
             canonical,
@@ -313,41 +290,6 @@ class OkxAdapter(CcxtExchangeAdapter):
             float(amount),
             None,
             self._okx_order_params(client_order_id),
-        )
-        return self._parse_order(raw, canonical)
-
-    def create_limit_sell_ioc(
-        self,
-        symbol: str,
-        amount: Decimal,
-        price: Decimal,
-        *,
-        client_order_id: str | None = None,
-    ):
-        """Submit a demo-only spot limit sell with immediate-or-cancel semantics.
-
-        CCXT maps ``optimal_limit_ioc`` to a market order for spot instruments,
-        so it must not be used here.  A regular limit order plus ``IOC`` is
-        retained as a genuine price-bounded spot submission.
-        """
-        self._require_private_execution("limit IOC sells")
-        canonical = self.normalize_symbol(symbol)
-        amount = self.normalize_amount(canonical, Decimal(str(amount)))
-        price = self.normalize_price(canonical, Decimal(str(price)))
-        validation = self.validate_order(
-            OrderRequest(canonical, "sell", amount=amount, price=price)
-        )
-        if not validation.valid:
-            raise ValueError("; ".join(validation.errors))
-        params = self._okx_order_params(client_order_id)
-        params["timeInForce"] = "IOC"
-        raw = self.client.create_order(
-            canonical,
-            "limit",
-            "sell",
-            float(amount),
-            float(price),
-            params,
         )
         return self._parse_order(raw, canonical)
 

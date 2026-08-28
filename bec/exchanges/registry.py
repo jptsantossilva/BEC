@@ -11,7 +11,7 @@ _default_adapter: ExchangeAdapter | None = None
 
 def get_registered_exchange_codes() -> tuple[str, ...]:
     """Return adapters that the current application build can resolve."""
-    return ("binance", "kraken", "okx", "okx_demo")
+    return ("binance", "kraken", "okx")
 
 
 def get_adapter_capabilities_for_code(code: str) -> ExchangeCapabilities:
@@ -25,7 +25,7 @@ def get_adapter_capabilities_for_code(code: str) -> ExchangeCapabilities:
         from bec.exchanges.kraken_adapter import KrakenAdapter
 
         return KrakenAdapter.capabilities
-    if code in {"okx", "okx_demo"}:
+    if code == "okx":
         from bec.exchanges.okx_adapter import OkxAdapter
 
         return OkxAdapter.capabilities
@@ -52,14 +52,11 @@ def get_adapter_for_code(
             sizing_buffer_pct=sizing_buffer_pct,
             private_enabled=private_enabled,
         )
-    if code in {"okx", "okx_demo"}:
+    if code == "okx":
         from bec.exchanges.okx_adapter import OkxAdapter
 
-        demo = code == "okx_demo"
         return OkxAdapter(
             adapter_id=adapter_id or "myokx",
-            execution_environment="demo" if demo else "production",
-            execution_code=code,
             private_enabled=bool(private_enabled),
             sizing_buffer_pct=sizing_buffer_pct,
         )
@@ -97,7 +94,7 @@ def get_default_adapter() -> ExchangeAdapter:
         # execution and reconciliation workflow. Public callers use the
         # factory default above, which remains credential-free.
         private_enabled=(
-            None if code == "kraken" else code in {"okx", "okx_demo"}
+            None if code == "kraken" else code == "okx"
         ),
     )
     return _default_adapter

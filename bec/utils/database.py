@@ -140,9 +140,7 @@ def clear_active_exchange() -> None:
     set_default_adapter(None)
 
 
-def update_exchange_settings(
-    rows, *, confirm_okx_production_live_flags: bool = False
-) -> None:
+def update_exchange_settings(rows) -> None:
     connection = _get_conn()
     current = get_active_exchange(required=False)
     existing_settings = {
@@ -198,19 +196,6 @@ def update_exchange_settings(
             raise ValueError("Invalid partial-sell policy")
         if not math.isfinite(sizing_buffer_pct) or not 0 <= sizing_buffer_pct < 100:
             raise ValueError("Sizing buffer must be between 0 and 100 percent")
-        if code == "okx":
-            enabling_a_side = (
-                (buy_enabled and not existing.get("Buy_Enabled", False))
-                or (sell_enabled and not existing.get("Sell_Enabled", False))
-            )
-            if enabling_a_side and not confirm_okx_production_live_flags:
-                raise ValueError(
-                    "Enable OKX production buy or sell only after the typed production confirmation"
-                )
-            if enabling_a_side and fee is None:
-                raise ValueError(
-                    "Configure an explicit OKX production spot taker fee before enabling a live side"
-                )
         if (buy_enabled or sell_enabled) and not enabled:
             raise ValueError("Enable the exchange before enabling live operations")
         if enabled and not _is_registered_exchange_code(code):
@@ -225,7 +210,7 @@ def update_exchange_settings(
                 raise ValueError(
                     "Load OKX public markets successfully before saving its quote asset or enabling it"
                 )
-        if code in {"okx", "okx_demo"}:
+        if code == "okx":
             if adapter_id not in {"myokx", "okx"}:
                 raise ValueError("OKX adapter variant must be myokx or okx")
             if adapter_id != existing.get("Adapter_Id") and _exchange_has_persisted_activity(
@@ -1897,95 +1882,6 @@ def get_unsettled_order_intents(exchange_id: int | None = None) -> list[dict]:
     return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
 
-def record_okx_demo_validation(reconciliation_result: dict) -> dict:
-    """Persist operator-confirmed demo evidence only after a clean round trip."""
-    connection = _get_conn()
-    exchange = get_active_exchange(required=True)
-    if str(exchange["code"]) != "okx_demo" or str(
-        exchange.get("execution_environment")
-    ) != "demo":
-        raise ValueError("OKX demo validation requires the active okx_demo identity")
-    blockers = get_exchange_switch_blockers(connection)
-    if blockers["open_positions"] or blockers["unsettled_orders"]:
-        raise ValueError(
-            "Close every demo position and settle every demo intent before recording validation"
-        )
-    rows = connection.execute(
-        """
-        SELECT Side, Symbol_Normalized, Exchange_Order_Id
-        FROM Orders
-        WHERE Exchange_Id=? AND Order_Status='filled'
-          AND COALESCE(Exchange_Order_Id, '') <> ''
-        ORDER BY Id
-        """,
-        (int(exchange["id"]),),
-    ).fetchall()
-    buy_ids = [str(order_id) for side, _, order_id in rows if str(side) == "BUY"]
-    sell_ids = [str(order_id) for side, _, order_id in rows if str(side) == "SELL"]
-    if not buy_ids or not sell_ids:
-        raise ValueError("OKX demo validation requires at least one filled buy and sell")
-    symbols = sorted({str(symbol) for _, symbol, _ in rows if symbol})
-    with connection:
-        cursor = connection.execute(
-            """
-            INSERT INTO OKX_Demo_Validation_Records (
-                Exchange_Id, Adapter_Id, Tested_Symbols_JSON, Buy_Order_Ids_JSON,
-                Sell_Order_Ids_JSON, Reconciliation_Result_JSON
-            ) VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                int(exchange["id"]),
-                str(exchange.get("adapter_id") or ""),
-                json.dumps(symbols),
-                json.dumps(buy_ids),
-                json.dumps(sell_ids),
-                json.dumps(dict(reconciliation_result), sort_keys=True),
-            ),
-        )
-    return get_okx_demo_validation_record(int(cursor.lastrowid))
-
-
-def get_compatible_okx_demo_validation(
-    production_exchange: dict | None = None,
-) -> dict | None:
-    """Return the newest demo record compatible with one OKX production identity.
-
-    Compatibility is deliberately narrow: the adapter variant must match and
-    at least one completed demo symbol must use the current production quote
-    asset.  The record is evidence only; it never arms a side or run mode.
-    """
-    connection = _get_conn()
-    exchange = production_exchange or get_active_exchange(required=True)
-    if (
-        str(exchange.get("code") or "") != "okx"
-        or str(exchange.get("execution_environment") or "") != "production"
-    ):
-        return None
-    rows = connection.execute(
-        """
-        SELECT r.*
-        FROM OKX_Demo_Validation_Records r
-        JOIN Exchanges d ON d.Id=r.Exchange_Id
-        WHERE d.Code='okx_demo' AND r.Adapter_Id=?
-        ORDER BY r.Completed_At DESC, r.Id DESC
-        """,
-        (str(exchange.get("adapter_id") or ""),),
-    ).fetchall()
-    columns = [item[0] for item in connection.execute(
-        "SELECT * FROM OKX_Demo_Validation_Records LIMIT 0"
-    ).description]
-    expected_quote = str(exchange.get("quote_asset") or "").upper()
-    for row in rows:
-        record = dict(zip(columns, row))
-        try:
-            symbols = json.loads(str(record.get("Tested_Symbols_JSON") or "[]"))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            continue
-        if any(str(symbol).upper().endswith(f"/{expected_quote}") for symbol in symbols):
-            return record
-    return None
-
-
 def is_active_backtest_approved_for_live_buy(
     *, symbol: str, time_frame: str, strategy_id: str
 ) -> bool:
@@ -2021,17 +1917,6 @@ def is_active_backtest_approved_for_live_buy(
         return bool(approved)
     except (RuntimeError, TypeError, ValueError, KeyError):
         return False
-
-
-def get_okx_demo_validation_record(record_id: int) -> dict:
-    connection = _get_conn()
-    cursor = connection.execute(
-        "SELECT * FROM OKX_Demo_Validation_Records WHERE Id=?", (int(record_id),)
-    )
-    row = cursor.fetchone()
-    if row is None:
-        raise ValueError(f"Unknown OKX demo validation record: {record_id}")
-    return dict(zip((item[0] for item in cursor.description), row))
 
 
 def _fill_key(fill, index: int) -> str:
@@ -2664,52 +2549,6 @@ def insert_position(
             sql_insert_position,
             (*exchange_fields, bot, symbol, rank, strategy_id, strategy_name, strategy_params_json),
         )
-
-
-def create_okx_demo_manual_position_candidate(symbol: str) -> int:
-    """Create the inactive position row required by the guarded demo buy flow."""
-    connection = _get_conn()
-    exchange = get_active_exchange(required=True)
-    if str(exchange["code"]) != "okx_demo" or str(
-        exchange.get("execution_environment")
-    ) != "demo":
-        raise ValueError("Manual demo positions require the active okx_demo identity")
-    exchange_fields = _exchange_symbol_metadata(symbol)
-    existing = connection.execute(
-        """
-        SELECT 1 FROM Positions
-        WHERE Exchange_Id=? AND Symbol_Normalized=? AND Position=1 LIMIT 1
-        """,
-        (int(exchange["id"]), str(exchange_fields[1])),
-    ).fetchone()
-    if existing is not None:
-        raise ValueError("An open OKX demo position already exists for this symbol")
-    unsettled_buy = connection.execute(
-        """
-        SELECT 1 FROM Orders
-        WHERE Exchange_Id=? AND Symbol_Normalized=? AND Bot='manual_demo' AND Side='BUY'
-          AND lower(COALESCE(Order_Status, 'unknown'))
-              IN ('pending','open','partially_filled','unknown')
-        LIMIT 1
-        """,
-        (int(exchange["id"]), str(exchange_fields[1])),
-    ).fetchone()
-    if unsettled_buy is not None:
-        raise ValueError(
-            "An unsettled manual OKX demo buy already exists for this symbol; reconcile it before retrying"
-        )
-    with connection:
-        cursor = connection.execute(
-            """
-            INSERT INTO Positions (
-                Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset, Quote_Asset,
-                Bot, Symbol, Position, Rank, Strategy_Id, Strategy_Name, Strategy_Params_JSON
-            ) VALUES (?, ?, ?, ?, ?, 'manual_demo', ?, 0, 0,
-                      'okx_demo_manual', 'OKX Demo Manual Validation', '{}')
-            """,
-            (*exchange_fields, str(symbol)),
-        )
-    return int(cursor.lastrowid)
 
 
 def create_kraken_manual_position_candidate(symbol: str) -> int:

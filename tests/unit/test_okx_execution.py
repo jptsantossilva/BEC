@@ -3,19 +3,15 @@ from decimal import Decimal
 import ccxt
 import pytest
 
-from bec.exchanges.ccxt_adapter import PrivateExchangeOperationDisabled
 from bec.exchanges.okx_adapter import OkxAdapter
 
 
-class DemoOkxClient:
+class ProductionOkxClient:
     precisionMode = ccxt.TICK_SIZE
 
     def __init__(self):
         self.has = {"createMarketBuyOrderWithCost": True}
         self.calls = []
-
-    def set_sandbox_mode(self, enabled):
-        self.calls.append(("sandbox", enabled))
 
     @staticmethod
     def load_markets(reload=False):
@@ -41,6 +37,7 @@ class DemoOkxClient:
 
     @staticmethod
     def price_to_precision(symbol, price):
+        assert symbol == "BTC/USDC"
         return str(price)
 
     @staticmethod
@@ -49,9 +46,9 @@ class DemoOkxClient:
         return {"last": 100, "bid": 99, "ask": 101}
 
     @staticmethod
-    def _order(side="buy", status="closed", client_order_id="BECDEMO1"):
+    def _order(side="buy", status="closed", client_order_id="BECPROD1"):
         return {
-            "id": "OKX-DEMO-1",
+            "id": "OKX-PROD-1",
             "clientOrderId": client_order_id,
             "symbol": "BTC/USDC",
             "side": side,
@@ -91,80 +88,53 @@ class DemoOkxClient:
         return self._order(status="canceled")
 
 
-def _adapter(client=None, **kwargs):
+def _adapter(client=None):
     return OkxAdapter(
-        client=client or DemoOkxClient(),
+        client=client or ProductionOkxClient(),
         adapter_id="myokx",
-        execution_environment="demo",
-        execution_code="okx_demo",
         api_key="key",
         api_secret="secret",
         api_passphrase="passphrase",
         private_enabled=True,
-        **kwargs,
     )
 
 
-def test_okx_demo_uses_quote_cost_buys_base_amount_sells_and_cash_mode():
-    client = DemoOkxClient()
+def test_okx_production_uses_quote_cost_buys_base_amount_sells_and_cash_mode():
+    client = ProductionOkxClient()
     adapter = _adapter(client)
 
     buy = adapter.create_market_buy(
-        "BTC/USDC", quote_amount=Decimal("10"), client_order_id="BECDEMO1"
+        "BTC/USDC", quote_amount=Decimal("10"), client_order_id="BECPROD1"
     )
     sell = adapter.create_market_sell(
-        "BTC/USDC", Decimal("0.1"), client_order_id="BECDEMO2"
+        "BTC/USDC", Decimal("0.1"), client_order_id="BECPROD2"
     )
 
     assert buy.executed_quantity == Decimal("0.0012")
     assert sell.fills[0].fee_asset == "BTC"
-    assert client.calls[0] == ("sandbox", True)
-    assert client.calls[1] == (
-        "buy", "BTC/USDC", 10.0, {"tdMode": "cash", "clOrdId": "BECDEMO1"}
+    assert client.calls[0] == (
+        "buy", "BTC/USDC", 10.0, {"tdMode": "cash", "clOrdId": "BECPROD1"}
     )
-    assert client.calls[2][-1] == {"tdMode": "cash", "clOrdId": "BECDEMO2"}
+    assert client.calls[1][-1] == {"tdMode": "cash", "clOrdId": "BECPROD2"}
 
 
-def test_okx_demo_limit_ioc_sell_uses_an_explicit_spot_limit_price():
-    client = DemoOkxClient()
+def test_okx_production_reconciliation_and_cancel_use_client_id_and_cash_mode():
+    client = ProductionOkxClient()
     adapter = _adapter(client)
 
-    result = adapter.create_limit_sell_ioc(
-        "BTC/USDC",
-        Decimal("0.1"),
-        Decimal("99"),
-        client_order_id="BECDEMO3",
-    )
+    found = adapter.fetch_order_by_client_id("BECPROD1", "BTC/USDC")
+    canceled = adapter.cancel_order("OKX-PROD-1", "BTC/USDC")
 
-    assert result.status.value == "filled"
-    assert client.calls[1] == (
-        "sell",
-        "BTC/USDC",
-        "limit",
-        "sell",
-        0.1,
-        99.0,
-        {"tdMode": "cash", "clOrdId": "BECDEMO3", "timeInForce": "IOC"},
-    )
-
-
-def test_okx_demo_reconciliation_and_cancel_use_client_id_and_cash_mode():
-    client = DemoOkxClient()
-    adapter = _adapter(client)
-
-    found = adapter.fetch_order_by_client_id("BECDEMO1", "BTC/USDC")
-    canceled = adapter.cancel_order("OKX-DEMO-1", "BTC/USDC")
-
-    assert found.exchange_order_id == "OKX-DEMO-1"
+    assert found.exchange_order_id == "OKX-PROD-1"
     assert canceled.status.value == "canceled"
-    assert client.calls[1] == (
-        "lookup", "BECDEMO1", "BTC/USDC", {"tdMode": "cash", "clOrdId": "BECDEMO1"}
+    assert client.calls[0] == (
+        "lookup", "BECPROD1", "BTC/USDC", {"tdMode": "cash", "clOrdId": "BECPROD1"}
     )
-    assert client.calls[2][-1] == {"tdMode": "cash"}
+    assert client.calls[1][-1] == {"tdMode": "cash"}
 
 
-def test_okx_demo_client_id_lookup_does_not_call_unsupported_fetch_orders():
-    class CancelledOrderClient(DemoOkxClient):
+def test_okx_production_client_id_lookup_avoids_unsupported_fetch_orders():
+    class ClosedOrderClient(ProductionOkxClient):
         def fetch_order_by_client_order_id(self, client_order_id, symbol, params):
             self.calls.append(("lookup", client_order_id, symbol, params))
             return None
@@ -180,47 +150,25 @@ def test_okx_demo_client_id_lookup_does_not_call_unsupported_fetch_orders():
         def fetch_orders(self, symbol, params):
             raise ccxt.NotSupported("myokx fetchOrders() is not supported")
 
-    client = CancelledOrderClient()
+    client = ClosedOrderClient()
     adapter = _adapter(client)
 
-    assert adapter.fetch_order_by_client_id("BECDEMO1", "BTC/USDC") is None
-    assert [call[0] for call in client.calls] == ["sandbox", "lookup", "open", "closed"]
+    assert adapter.fetch_order_by_client_id("BECPROD1", "BTC/USDC") is None
+    assert [call[0] for call in client.calls] == ["lookup", "open", "closed"]
 
 
-def test_okx_demo_parses_native_client_order_ids():
+def test_okx_production_parses_native_client_order_ids():
     adapter = _adapter()
-    raw = DemoOkxClient._order()
+    raw = ProductionOkxClient._order()
     raw.pop("clientOrderId")
-    raw["info"] = {"clOrdId": "BECDEMO1"}
+    raw["info"] = {"clOrdId": "BECPROD1"}
 
     parsed = adapter._parse_order(raw, "BTC/USDC")
 
-    assert parsed.client_order_id == "BECDEMO1"
+    assert parsed.client_order_id == "BECPROD1"
 
 
 @pytest.mark.parametrize("client_order_id", ["too-short!", "x" * 33, "with-dash"])
-def test_okx_demo_rejects_invalid_client_order_ids_before_submission(client_order_id):
-    adapter = _adapter()
-
+def test_okx_production_rejects_invalid_client_order_ids(client_order_id):
     with pytest.raises(ValueError, match="1-32 ASCII letters or digits"):
-        adapter.validate_client_order_id(client_order_id)
-
-
-def test_okx_production_adapter_uses_the_same_cash_spot_primitives_when_gated():
-    client = DemoOkxClient()
-    adapter = OkxAdapter(
-        client=client,
-        api_key="key",
-        api_secret="secret",
-        api_passphrase="passphrase",
-        private_enabled=True,
-    )
-
-    result = adapter.create_market_buy(
-        "BTC/USDC", quote_amount=Decimal("10"), client_order_id="BECPROD1"
-    )
-
-    assert result.status.value == "filled"
-    assert client.calls == [
-        ("buy", "BTC/USDC", 10.0, {"tdMode": "cash", "clOrdId": "BECPROD1"})
-    ]
+        _adapter().validate_client_order_id(client_order_id)

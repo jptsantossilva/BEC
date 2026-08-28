@@ -60,9 +60,9 @@ all trading decisions, persistence writes and private exchange calls remain
 sequential, with every sell phase completing before any buy phase starts.
 
 The rollout allowlist enables this path for Kraken, OKX and Binance after their
-read-only benchmark validation. OKX Demo and unknown exchanges remain on the
-legacy per-timeframe scheduler path. Removing an exchange from the allowlist is
-the immediate rollback.
+read-only benchmark validation. Unknown exchanges remain on the legacy
+per-timeframe scheduler path. Removing an exchange from the allowlist is the
+immediate rollback.
 
 ## Validation
 

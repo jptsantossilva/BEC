@@ -50,15 +50,11 @@ def _live_exchange(side: str) -> dict:
         or str(exchange.get("execution_environment") or "") != "production"
     ):
         raise RuntimeError("OKX production execution requires the active okx production identity")
-    if adapter_code == "okx_demo" and exchange_code != "okx_demo":
-        raise RuntimeError("OKX demo execution requires the active okx_demo identity")
-    if adapter_code == "okx_demo" and settings.run_mode != "demo":
-        raise RuntimeError("OKX demo execution requires run_mode=demo")
     if adapter_code == "okx" and settings.run_mode != "live":
         raise RuntimeError("OKX production execution requires run_mode=live")
-    if adapter_code != "okx_demo" and settings.run_mode == "demo":
-        raise RuntimeError("run_mode=demo is reserved for the active OKX Demo identity")
-    if adapter_code not in {"okx", "okx_demo"} and settings.run_mode == "test":
+    if settings.run_mode == "demo":
+        raise RuntimeError("run_mode=demo is retired and does not permit live execution")
+    if adapter_code != "okx" and settings.run_mode == "test":
         raise RuntimeError(f"{name} live execution is disabled while run_mode=test")
     flag = "buy_enabled" if str(side).lower() == "buy" else "sell_enabled"
     if not bool(exchange[flag]):
@@ -76,23 +72,19 @@ def _live_exchange(side: str) -> dict:
                 "Orders & Trades"
             ) from exc
     if adapter_code == "okx":
-        if database.get_compatible_okx_demo_validation(exchange) is None:
-            raise RuntimeError(
-                "OKX production execution requires a compatible completed OKX Demo validation record"
-            )
         try:
-            # This is intentionally a balance-only preflight. It proves the
-            # selected production identity is authenticated immediately before
-            # a submission path can create its durable order intent.
             service.fetch_balance(str(exchange.get("quote_asset") or ""))
+            service.check_reconciliation_access()
         except Exception as exc:
             raise RuntimeError(
-                "OKX production private balance preflight failed; run the read-only "
-                "check and correct credentials, permissions, IP allowlist, or region"
+                "OKX production private preflight failed; run the read-only check "
+                "and correct credentials, balance/order-history permissions, IP "
+                "allowlist, or region"
             ) from exc
         print(
             database.exchange_log_prefix(),
             "OKX production private preflight succeeded "
+            "for balance and order-history access "
             f"(adapter={exchange.get('adapter_id')}, quote={exchange.get('quote_asset')})",
         )
     return exchange
@@ -143,7 +135,7 @@ def _safe_exception_for_operator_reporting(exc: Exception) -> Exception:
         adapter_code = str(service.get_adapter().code or "").lower()
     except (AttributeError, RuntimeError):
         adapter_code = ""
-    if adapter_code in {"okx", "okx_demo"}:
+    if adapter_code == "okx":
         return RuntimeError(f"{type(exc).__name__} (OKX request details withheld)")
     return exc
 
@@ -613,25 +605,6 @@ def _persist_submitted_order(
     return {"result": result, "applied": applied, "exchange": exchange}
 
 
-def _require_okx_production_strategy_gate(
-    exchange: dict, *, bot: str, symbol: str, strategy_id: str, side: str
-) -> None:
-    """Apply the gates that are meaningful only for scheduled OKX production flow."""
-    if str(exchange.get("code") or "") != "okx":
-        return
-    if not database.is_trade_main_timeframe_enabled(str(bot)):
-        raise RuntimeError(
-            f"OKX production {side} requires its explicitly enabled {bot} main schedule"
-        )
-    if str(side).lower() == "buy" and not database.is_active_backtest_approved_for_live_buy(
-        symbol=str(symbol), time_frame=str(bot), strategy_id=strategy_id
-    ):
-        raise RuntimeError(
-            "OKX production buy requires an approved backtest with matching exchange, "
-            "adapter, quote asset, fee, and fingerprint"
-        )
-
-
 def create_buy_order(
     *,
     symbol: str,
@@ -646,9 +619,6 @@ def create_buy_order(
     exchange, skipped = _guarded_live_exchange("buy")
     if skipped:
         return skipped
-    _require_okx_production_strategy_gate(
-        exchange, bot=bot, symbol=symbol, strategy_id=strategy_id, side="buy"
-    )
     market = service.load_markets()[service.normalize_symbol(symbol)]
     if database.is_symbol_blacklisted(market.base_asset):
         message = (
@@ -664,22 +634,15 @@ def create_buy_order(
             raise ValueError("Manual quote amount must be greater than zero")
         balance = service.fetch_balance(market.quote_asset)
         available = Decimal(str(balance.free))
-        permitted = available
-        if str(exchange["code"]) == "okx_demo":
-            reserve = Decimal(str(exchange.get("sizing_buffer_pct") or 0))
-            permitted *= (Decimal("100") - reserve) / Decimal("100")
-        if quote_amount > permitted:
+        if quote_amount > available:
             raise RuntimeError(
-                f"Manual quote amount exceeds available {market.quote_asset} after reserve"
+                f"Manual quote amount exceeds available {market.quote_asset}"
             )
     elif convert_all_balance:
         balance = service.fetch_balance(market.quote_asset)
         quote_amount = Decimal(str(balance.free)) * Decimal(
             str(config.load_settings().tradable_balance_ratio)
         )
-        if str(exchange["code"]) == "okx_demo":
-            reserve = Decimal(str(exchange.get("sizing_buffer_pct") or 0))
-            quote_amount *= (Decimal("100") - reserve) / Decimal("100")
     else:
         quote_amount = _stake_amount(market.quote_asset)
     validation = service.validate_order(
@@ -722,39 +685,6 @@ def create_buy_order(
         exchange=exchange,
         strategy_name=strategy_name or strategy_id,
         reason="Entry condition fulfilled",
-    )
-
-
-def create_okx_demo_manual_buy(*, symbol: str, quote_amount: Decimal):
-    """Submit one operator-confirmed demo buy through the normal lifecycle."""
-    exchange = _live_exchange("buy")
-    if str(exchange["code"]) != "okx_demo":
-        raise RuntimeError("Manual orders are available only for the active OKX Demo identity")
-    canonical = service.normalize_symbol(symbol)
-    quote_amount = Decimal(str(quote_amount))
-    if quote_amount <= 0:
-        raise ValueError("Manual quote amount must be greater than zero")
-    market = service.load_markets()[canonical]
-    balance = service.fetch_balance(market.quote_asset)
-    reserve = Decimal(str(exchange.get("sizing_buffer_pct") or 0))
-    permitted = Decimal(str(balance.free)) * (Decimal("100") - reserve) / Decimal("100")
-    if quote_amount > permitted:
-        raise RuntimeError(
-            f"Manual quote amount exceeds available {market.quote_asset} after reserve"
-        )
-    validation = service.validate_order(
-        OrderRequest(symbol=canonical, side="buy", quote_amount=quote_amount)
-    )
-    if not validation.valid:
-        raise ValueError("; ".join(validation.errors))
-    position_id = database.create_okx_demo_manual_position_candidate(canonical)
-    return create_buy_order(
-        symbol=canonical,
-        bot="manual_demo",
-        strategy_id="okx_demo_manual",
-        strategy_name="OKX Demo Manual Validation",
-        position_id=position_id,
-        quote_amount=quote_amount,
     )
 
 
@@ -845,44 +775,6 @@ def create_kraken_manual_test_buy(*, confirmation: str):
         config.update_setting("run_mode", "test")
 
 
-def get_okx_demo_manual_sell_quote(*, symbol: str) -> dict[str, str | Decimal | None]:
-    """Return the public best bid used as a suggested demo limit-IOC price."""
-    canonical = service.normalize_symbol(symbol)
-    book = service.fetch_order_book(canonical, limit=1)
-    if not book.bids:
-        raise RuntimeError("OKX Demo best bid is unavailable; refresh market data before selling")
-    best_bid = service.normalize_price(canonical, Decimal(str(book.bids[0][0])))
-    if best_bid <= 0:
-        raise RuntimeError("OKX Demo best bid is invalid; refresh market data before selling")
-    best_ask = (
-        service.normalize_price(canonical, Decimal(str(book.asks[0][0])))
-        if book.asks
-        else None
-    )
-    return {"symbol": canonical, "best_bid": best_bid, "best_ask": best_ask}
-
-
-def create_okx_demo_manual_sell(*, position_id: int, limit_price: Decimal):
-    """Close one demo position through a genuine explicit-price spot limit IOC."""
-    exchange = _live_exchange("sell")
-    if str(exchange["code"]) != "okx_demo":
-        raise RuntimeError("Manual orders are available only for the active OKX Demo identity")
-    position = database.get_position_by_id(int(position_id))
-    if position.empty or int(position["Position"].iloc[0]) != 1:
-        raise ValueError("Open OKX demo position not found")
-    return create_sell_order(
-        symbol=str(position["Symbol"].iloc[0]),
-        bot=str(position["Bot"].iloc[0] or "manual_demo"),
-        reason="Manual OKX demo validation sell",
-        percentage=100,
-        strategy_id=str(position["Strategy_Id"].iloc[0] or "okx_demo_manual"),
-        strategy_name=str(position["Strategy_Name"].iloc[0] or "OKX Demo Manual Validation"),
-        position_id=int(position_id),
-        execution_style="okx_demo_limit_ioc",
-        limit_price=Decimal(str(limit_price)),
-    )
-
-
 def _sell_inputs(
     *, symbol: str, position_id: int | None, bot: str,
     convert_all_balance: bool,
@@ -966,8 +858,6 @@ def create_sell_order(
     strategy_id: str = "",
     strategy_name: str = "",
     position_id: int | None = None,
-    execution_style: str = "market",
-    limit_price: Decimal | None = None,
 ):
     exchange, skipped = _guarded_live_exchange("sell")
     if skipped:
@@ -976,34 +866,14 @@ def create_sell_order(
             reason=str(skipped["reason"]),
             effective_percentage=Decimal(str(percentage)),
         )
-    _require_okx_production_strategy_gate(
-        exchange, bot=bot, symbol=symbol, strategy_id=strategy_id, side="sell"
-    )
     market, balance, position = _sell_inputs(
         symbol=symbol,
         position_id=position_id,
         bot=bot,
         convert_all_balance=convert_all_balance,
     )
-    if execution_style not in {"market", "okx_demo_limit_ioc"}:
-        raise ValueError("Unsupported sell execution style")
-    if execution_style == "okx_demo_limit_ioc":
-        if str(exchange["code"]) != "okx_demo" or bot != "manual_demo":
-            raise RuntimeError("Limit IOC sells are restricted to controlled OKX Demo validation")
-        if limit_price is None:
-            raise ValueError("An explicit OKX Demo limit price is required")
-        limit_price = service.normalize_price(market.symbol, Decimal(str(limit_price)))
-        quote = get_okx_demo_manual_sell_quote(symbol=market.symbol)
-        best_bid = Decimal(str(quote["best_bid"]))
-        if limit_price > best_bid:
-            raise RuntimeError(
-                "The selected limit price is above the current best bid and cannot "
-                "execute immediately. Refresh the suggested price before submitting."
-            )
-        validation_price = limit_price
-    else:
-        ticker = service.fetch_ticker(market.symbol)
-        validation_price = ticker.bid or ticker.last
+    ticker = service.fetch_ticker(market.symbol)
+    validation_price = ticker.bid or ticker.last
     if validation_price is None or Decimal(str(validation_price)) <= 0:
         raise RuntimeError("A current exchange price is unavailable for the sell validation")
 
@@ -1065,11 +935,6 @@ def create_sell_order(
     amount = decision.normalized_quantity
     percentage = float(decision.effective_percentage)
 
-    limit_ioc_creator = None
-    if execution_style == "okx_demo_limit_ioc":
-        limit_ioc_creator = getattr(service.get_adapter(), "create_limit_sell_ioc", None)
-        if not callable(limit_ioc_creator):
-            raise RuntimeError("The active OKX Demo adapter cannot create explicit limit IOC sells")
     intent, duplicate = _create_order_intent_or_skip(
         side="SELL",
         symbol=market.symbol,
@@ -1098,19 +963,11 @@ def create_sell_order(
         )
     database.mark_order_intent_submitting(intent["Id"])
     try:
-        if limit_ioc_creator is not None:
-            result = limit_ioc_creator(
-                market.symbol,
-                amount,
-                validation_price,
-                client_order_id=intent["Client_Order_Id"],
-            )
-        else:
-            result = service.create_market_sell(
-                market.symbol,
-                amount,
-                client_order_id=intent["Client_Order_Id"],
-            )
+        result = service.create_market_sell(
+            market.symbol,
+            amount,
+            client_order_id=intent["Client_Order_Id"],
+        )
     except Exception as exc:
         _record_submission_failure(
             intent["Id"],

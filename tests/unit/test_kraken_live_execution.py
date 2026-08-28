@@ -14,7 +14,6 @@ from bec.exchanges.base import (
     OrderResult,
     OrderStatus,
     OrderValidation,
-    OrderBook,
     SellOutcomeStatus,
     Ticker,
 )
@@ -109,7 +108,7 @@ def test_live_operation_requires_run_mode_and_explicit_side_flag(monkeypatch):
         live_execution._live_exchange("buy")
 
 
-def test_demo_run_mode_is_rejected_for_kraken(monkeypatch):
+def test_retired_demo_run_mode_is_rejected_for_kraken(monkeypatch):
     monkeypatch.setattr(
         live_execution.service,
         "get_adapter",
@@ -131,7 +130,7 @@ def test_demo_run_mode_is_rejected_for_kraken(monkeypatch):
         lambda refresh=True: _settings(run_mode="demo"),
     )
 
-    with pytest.raises(RuntimeError, match="reserved for the active OKX Demo"):
+    with pytest.raises(RuntimeError, match="run_mode=demo is retired"):
         live_execution._live_exchange("buy")
 
 
@@ -181,42 +180,15 @@ def test_kraken_live_preflight_requires_balance_and_reconciliation_access(monkey
         live_execution._live_exchange("buy")
 
 
-def test_okx_demo_adapter_requires_the_active_demo_identity(monkeypatch):
-    monkeypatch.setattr(
-        live_execution.service,
-        "get_adapter",
-        lambda: SimpleNamespace(
-            code="okx_demo",
-            name="OKX",
-            private_enabled=True,
-            capabilities=ExchangeCapabilities(uses_gated_live_execution=True),
-        ),
-    )
-    monkeypatch.setattr(
-        live_execution.database,
-        "get_active_exchange",
-        lambda required=True: _exchange(code="kraken", buy_enabled=True),
-    )
-    monkeypatch.setattr(
-        live_execution.config,
-        "load_settings",
-        lambda refresh=True: _settings(run_mode="demo"),
-    )
-
-    with pytest.raises(RuntimeError, match="active okx_demo identity"):
-        live_execution._live_exchange("buy")
-
-
 @pytest.mark.parametrize(
-    ("run_mode", "demo_record", "private_enabled", "expected"),
+    ("run_mode", "private_enabled", "expected"),
     [
-        ("test", True, True, "run_mode=live"),
-        ("live", False, True, "compatible completed OKX Demo validation"),
-        ("live", True, False, "private credentials"),
+        ("test", True, "run_mode=live"),
+        ("live", False, "private credentials"),
     ],
 )
-def test_okx_production_runtime_gates_each_block_submission(
-    monkeypatch, run_mode, demo_record, private_enabled, expected
+def test_okx_production_runtime_gates_match_kraken(
+    monkeypatch, run_mode, private_enabled, expected
 ):
     exchange = _exchange(
         code="okx",
@@ -236,28 +208,21 @@ def test_okx_production_runtime_gates_each_block_submission(
             capabilities=ExchangeCapabilities(uses_gated_live_execution=True),
         ),
     )
-    monkeypatch.setattr(live_execution.database, "get_active_exchange", lambda required=True: exchange)
+    monkeypatch.setattr(
+        live_execution.database, "get_active_exchange", lambda required=True: exchange
+    )
     monkeypatch.setattr(
         live_execution.config,
         "load_settings",
         lambda refresh=True: _settings(run_mode=run_mode),
-    )
-    monkeypatch.setattr(
-        live_execution.database,
-        "get_compatible_okx_demo_validation",
-        lambda _exchange: {"Id": 1} if demo_record else None,
-    )
-    monkeypatch.setattr(
-        live_execution.service,
-        "fetch_balance",
-        lambda asset: SimpleNamespace(free=Decimal("1")),
     )
 
     with pytest.raises(RuntimeError, match=expected):
         live_execution._live_exchange("buy")
 
 
-def test_okx_production_private_balance_preflight_is_required(monkeypatch):
+def test_okx_production_preflight_needs_no_demo_record(monkeypatch):
+    reads = []
     exchange = _exchange(
         code="okx",
         name="OKX",
@@ -276,36 +241,75 @@ def test_okx_production_private_balance_preflight_is_required(monkeypatch):
             capabilities=ExchangeCapabilities(uses_gated_live_execution=True),
         ),
     )
-    monkeypatch.setattr(live_execution.database, "get_active_exchange", lambda required=True: exchange)
-    monkeypatch.setattr(live_execution.config, "load_settings", lambda refresh=True: _settings())
-    monkeypatch.setattr(live_execution.database, "get_compatible_okx_demo_validation", lambda _exchange: {"Id": 1})
+    monkeypatch.setattr(
+        live_execution.database, "get_active_exchange", lambda required=True: exchange
+    )
+    monkeypatch.setattr(
+        live_execution.config, "load_settings", lambda refresh=True: _settings()
+    )
     monkeypatch.setattr(
         live_execution.service,
         "fetch_balance",
-        lambda asset: (_ for _ in ()).throw(RuntimeError("authentication failure")),
+        lambda asset: reads.append(("balance", asset)),
+    )
+    monkeypatch.setattr(
+        live_execution.service,
+        "check_reconciliation_access",
+        lambda: reads.append(("orders", None)),
     )
 
-    with pytest.raises(RuntimeError, match="private balance preflight failed"):
+    assert live_execution._live_exchange("buy") == exchange
+    assert reads == [("balance", "USDC"), ("orders", None)]
+
+
+@pytest.mark.parametrize("failed_read", ["balance", "orders"])
+def test_okx_production_private_preflight_is_required(monkeypatch, failed_read):
+    exchange = _exchange(
+        code="okx",
+        name="OKX",
+        execution_environment="production",
+        adapter_id="myokx",
+        quote_asset="USDC",
+        buy_enabled=True,
+    )
+    monkeypatch.setattr(
+        live_execution.service,
+        "get_adapter",
+        lambda: SimpleNamespace(
+            code="okx",
+            name="OKX",
+            private_enabled=True,
+            capabilities=ExchangeCapabilities(uses_gated_live_execution=True),
+        ),
+    )
+    monkeypatch.setattr(
+        live_execution.database, "get_active_exchange", lambda required=True: exchange
+    )
+    monkeypatch.setattr(
+        live_execution.config, "load_settings", lambda refresh=True: _settings()
+    )
+    monkeypatch.setattr(
+        live_execution.service,
+        "fetch_balance",
+        (
+            (lambda asset: (_ for _ in ()).throw(RuntimeError("authentication failure")))
+            if failed_read == "balance"
+            else (lambda asset: SimpleNamespace(free=Decimal("1")))
+        ),
+    )
+    monkeypatch.setattr(
+        live_execution.service,
+        "check_reconciliation_access",
+        (
+            (lambda: (_ for _ in ()).throw(PermissionError("order history denied")))
+            if failed_read == "orders"
+            else (lambda: None)
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="private preflight failed"):
         live_execution._live_exchange("buy")
 
-
-def test_okx_production_buy_requires_schedule_and_matching_backtest(monkeypatch):
-    exchange = _exchange(code="okx", buy_enabled=True)
-    monkeypatch.setattr(live_execution.database, "is_trade_main_timeframe_enabled", lambda bot: False)
-
-    with pytest.raises(RuntimeError, match="explicitly enabled 1h main schedule"):
-        live_execution._require_okx_production_strategy_gate(
-            exchange, bot="1h", symbol="BTC/USDC", strategy_id="ema", side="buy"
-        )
-
-    monkeypatch.setattr(live_execution.database, "is_trade_main_timeframe_enabled", lambda bot: True)
-    monkeypatch.setattr(
-        live_execution.database, "is_active_backtest_approved_for_live_buy", lambda **kwargs: False
-    )
-    with pytest.raises(RuntimeError, match="approved backtest with matching exchange"):
-        live_execution._require_okx_production_strategy_gate(
-            exchange, bot="1h", symbol="BTC/USDC", strategy_id="ema", side="buy"
-        )
 
 
 def test_kraken_manual_live_test_reports_all_local_blockers(monkeypatch):
@@ -428,121 +432,20 @@ def test_kraken_manual_live_test_wrong_confirmation_disarms_without_order(monkey
     assert settings_updates == [("run_mode", "test")]
 
 
-def test_manual_okx_demo_buy_validates_before_creating_a_position_candidate(monkeypatch):
-    market = MarketInfo("BTC/USDC", "BTC-USDC", "BTC", "USDC", True)
-    exchange = _exchange(
-        code="okx_demo", buy_enabled=True, sizing_buffer_pct=5.0
-    )
-    created = []
-    submitted = []
-    monkeypatch.setattr(live_execution, "_live_exchange", lambda side: exchange)
-    monkeypatch.setattr(live_execution.service, "normalize_symbol", lambda symbol: "BTC/USDC")
-    monkeypatch.setattr(live_execution.service, "load_markets", lambda: {"BTC/USDC": market})
-    monkeypatch.setattr(
-        live_execution.service,
-        "fetch_balance",
-        lambda asset: SimpleNamespace(free=Decimal("100")),
-    )
-    monkeypatch.setattr(
-        live_execution.service,
-        "validate_order",
-        lambda request: OrderValidation(True, estimated_cost=request.quote_amount),
-    )
-    monkeypatch.setattr(
-        live_execution.database,
-        "create_okx_demo_manual_position_candidate",
-        lambda symbol: created.append(symbol) or 42,
-    )
-    monkeypatch.setattr(
-        live_execution,
-        "create_buy_order",
-        lambda **kwargs: submitted.append(kwargs) or {"result": "submitted"},
-    )
-
-    outcome = live_execution.create_okx_demo_manual_buy(
-        symbol="BTC/USDC", quote_amount=Decimal("95")
-    )
-
-    assert outcome == {"result": "submitted"}
-    assert created == ["BTC/USDC"]
-    assert submitted[0]["position_id"] == 42
-    assert submitted[0]["quote_amount"] == Decimal("95")
-
-
-def test_manual_okx_demo_buy_rejects_excess_balance_before_creating_candidate(monkeypatch):
-    market = MarketInfo("BTC/USDC", "BTC-USDC", "BTC", "USDC", True)
-    exchange = _exchange(
-        code="okx_demo", buy_enabled=True, sizing_buffer_pct=5.0
-    )
-    monkeypatch.setattr(live_execution, "_live_exchange", lambda side: exchange)
-    monkeypatch.setattr(live_execution.service, "normalize_symbol", lambda symbol: "BTC/USDC")
-    monkeypatch.setattr(live_execution.service, "load_markets", lambda: {"BTC/USDC": market})
-    monkeypatch.setattr(
-        live_execution.service,
-        "fetch_balance",
-        lambda asset: SimpleNamespace(free=Decimal("100")),
-    )
-    monkeypatch.setattr(
-        live_execution.database,
-        "create_okx_demo_manual_position_candidate",
-        lambda symbol: pytest.fail("candidate must not be created"),
-    )
-
-    with pytest.raises(RuntimeError, match="after reserve"):
-        live_execution.create_okx_demo_manual_buy(
-            symbol="BTC/USDC", quote_amount=Decimal("95.01")
-        )
-
-
-def test_manual_okx_demo_sell_uses_the_existing_guarded_sell_workflow(monkeypatch):
-    exchange = _exchange(code="okx_demo", sell_enabled=True)
-    submitted = []
-    monkeypatch.setattr(live_execution, "_live_exchange", lambda side: exchange)
-    monkeypatch.setattr(
-        live_execution.database,
-        "get_position_by_id",
-        lambda position_id: pd.DataFrame(
-            [{
-                "Id": position_id,
-                "Position": 1,
-                "Symbol": "BTC/USDC",
-                "Bot": "manual_demo",
-                "Strategy_Id": "okx_demo_manual",
-                "Strategy_Name": "OKX Demo Manual Validation",
-            }]
-        ),
-    )
-    monkeypatch.setattr(
-        live_execution,
-        "create_sell_order",
-        lambda **kwargs: submitted.append(kwargs) or {"result": "submitted"},
-    )
-
-    outcome = live_execution.create_okx_demo_manual_sell(
-        position_id=9, limit_price=Decimal("99")
-    )
-
-    assert outcome == {"result": "submitted"}
-    assert submitted[0]["position_id"] == 9
-    assert submitted[0]["percentage"] == 100
-    assert submitted[0]["execution_style"] == "okx_demo_limit_ioc"
-    assert submitted[0]["limit_price"] == Decimal("99")
-
-
 def test_trade_notification_failure_cannot_propagate_after_persistence(monkeypatch, capsys):
     monkeypatch.setattr(
         live_execution.telegram,
         "send_trade_event",
         lambda **kwargs: (_ for _ in ()).throw(RuntimeError("telegram unavailable")),
     )
-    monkeypatch.setattr(live_execution.database, "exchange_log_prefix", lambda: "[okx_demo]")
+    monkeypatch.setattr(live_execution.database, "exchange_log_prefix", lambda: "[okx]")
 
     live_execution._send_trade_notification(
-        bot="manual_demo",
+        bot="manual_live",
         emoji="x",
         action="BUY",
         symbol="BTC/USDC",
-        strategy="OKX Demo Manual Validation",
+        strategy="OKX Production Strategy",
         unit_price=100,
         quantity=0.1,
         notional_value=10,
@@ -632,136 +535,6 @@ def test_order_telemetry_separates_execution_and_confirmation_times():
     ).isoformat(timespec="seconds").replace("+00:00", "Z")
     assert close_telemetry["executed_at"] == ""
     assert close_telemetry["order_closed_at"] == expected_close
-
-
-def test_manual_demo_ioc_sell_uses_explicit_limit_order_not_market_order(monkeypatch):
-    market = MarketInfo("BTC/USDC", "BTC-USDC", "BTC", "USDC", True)
-    submitted = []
-    monkeypatch.setattr(
-        live_execution,
-        "_live_exchange",
-        lambda side: _exchange(code="okx_demo", sell_enabled=True),
-    )
-    monkeypatch.setattr(
-        live_execution,
-        "_sell_inputs",
-        lambda **kwargs: (
-            market,
-            Balance("BTC", Decimal("0.1")),
-            {"Id": 9, "Qty": Decimal("0.1"), "Strategy_Params_JSON": ""},
-        ),
-    )
-    monkeypatch.setattr(
-        live_execution,
-        "get_okx_demo_manual_sell_quote",
-        lambda **kwargs: {"symbol": "BTC/USDC", "best_bid": Decimal("99"), "best_ask": Decimal("101")},
-    )
-    monkeypatch.setattr(live_execution.service, "normalize_price", lambda _symbol, price: price)
-    monkeypatch.setattr(live_execution.service, "normalize_amount", lambda _symbol, amount: amount)
-    monkeypatch.setattr(
-        live_execution.service,
-        "validate_order",
-        lambda request: OrderValidation(True, estimated_cost=Decimal("9.9")),
-    )
-    monkeypatch.setattr(
-        live_execution.database,
-        "create_order_intent",
-        lambda **kwargs: {"Id": 1, "Client_Order_Id": "bec-test", **kwargs},
-    )
-    monkeypatch.setattr(live_execution.database, "mark_order_intent_submitting", lambda _id: None)
-    monkeypatch.setattr(
-        live_execution.service,
-        "get_adapter",
-        lambda: SimpleNamespace(
-            create_limit_sell_ioc=lambda *args, **kwargs: submitted.append((args, kwargs))
-            or _result()
-        ),
-    )
-    monkeypatch.setattr(
-        live_execution.service,
-        "create_market_sell",
-        lambda *_args, **_kwargs: pytest.fail("market sell must not be used"),
-    )
-    monkeypatch.setattr(
-        live_execution.database,
-        "apply_order_result",
-        lambda *_args: {"delta_executed_qty": 0, "closed_position": False, "terminal": True},
-    )
-    monkeypatch.setattr(live_execution.database, "get_order_intent", lambda _id: {})
-    monkeypatch.setattr(live_execution.telegram, "send_trade_event", lambda **kwargs: None)
-    monkeypatch.setattr(live_execution.database, "get_num_open_positions", lambda: 1)
-
-    live_execution.create_sell_order(
-        symbol="BTC/USDC",
-        bot="manual_demo",
-        position_id=9,
-        execution_style="okx_demo_limit_ioc",
-        limit_price=Decimal("99"),
-    )
-
-    assert submitted == [
-        (("BTC/USDC", Decimal("0.1"), Decimal("99")), {"client_order_id": "bec-test"})
-    ]
-
-
-def test_manual_demo_limit_ioc_rejects_a_price_above_the_latest_bid(monkeypatch):
-    market = MarketInfo("BTC/USDC", "BTC-USDC", "BTC", "USDC", True)
-    monkeypatch.setattr(
-        live_execution,
-        "_live_exchange",
-        lambda side: _exchange(code="okx_demo", sell_enabled=True),
-    )
-    monkeypatch.setattr(
-        live_execution,
-        "_sell_inputs",
-        lambda **kwargs: (
-            market,
-            Balance("BTC", Decimal("0.1")),
-            {"Id": 9, "Qty": Decimal("0.1"), "Strategy_Params_JSON": ""},
-        ),
-    )
-    monkeypatch.setattr(live_execution.service, "normalize_price", lambda _symbol, price: price)
-    monkeypatch.setattr(
-        live_execution,
-        "get_okx_demo_manual_sell_quote",
-        lambda **kwargs: {"symbol": "BTC/USDC", "best_bid": Decimal("99"), "best_ask": Decimal("101")},
-    )
-    monkeypatch.setattr(
-        live_execution.database,
-        "create_order_intent",
-        lambda **kwargs: pytest.fail("intent must not be created"),
-    )
-
-    with pytest.raises(RuntimeError, match="above the current best bid"):
-        live_execution.create_sell_order(
-            symbol="BTC/USDC",
-            bot="manual_demo",
-            position_id=9,
-            execution_style="okx_demo_limit_ioc",
-            limit_price=Decimal("100"),
-        )
-
-
-def test_manual_demo_sell_quote_uses_the_public_best_bid(monkeypatch):
-    monkeypatch.setattr(live_execution.service, "normalize_symbol", lambda symbol: "BTC/USDC")
-    monkeypatch.setattr(
-        live_execution.service,
-        "fetch_order_book",
-        lambda symbol, limit: OrderBook(
-            symbol,
-            bids=((Decimal("99.12"), Decimal("0.4")),),
-            asks=((Decimal("99.24"), Decimal("0.3")),),
-        ),
-    )
-    monkeypatch.setattr(live_execution.service, "normalize_price", lambda _symbol, price: price)
-
-    quote = live_execution.get_okx_demo_manual_sell_quote(symbol="BTC/USDC")
-
-    assert quote == {
-        "symbol": "BTC/USDC",
-        "best_bid": Decimal("99.12"),
-        "best_ask": Decimal("99.24"),
-    }
 
 
 def test_below_minimum_accumulate_policy_skips_without_creating_intent(monkeypatch):

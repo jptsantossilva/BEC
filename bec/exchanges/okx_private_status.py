@@ -1,4 +1,4 @@
-"""Read-only OKX authentication checks with no order capability."""
+"""Read-only OKX authentication and reconciliation-access checks."""
 
 from __future__ import annotations
 
@@ -23,27 +23,28 @@ def check_okx_private_access(
     run_mode: str,
     adapter_factory: Callable[..., OkxAdapter] = OkxAdapter,
 ) -> OkxPrivateStatus:
-    """Authenticate an explicitly selected OKX identity by reading balances only.
+    """Authenticate OKX by reading balances and order history.
 
     This helper deliberately does not use the app-wide adapter or active
     exchange.  It cannot enable an exchange, arm order flags, create an order,
-    query an order, or change application settings. Because the local adapter
-    never escapes this function, the balance check is safe in every app run
-    mode and does not need to pause trading.
+    amend an order, cancel an order, or change application settings. Because
+    the local adapter never escapes this function, the read-only check is safe
+    in every app run mode and does not need to pause trading.
     """
     del run_mode  # Read-only balance access is independent from order run modes.
     code = str(exchange.get("Code") or exchange.get("code") or "").lower()
-    if code not in {"okx", "okx_demo"}:
-        return OkxPrivateStatus(False, "The selected configuration is not an OKX identity.")
+    if code != "okx":
+        return OkxPrivateStatus(False, "The selected configuration is not OKX production.")
 
     environment = str(
         exchange.get("Execution_Environment")
         or exchange.get("execution_environment")
-        or ("demo" if code == "okx_demo" else "production")
+        or "production"
     ).lower()
+    if environment != "production":
+        return OkxPrivateStatus(False, "Only the OKX production identity is supported.")
     adapter = adapter_factory(
         adapter_id=str(exchange.get("Adapter_Id") or exchange.get("adapter_id") or "myokx"),
-        execution_environment=environment,
         private_enabled=True,
     )
     if not adapter.private_enabled:
@@ -59,6 +60,7 @@ def check_okx_private_access(
     try:
         balance = adapter.fetch_balance(quote_asset)
         funding_balance = adapter.fetch_funding_balance(quote_asset)
+        adapter.check_reconciliation_access()
     except ccxt.InvalidNonce:
         return OkxPrivateStatus(
             False,
@@ -79,21 +81,21 @@ def check_okx_private_access(
     ):
         return OkxPrivateStatus(
             False,
-            "OKX is unreachable for the read-only balance check. Verify network access, "
+            "OKX is unreachable for the read-only private check. Verify network access, "
             "service availability, and the selected regional API variant.",
         )
     except Exception as exc:
         # Do not surface exchange exception text: it may contain request context.
         return OkxPrivateStatus(
             False,
-            f"OKX read-only balance check failed ({type(exc).__name__}).",
+            f"OKX read-only private check failed ({type(exc).__name__}).",
         )
 
     return OkxPrivateStatus(
         True,
-        f"OKX {environment} ({adapter.adapter_id}) trading/cash balance access succeeded for "
+        f"OKX production ({adapter.adapter_id}) balance and order-history access succeeded for "
         f"{quote_asset} (free={balance.free}, locked={balance.locked}). Funding balance is "
         f"free={funding_balance.free}, locked={funding_balance.locked}; it is diagnostic only "
-        f"and cannot fund an order until manually transferred by the operator. No order endpoint "
-        f"was used.",
+        f"and cannot fund an order until manually transferred by the operator. No order was "
+        f"submitted, amended, or canceled.",
     )

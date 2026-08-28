@@ -123,6 +123,30 @@ production identity from `OKX (Production)` to `OKX`. The environment remains
 stored separately as `production`; the isolated `OKX (Demo)` identity and all
 trading settings are unchanged.
 
+## Retired OKX Demo (Version 13)
+
+Migration `13:retire_okx_demo` is additive and retires the operational OKX Demo
+identity. It refuses to run while Demo is active or has an open position or
+unsettled order. Existing Demo history and validation evidence remain archived
+for audit and foreign-key integrity, but the identity is disabled, disarmed and
+unavailable to the runtime.
+
+The migration disarms OKX production. When OKX is active it also sets
+`run_mode=test` and disables the live timeframe schedules, so removing the old
+validation gate cannot start real trading during deployment. New databases
+create only the OKX production identity and no Demo validation table.
+
+For a production rollout:
+
+1. Disable live mode, both OKX sides and live schedules before deployment.
+2. Confirm that Demo is not active and has no open position or unsettled order.
+3. Back up the database and dry-run migration 13 against a current copy.
+4. Deploy, confirm that OKX is disarmed (and in `test` when active), then run
+   the public market check and the read-only balance/order-history check.
+5. Remove every `OKX_DEMO_*` variable from the deployment environment.
+6. Re-enable OKX, its sides, schedules and live mode deliberately, in that
+   order. Do not submit a real order merely to validate the rollout.
+
 ## Rollback
 
 Migration steps run in explicit SQLite transactions. A failed step rolls back

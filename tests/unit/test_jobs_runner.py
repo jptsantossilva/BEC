@@ -77,11 +77,11 @@ def test_batch_rollout_allowlist_groups_validated_exchanges():
         ]
 
 
-def test_batch_rollout_allowlist_keeps_unvalidated_exchange_on_legacy_path():
+def test_batch_rollout_allowlist_keeps_unknown_exchange_on_legacy_path():
     entries = jobs_runner._collect_due_main_batch(
         _live_schedules(),
         datetime(2025, 1, 2, tzinfo=timezone.utc),
-        "okx_demo",
+        "unknown",
     )
 
     assert entries == []

@@ -42,6 +42,10 @@ from bec.db.okx_demo_execution_schema import (
     apply_okx_demo_execution_schema,
     validate_okx_demo_execution_schema,
 )
+from bec.db.okx_production_schema import (
+    apply_retire_okx_demo,
+    validate_retire_okx_demo,
+)
 
 
 def _framework_baseline(connection: sqlite3.Connection) -> None:
@@ -100,6 +104,10 @@ def _repair_backtesting_exchange_context(connection: sqlite3.Connection) -> None
 
 def _okx_display_name(connection: sqlite3.Connection) -> None:
     apply_okx_display_name(connection)
+
+
+def _retire_okx_demo(connection: sqlite3.Connection) -> None:
+    apply_retire_okx_demo(connection)
 
 
 MIGRATIONS = (
@@ -165,6 +173,7 @@ MIGRATIONS = (
         apply=_okx_configuration,
         validate=validate_okx_configuration_schema,
         signature="bec-okx-configuration-v1",
+        validate_new_database=False,
     ),
     Migration(
         version=9,
@@ -181,6 +190,7 @@ MIGRATIONS = (
         apply=_okx_demo_execution,
         validate=validate_okx_demo_execution_schema,
         signature="bec-okx-demo-execution-v1",
+        validate_new_database=False,
     ),
     Migration(
         version=11,
@@ -197,5 +207,13 @@ MIGRATIONS = (
         apply=_okx_display_name,
         validate=validate_okx_display_name,
         signature="bec-okx-display-name-v1",
+    ),
+    Migration(
+        version=13,
+        name="retire_okx_demo",
+        kind=MigrationKind.ADDITIVE,
+        apply=_retire_okx_demo,
+        validate=validate_retire_okx_demo,
+        signature="bec-retire-okx-demo-v1",
     ),
 )

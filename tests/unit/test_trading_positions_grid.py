@@ -68,14 +68,6 @@ def _persisted_okx(*, quote="USDC", adapter_id="myokx"):
     )
 
 
-def test_manual_demo_submission_feedback_handles_exchange_rejection():
-    assert trading._manual_demo_submission_feedback(None, "submitted") == (
-        "error",
-        "The exchange rejected the order before submission. No replacement was "
-        "submitted; review the operational log.",
-    )
-
-
 def test_exchange_quote_change_requires_loaded_public_markets(monkeypatch):
     monkeypatch.setattr(
         trading.database,
@@ -223,7 +215,7 @@ def test_okx_save_reports_public_market_load_failure_without_raw_error(monkeypat
     assert "sensitive upstream detail" not in str(exc.value)
 
 
-def test_standard_exchange_rows_hide_the_internal_okx_validation_identity():
+def test_standard_exchange_rows_hide_archived_unsupported_identities():
     exchanges = pd.DataFrame(
         [
             {"Id": 1, "Code": "binance"},
@@ -262,87 +254,6 @@ def test_okx_read_only_buttons_use_location_scoped_streamlit_keys(monkeypatch):
         "diagnostics_okx_readonly_api",
     ]
     assert len(keys) == len(set(keys))
-
-
-def test_okx_validation_environment_inherits_production_identity_and_starts_disarmed():
-    production = pd.Series(
-        {
-            "Id": 3,
-            "Code": "okx",
-            "Quote_Asset": "USDT",
-            "Adapter_Id": "okx",
-        }
-    )
-    demo = pd.Series(
-        {
-            "Id": 4,
-            "Code": "okx_demo",
-            "Taker_Fee": float("nan"),
-            "Buy_Enabled": True,
-            "Sell_Enabled": True,
-            "Partial_Sell_Policy": "accumulate",
-            "Sizing_Buffer_Pct": float("nan"),
-        }
-    )
-
-    record = trading._okx_validation_environment_record(
-        demo, production, enabled=True
-    )
-
-    assert record == {
-        "Id": 4,
-        "Enabled": True,
-        "Quote_Asset": "USDT",
-        "Taker_Fee": None,
-        "Adapter_Id": "okx",
-        "Buy_Enabled": False,
-        "Sell_Enabled": False,
-        "Partial_Sell_Policy": "accumulate",
-        "Sizing_Buffer_Pct": 5.0,
-    }
-
-
-def test_okx_arming_confirmation_is_requested_only_for_new_production_side():
-    persisted = pd.DataFrame(
-        [
-            {
-                "Code": "okx",
-                "Buy_Enabled": False,
-                "Sell_Enabled": False,
-            },
-            {
-                "Code": "kraken",
-                "Buy_Enabled": False,
-                "Sell_Enabled": False,
-            },
-        ]
-    )
-    unchanged = pd.DataFrame(
-        [
-            {"Code": "okx", "Buy Enabled": False, "Sell Enabled": False},
-            {"Code": "kraken", "Buy Enabled": True, "Sell Enabled": True},
-        ]
-    )
-    arming_okx = unchanged.copy()
-    arming_okx.loc[arming_okx["Code"] == "okx", "Buy Enabled"] = True
-
-    assert (
-        trading._okx_production_arming_requested(unchanged, persisted) is False
-    )
-    assert (
-        trading._okx_production_arming_requested(arming_okx, persisted) is True
-    )
-
-
-def test_okx_disarming_does_not_require_production_confirmation():
-    persisted = pd.DataFrame(
-        [{"Code": "okx", "Buy_Enabled": True, "Sell_Enabled": True}]
-    )
-    edited = pd.DataFrame(
-        [{"Code": "okx", "Buy Enabled": False, "Sell Enabled": False}]
-    )
-
-    assert trading._okx_production_arming_requested(edited, persisted) is False
 
 
 def test_exchange_summary_safe_state_has_no_alerts(monkeypatch):
@@ -405,7 +316,7 @@ def test_exchange_summary_live_state_has_one_clear_error(monkeypatch):
     assert warnings == []
 
 
-def test_okx_public_health_check_syncs_catalog_without_touching_demo(monkeypatch):
+def test_okx_public_health_check_ignores_archived_demo_identity(monkeypatch):
     synced = []
     exchanges = pd.DataFrame(
         [

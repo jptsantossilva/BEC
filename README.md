@@ -20,12 +20,7 @@ Telegram notifications in a single application.
 |---|---|---|
 | Binance | Supported | Native Binance workflow |
 | Kraken | Supported | Explicitly gated live workflow with durable order intents and reconciliation |
-| OKX | Supported | Gated production workflow after controlled OKX Demo validation |
-
-OKX Demo Trading is not shown as a normal exchange. It is an isolated internal
-environment available only through the advanced OKX production-validation
-workflow, using separate demo credentials and data so it cannot be confused
-with production activity.
+| OKX | Supported | Explicitly gated live workflow with durable order intents and reconciliation |
 
 Exchange data, symbols, fees, rankings, backtests, positions, orders, and
 balances are kept isolated. Switching the active exchange is blocked while
@@ -121,11 +116,6 @@ OKX_API_KEY=""
 OKX_API_SECRET=""
 OKX_API_PASSPHRASE=""
 
-# OKX Demo Trading
-OKX_DEMO_API_KEY=""
-OKX_DEMO_API_SECRET=""
-OKX_DEMO_API_PASSPHRASE=""
-
 # Required by Docker Compose
 SQLITE_WEB_PASSWORD=""
 
@@ -168,8 +158,8 @@ The stack provides:
 6. Configure credentials and run the read-only private API validation.
 7. For Kraken or OKX, review the gated live-execution requirements in the
    dashboard before enabling buy or sell operations.
-8. Keep live flags and automatic trading schedules disabled until validation is
-   complete.
+8. Keep live flags and automatic trading schedules disabled until the public
+   and private operational checks are complete.
 
 ## Operations
 

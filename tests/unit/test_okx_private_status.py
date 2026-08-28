@@ -15,21 +15,25 @@ class ReadOnlyOkxClient:
         self.calls = []
         self.fail_with = fail_with
 
-    def set_sandbox_mode(self, enabled):
-        self.calls.append(("sandbox", enabled))
-
     def fetch_balance(self, params=None):
         self.calls.append(("balance", params))
         if self.fail_with:
             raise self.fail_with
         return {"free": {"USDC": "12.5"}, "used": {"USDC": "1.5"}}
 
+    def fetch_open_orders(self, limit=None):
+        self.calls.append(("open_orders", limit))
+        return []
 
-def _private_adapter(*, client=None, environment="production", **kwargs):
+    def fetch_closed_orders(self, limit=None):
+        self.calls.append(("closed_orders", limit))
+        return []
+
+
+def _private_adapter(*, client=None, **kwargs):
     return OkxAdapter(
         client=client or ReadOnlyOkxClient(),
         adapter_id="myokx",
-        execution_environment=environment,
         api_key="key-value",
         api_secret="secret-value",
         api_passphrase="passphrase-value",
@@ -38,11 +42,11 @@ def _private_adapter(*, client=None, environment="production", **kwargs):
     )
 
 
-def _exchange(environment="production"):
+def _exchange():
     return {
-        "Code": "okx_demo" if environment == "demo" else "okx",
+        "Code": "okx",
         "Adapter_Id": "myokx",
-        "Execution_Environment": environment,
+        "Execution_Environment": "production",
         "Quote_Asset": "USDC",
     }
 
@@ -85,23 +89,14 @@ def test_okx_maps_the_passphrase_to_ccxt_password(monkeypatch):
     assert captured["password"] == "passphrase-value"
 
 
-@pytest.mark.parametrize(
-    ("environment", "expected_prefix", "unexpected_prefix"),
-    [
-        ("production", "OKX", "OKX_DEMO"),
-        ("demo", "OKX_DEMO", "OKX"),
-    ],
-)
-def test_okx_private_credentials_use_the_selected_environment_only(
-    monkeypatch, environment, expected_prefix, unexpected_prefix
-):
+def test_okx_private_credentials_use_production_environment_only(monkeypatch):
     monkeypatch.setattr(okx_adapter_module, "load_env_file", lambda: None)
-    monkeypatch.setenv(f"{expected_prefix}_API_KEY", "selected-key")
-    monkeypatch.setenv(f"{expected_prefix}_API_SECRET", "selected-secret")
-    monkeypatch.setenv(f"{expected_prefix}_API_PASSPHRASE", "selected-passphrase")
-    monkeypatch.setenv(f"{unexpected_prefix}_API_KEY", "other-key")
-    monkeypatch.setenv(f"{unexpected_prefix}_API_SECRET", "other-secret")
-    monkeypatch.setenv(f"{unexpected_prefix}_API_PASSPHRASE", "other-passphrase")
+    monkeypatch.setenv("OKX_API_KEY", "selected-key")
+    monkeypatch.setenv("OKX_API_SECRET", "selected-secret")
+    monkeypatch.setenv("OKX_API_PASSPHRASE", "selected-passphrase")
+    monkeypatch.setenv("OKX_DEMO_API_KEY", "ignored-key")
+    monkeypatch.setenv("OKX_DEMO_API_SECRET", "ignored-secret")
+    monkeypatch.setenv("OKX_DEMO_API_PASSPHRASE", "ignored-passphrase")
     client = ReadOnlyOkxClient()
     client_config = {}
 
@@ -115,10 +110,7 @@ def test_okx_private_credentials_use_the_selected_environment_only(
         staticmethod(create_client),
     )
 
-    adapter = OkxAdapter(
-        execution_environment=environment,
-        private_enabled=True,
-    )
+    adapter = OkxAdapter(private_enabled=True)
 
     assert adapter.private_enabled is True
     assert client_config == {
@@ -126,20 +118,7 @@ def test_okx_private_credentials_use_the_selected_environment_only(
         "api_secret": "selected-secret",
         "api_password": "selected-passphrase",
     }
-    if environment == "demo":
-        assert client.calls == [("sandbox", True)]
-    else:
-        assert client.calls == []
-
-
-def test_okx_demo_selects_sandbox_before_the_first_private_balance_call():
-    client = ReadOnlyOkxClient()
-    adapter = _private_adapter(client=client, environment="demo")
-
-    balance = adapter.fetch_balance("USDC")
-
-    assert balance.free == Decimal("12.5")
-    assert client.calls == [("sandbox", True), ("balance", None)]
+    assert client.calls == []
 
 
 def test_okx_uses_cash_availability_when_ccxt_reports_zero_unified_equity():
@@ -166,13 +145,13 @@ def test_okx_uses_cash_availability_when_ccxt_reports_zero_unified_equity():
             }
 
     client = UnifiedAccountClient()
-    adapter = _private_adapter(client=client, environment="demo")
+    adapter = _private_adapter(client=client)
 
     balance = adapter.fetch_balance("USDC")
 
     assert balance.free == Decimal("5000")
     assert balance.locked == Decimal("0")
-    assert client.calls == [("sandbox", True), ("balance", None)]
+    assert client.calls == [("balance", None)]
 
 
 def test_okx_private_status_is_read_only_and_never_exposes_credential_values():
@@ -186,8 +165,13 @@ def test_okx_private_status_is_read_only_and_never_exposes_credential_values():
     )
 
     assert status.available is True
-    assert "trading/cash balance access succeeded" in status.message
-    assert client.calls == [("balance", None), ("balance", {"type": "funding"})]
+    assert "balance and order-history access succeeded" in status.message
+    assert client.calls == [
+        ("balance", None),
+        ("balance", {"type": "funding"}),
+        ("open_orders", 1),
+        ("closed_orders", 1),
+    ]
     assert "key-value" not in status.message
     assert "secret-value" not in status.message
     assert "passphrase-value" not in status.message
@@ -204,44 +188,12 @@ def test_okx_production_private_status_is_read_only_in_every_run_mode(run_mode):
     )
 
     assert status.available is True
-    assert "trading/cash balance access succeeded" in status.message
-    assert client.calls == [("balance", None), ("balance", {"type": "funding"})]
-
-
-def test_okx_demo_private_status_allows_demo_mode_for_balance_validation():
-    client = ReadOnlyOkxClient()
-    adapter = _private_adapter(client=client, environment="demo")
-
-    status = check_okx_private_access(
-        _exchange("demo"),
-        run_mode="demo",
-        adapter_factory=lambda **kwargs: adapter,
-    )
-
-    assert status.available is True
-    assert "OKX demo" in status.message
+    assert "balance and order-history access succeeded" in status.message
     assert client.calls == [
-        ("sandbox", True),
         ("balance", None),
         ("balance", {"type": "funding"}),
-    ]
-
-
-def test_okx_demo_private_status_remains_sandboxed_in_live_mode():
-    client = ReadOnlyOkxClient()
-    adapter = _private_adapter(client=client, environment="demo")
-    status = check_okx_private_access(
-        _exchange("demo"),
-        run_mode="live",
-        adapter_factory=lambda **kwargs: adapter,
-    )
-
-    assert status.available is True
-    assert "OKX demo" in status.message
-    assert client.calls == [
-        ("sandbox", True),
-        ("balance", None),
-        ("balance", {"type": "funding"}),
+        ("open_orders", 1),
+        ("closed_orders", 1),
     ]
 
 
@@ -289,7 +241,6 @@ def test_okx_public_adapter_keeps_all_private_order_operations_disabled():
     adapter = OkxAdapter(
         client=ReadOnlyOkxClient(),
         adapter_id="myokx",
-        execution_environment="production",
         private_enabled=False,
     )
 

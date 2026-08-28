@@ -8,6 +8,11 @@ from bec.db.exchange_schema import apply_exchange_aware_schema, create_exchange_
 from bec.strategy_builder.templates import get_builtin_template
 
 
+def test_retired_demo_run_mode_cannot_be_configured():
+    with pytest.raises(ValueError, match="run_mode must be"):
+        config.update_setting("run_mode", "demo")
+
+
 def test_app_settings_load_without_legacy_take_profit_enabled():
     original_conn = getattr(database._thread_local, "conn", None)
     test_conn = sqlite3.connect(":memory:", check_same_thread=False)

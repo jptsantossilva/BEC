@@ -10,6 +10,7 @@ from bec.db.exchange_schema import (
 )
 from bec.db.migrations import (
     MIGRATIONS,
+    MigrationError,
     PendingManualMigrationError,
     apply_database_migrations,
     apply_pending_migrations,
@@ -110,6 +111,7 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
         "10:okx_demo_execution",
         "11:repair_backtesting_exchange_context",
         "12:okx_display_name",
+        "13:retire_okx_demo",
     ]
     assert report.unresolved_legacy_symbols == ["UNKNOWNPAIR"]
 
@@ -126,6 +128,7 @@ def test_exchange_schema_rebuild_is_manual_and_backfills_binance(tmp_path):
         "10:okx_demo_execution",
         "11:repair_backtesting_exchange_context",
         "12:okx_display_name",
+        "13:retire_okx_demo",
     ]
     assert applied.unresolved_legacy_symbols == ["UNKNOWNPAIR"]
 
@@ -372,7 +375,7 @@ def test_new_install_exchange_metadata_defaults_to_kraken(tmp_path):
             "SELECT Code, Enabled, Is_Default FROM Exchanges ORDER BY Id"
         ).fetchall() == [
             ("binance", 0, 0), ("kraken", 1, 1),
-            ("okx", 0, 0), ("okx_demo", 0, 0),
+            ("okx", 0, 0),
         ]
         assert connection.execute(
             "SELECT Buy_Enabled, Sell_Enabled FROM Exchanges WHERE Code='kraken'"
@@ -409,6 +412,7 @@ def test_kraken_metadata_migration_applies_automatically_after_version_two(tmp_p
             "okx_demo_execution",
             "repair_backtesting_exchange_context",
             "okx_display_name",
+            "retire_okx_demo",
         ]
         assert connection.execute(
             "SELECT Enabled, Is_Default FROM Exchanges WHERE Code='kraken'"
@@ -431,11 +435,15 @@ def test_new_database_is_marked_current_with_kraken_public_metadata(tmp_path):
             "SELECT Code, Enabled, Is_Default FROM Exchanges ORDER BY Id"
         ).fetchall() == [
             ("binance", 0, 0), ("kraken", 1, 1),
-            ("okx", 0, 0), ("okx_demo", 0, 0),
+            ("okx", 0, 0),
         ]
         assert connection.execute(
             "SELECT Name FROM Exchanges WHERE Code='okx'"
         ).fetchone() == ("OKX",)
+        assert connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='OKX_Demo_Validation_Records'"
+        ).fetchone() is None
 
 
 def test_okx_display_name_migration_preserves_demo_identity_and_settings(tmp_path):
@@ -452,7 +460,10 @@ def test_okx_display_name_migration_preserves_demo_identity_and_settings(tmp_pat
             connection, MIGRATIONS, allow_rebuild=False
         )
 
-        assert [migration.name for migration in applied] == ["okx_display_name"]
+        assert [migration.name for migration in applied] == [
+            "okx_display_name",
+            "retire_okx_demo",
+        ]
         assert connection.execute(
             "SELECT Name, Enabled, Quote_Asset FROM Exchanges WHERE Code='okx'"
         ).fetchone() == ("OKX", 1, "USDT")
@@ -462,6 +473,132 @@ def test_okx_display_name_migration_preserves_demo_identity_and_settings(tmp_pat
         assert apply_pending_migrations(
             connection, MIGRATIONS, allow_rebuild=False
         ) == []
+
+
+def test_retire_okx_demo_archives_history_and_disarms_active_production(tmp_path):
+    database = tmp_path / "retire-okx-demo.db"
+    _create_legacy_database(database)
+    with sqlite3.connect(database) as connection:
+        apply_pending_migrations(connection, MIGRATIONS[:12], allow_rebuild=True)
+        connection.executescript(
+            """
+            CREATE TABLE Job_Schedules (
+                name TEXT PRIMARY KEY, enabled INTEGER NOT NULL
+            );
+            INSERT INTO Job_Schedules VALUES ('main_1h', 1);
+            INSERT INTO Job_Schedules VALUES ('orders_reconcile', 1);
+            INSERT INTO Settings (name, value) VALUES ('run_mode', 'live')
+                ON CONFLICT(name) DO UPDATE SET value='live';
+            UPDATE Exchanges SET Enabled=0, Is_Default=0;
+            UPDATE Exchanges
+            SET Enabled=1, Is_Default=1, Buy_Enabled=1, Sell_Enabled=1
+            WHERE Code='okx';
+            INSERT INTO OKX_Demo_Validation_Records (
+                Exchange_Id, Adapter_Id, Tested_Symbols_JSON,
+                Buy_Order_Ids_JSON, Sell_Order_Ids_JSON,
+                Reconciliation_Result_JSON
+            ) VALUES (4, 'myokx', '["BTC/USDC"]', '["B-1"]', '["S-1"]', '{}');
+            """
+        )
+
+        applied = apply_pending_migrations(
+            connection, MIGRATIONS, allow_rebuild=False
+        )
+
+        assert [migration.name for migration in applied] == ["retire_okx_demo"]
+        assert connection.execute(
+            "SELECT Enabled, Is_Default, Buy_Enabled, Sell_Enabled "
+            "FROM Exchanges WHERE Code='okx_demo'"
+        ).fetchone() == (0, 0, 0, 0)
+        assert connection.execute(
+            "SELECT Buy_Enabled, Sell_Enabled FROM Exchanges WHERE Code='okx'"
+        ).fetchone() == (0, 0)
+        assert connection.execute(
+            "SELECT value FROM Settings WHERE name='run_mode'"
+        ).fetchone() == ("test",)
+        assert connection.execute(
+            "SELECT enabled FROM Job_Schedules WHERE name='main_1h'"
+        ).fetchone() == (0,)
+        assert connection.execute(
+            "SELECT enabled FROM Job_Schedules WHERE name='orders_reconcile'"
+        ).fetchone() == (1,)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM OKX_Demo_Validation_Records"
+        ).fetchone() == (1,)
+
+
+def test_retire_okx_demo_normalizes_residual_demo_run_mode(tmp_path):
+    database = tmp_path / "retire-okx-demo-run-mode.db"
+    _create_legacy_database(database)
+    with sqlite3.connect(database) as connection:
+        apply_pending_migrations(connection, MIGRATIONS[:12], allow_rebuild=True)
+        connection.execute(
+            "INSERT INTO Settings (name, value) VALUES ('run_mode', 'demo') "
+            "ON CONFLICT(name) DO UPDATE SET value='demo'"
+        )
+        connection.commit()
+
+        applied = apply_pending_migrations(
+            connection, MIGRATIONS, allow_rebuild=False
+        )
+
+        assert [migration.name for migration in applied] == ["retire_okx_demo"]
+        assert connection.execute(
+            "SELECT value FROM Settings WHERE name='run_mode'"
+        ).fetchone() == ("test",)
+
+
+def test_upgrade_from_v7_runs_historical_okx_migrations_before_retirement(tmp_path):
+    database = tmp_path / "upgrade-v7-v13.db"
+    _create_legacy_database(database)
+    with sqlite3.connect(database) as connection:
+        apply_pending_migrations(connection, MIGRATIONS[:7], allow_rebuild=True)
+
+        applied = apply_pending_migrations(
+            connection, MIGRATIONS, allow_rebuild=False
+        )
+
+        assert [migration.version for migration in applied] == [8, 9, 10, 11, 12, 13]
+        assert connection.execute(
+            "SELECT Enabled, Is_Default, Buy_Enabled, Sell_Enabled "
+            "FROM Exchanges WHERE Code='okx_demo'"
+        ).fetchone() == (0, 0, 0, 0)
+        assert connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='OKX_Demo_Validation_Records'"
+        ).fetchone() == (1,)
+
+
+@pytest.mark.parametrize("blocker", ["active", "position", "order"])
+def test_retire_okx_demo_rejects_operational_demo_state(tmp_path, blocker):
+    database = tmp_path / f"retire-okx-demo-{blocker}.db"
+    _create_legacy_database(database)
+    with sqlite3.connect(database) as connection:
+        apply_pending_migrations(connection, MIGRATIONS[:12], allow_rebuild=True)
+        if blocker == "active":
+            connection.execute("UPDATE Exchanges SET Is_Default=0")
+            connection.execute(
+                "UPDATE Exchanges SET Enabled=1, Is_Default=1 WHERE Code='okx_demo'"
+            )
+        elif blocker == "position":
+            connection.execute(
+                "ALTER TABLE Positions ADD COLUMN Position INTEGER NOT NULL DEFAULT 0"
+            )
+            connection.execute(
+                "UPDATE Positions SET Exchange_Id=4, Position=1 WHERE Id=1"
+            )
+        else:
+            connection.execute(
+                "UPDATE Orders SET Exchange_Id=4, Order_Status='unknown' WHERE Id=1"
+            )
+        connection.commit()
+
+        with pytest.raises(MigrationError, match="OKX Demo"):
+            apply_pending_migrations(connection, MIGRATIONS, allow_rebuild=False)
+
+        assert connection.execute(
+            "SELECT COUNT(*) FROM Schema_Migrations WHERE Version=13"
+        ).fetchone() == (0,)
 
 
 def test_kraken_defaults_migration_preserves_existing_fee(tmp_path):
@@ -490,6 +627,7 @@ def test_kraken_defaults_migration_preserves_existing_fee(tmp_path):
             "okx_demo_execution",
             "repair_backtesting_exchange_context",
             "okx_display_name",
+            "retire_okx_demo",
         ]
         assert connection.execute(
             "SELECT Commission_Value FROM Exchange_Backtesting_Settings "
@@ -531,6 +669,7 @@ def test_context_repair_restores_missing_monte_carlo_columns(tmp_path):
         assert [migration.name for migration in applied] == [
             "repair_backtesting_exchange_context",
             "okx_display_name",
+            "retire_okx_demo",
         ]
         columns = {
             row[1]
