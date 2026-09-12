@@ -2,6 +2,9 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-09-12]
+- Market Data - Aligned market-phase analysis and live trading to a shared minimum of 200 closed candles, avoiding unnecessary insufficient-history alerts while preserving higher strategy-specific requirements.
+
 ## [2026-08-27]
 - OKX Production - Retired OKX Demo Trading and its mandatory validation record, normalized OKX live controls to the Kraken-style gated workflow, and retained balance/order-history preflight, explicit sides, durable intents and reconciliation.
 - Database Migration - Added additive migration 13 to reject active or unsettled Demo state, archive historical Demo records, disarm OKX production and live schedules during upgrade, and omit Demo entirely from new databases.

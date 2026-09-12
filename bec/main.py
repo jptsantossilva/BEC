@@ -18,6 +18,7 @@ import bec.utils.database as database
 import bec.utils.telegram as telegram
 from bec.utils import telegram_reporting
 from bec.strategy_builder import engine as strategy_engine
+from bec.ohlcv_policy import MIN_CLOSED_CANDLES
 from bec.exchanges.ccxt_adapter import TransientPublicMarketDataError
 from bec.utils.risk import get_runtime_risk_settings
 from bec.utils.take_profit import normalize_take_profit_levels, take_profit_enabled
@@ -44,7 +45,7 @@ telegram_token = telegram.telegram_token_main
 telegram_prefix_sl = ""
 telegram_prefix_ml = ""
 
-MIN_LIVE_CLOSED_CANDLES = 201
+MIN_LIVE_CLOSED_CANDLES = MIN_CLOSED_CANDLES
 
 # strategy
 # strategy_name = ''

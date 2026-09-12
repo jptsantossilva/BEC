@@ -157,26 +157,27 @@ def test_trade_cycle_market_data_caches_one_fetch_per_market(monkeypatch):
     assert calls == [("AAAUSDC", "1h", 201)]
 
 
-def test_trade_cycle_market_data_aggregates_insufficient_history_once(monkeypatch):
+@pytest.mark.parametrize("available,required", [(199, 200), (200, 201)])
+def test_trade_cycle_market_data_aggregates_insufficient_history_once(monkeypatch, available, required):
     sent = []
     monkeypatch.setattr(
         main,
         "get_data",
-        lambda symbol, timeframe, required_closed_candles: _market_data(rows=200),
+        lambda symbol, timeframe, required_closed_candles: _market_data(rows=available),
     )
     monkeypatch.setattr(
         main.telegram,
         "send_error_event",
         lambda **kwargs: sent.append(kwargs),
     )
-    market_data = main._TradeCycleMarketData({("AAAUSDC", "1h"): 201})
+    market_data = main._TradeCycleMarketData({("AAAUSDC", "1h"): required})
 
     assert market_data.load("AAAUSDC", "1h").empty
     assert market_data.load("AAAUSDC", "1h").empty
     market_data.send_failure_summary("1h")
 
     assert len(sent) == 1
-    assert "AAAUSDC (1h) 200/201 candles" in sent[0]["reason"]
+    assert f"AAAUSDC (1h) {available}/{required} candles" in sent[0]["reason"]
     assert "before any buy or sell order decision" in sent[0]["impact"]
 
 
@@ -224,7 +225,7 @@ def test_trade_skips_all_order_decisions_when_history_is_insufficient(monkeypatc
     monkeypatch.setattr(
         main,
         "get_data",
-        lambda symbol, timeframe, required_closed_candles: _market_data(rows=200),
+        lambda symbol, timeframe, required_closed_candles: _market_data(rows=199),
     )
     monkeypatch.setattr(
         main.binance,

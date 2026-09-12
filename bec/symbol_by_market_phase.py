@@ -16,10 +16,11 @@ import bec.add_symbol as add_symbol
 from bec.exchanges.ccxt_adapter import TransientPublicMarketDataError
 from bec.my_backtesting import calc_backtesting
 from bec.strategy_builder import engine as strategy_engine
+from bec.ohlcv_policy import MIN_CLOSED_CANDLES
 
-MARKET_PHASE_MIN_CANDLES = 200
-# Last SMA200/ROC60 values only need the latest 200 closed candles plus the current row.
-MARKET_PHASE_LOOKBACK_CANDLES = 201
+MARKET_PHASE_MIN_CANDLES = MIN_CLOSED_CANDLES
+# Latest SMA200/ROC60 values need 200 closed candles; exclude the open candle.
+MARKET_PHASE_LOOKBACK_CANDLES = MIN_CLOSED_CANDLES
 
 
 def _create_active_exchange_balance_snapshot(
