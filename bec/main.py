@@ -650,6 +650,8 @@ def _new_trade_cycle_summary(timeframe: str, routine_log_mode: str) -> dict:
         "sell_actions": 0,
         "buy_actions": 0,
         "take_profit_actions": 0,
+        "capacity_blocked": 0,
+        "capacity": None,
         "missing_parameters": 0,
         "empty_data": 0,
         "warnings": 0,
@@ -781,6 +783,14 @@ def format_trade_cycle_summary(summary: dict) -> str:
     ]
     if summary["take_profit_actions"] > 0:
         lines.append(f"Take profits: {summary['take_profit_actions']}")
+    if summary.get("capacity_blocked", 0) > 0:
+        capacity = summary.get("capacity") or {}
+        lines.append(
+            f"Capacity blocked: {summary['capacity_blocked']} | "
+            f"open {int(capacity.get('open_positions', 0))} + "
+            f"pending {int(capacity.get('pending_buy_slots', 0))} / "
+            f"max {int(capacity.get('max_positions', 0))}"
+        )
     if summary["warnings"] > 0:
         lines.append("Warning detail: See Errors channel.")
     if summary["examples"] and summary["routine_log_mode"] == "detailed":
@@ -1134,8 +1144,7 @@ def trade(
                 strategy_parameters,
                 entry_state,
             )
-            cycle_summary["buy_actions"] += 1
-            binance.create_buy_order(
+            outcome = binance.create_buy_order(
                 symbol=symbol,
                 bot=timeframe,
                 strategy_id=strategy_id,
@@ -1143,6 +1152,18 @@ def trade(
                 position_id=position_id,
                 strategy_params_json=strategy_params_json,
             )
+            if isinstance(outcome, dict) and outcome.get("skipped"):
+                cycle_summary["buy_no_action"] += 1
+                reason = str(outcome.get("reason") or "Buy was skipped")
+                msg = f"{symbol} - {strategy_name} - Buy skipped: {reason}"
+                logged_msg = telegram_prefix_sl + msg
+                print(logged_msg)
+                _track_trade_cycle_example(cycle_summary, logged_msg)
+                if outcome.get("code") == "position_capacity_full":
+                    cycle_summary["capacity_blocked"] += 1
+                    cycle_summary["capacity"] = dict(outcome.get("capacity") or {})
+            else:
+                cycle_summary["buy_actions"] += 1
         else:
             setup = strategy_context["setup"]
             detail = f" | {buy_detail}" if buy_detail else ""

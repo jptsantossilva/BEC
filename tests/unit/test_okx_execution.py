@@ -118,6 +118,28 @@ def test_okx_production_uses_quote_cost_buys_base_amount_sells_and_cash_mode():
     assert client.calls[1][-1] == {"tdMode": "cash", "clOrdId": "BECPROD2"}
 
 
+def test_okx_native_creation_acknowledgement_has_no_confirmed_fill():
+    adapter = _adapter()
+
+    result = adapter._parse_order(
+        {
+            "id": "OKX-PROD-ACK",
+            "clientOrderId": "BECPRODACK",
+            "info": {
+                "ordId": "OKX-PROD-ACK",
+                "clOrdId": "BECPRODACK",
+                "sCode": "0",
+                "sMsg": "",
+            },
+        },
+        "BTC/USDC",
+    )
+
+    assert result.status.value == "unknown"
+    assert result.executed_quantity == Decimal("0")
+    assert result.exchange_order_id == "OKX-PROD-ACK"
+
+
 def test_okx_production_reconciliation_and_cancel_use_client_id_and_cash_mode():
     client = ProductionOkxClient()
     adapter = _adapter(client)

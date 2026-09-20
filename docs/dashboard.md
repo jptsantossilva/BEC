@@ -17,6 +17,13 @@ This is the daily operating view. Use it to monitor:
 
 Use manual position actions carefully. They change live position records and can affect future bot decisions.
 
+The Position Sizing overview separates open positions from pending buy orders.
+Pending OKX and Kraken buys reserve a position slot until they are filled,
+canceled, rejected, or expired. Available Positions therefore reflects both
+open positions and these pending reservations. If the configured maximum is
+already exceeded, BEC blocks new buys but continues exits and order
+reconciliation; it never closes excess positions automatically.
+
 ## Daily Top Performers
 
 BEC rebuilds the top performers list through the scheduled `symbol_by_market_phase.py` job. This job is normally run on the daily timeframe.

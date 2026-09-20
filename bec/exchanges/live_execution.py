@@ -101,16 +101,22 @@ def _guarded_live_exchange(side: str) -> tuple[dict | None, dict | None]:
 
 def _stake_amount(quote_asset: str) -> Decimal:
     settings = config.load_settings()
+    usage = database.get_position_capacity_usage()
+    if usage["occupied_slots"] >= settings.max_number_of_open_positions:
+        raise database.PositionCapacityError(
+            open_positions=usage["open_positions"],
+            pending_buy_slots=usage["pending_buy_slots"],
+            max_positions=settings.max_number_of_open_positions,
+        )
     balance = service.fetch_balance(quote_asset)
     available = Decimal(str(balance.free))
     if settings.stake_amount_type == "unlimited":
-        open_positions = database.get_num_open_positions()
-        if open_positions >= settings.max_number_of_open_positions:
-            raise RuntimeError("Maximum open positions already occupied")
         tradable = available * Decimal(str(settings.tradable_balance_ratio))
         if settings.lock_values:
             tradable -= Decimal(str(database.get_total_locked_values()))
-        remaining_slots = settings.max_number_of_open_positions - open_positions
+        remaining_slots = (
+            settings.max_number_of_open_positions - usage["occupied_slots"]
+        )
         amount = tradable / Decimal(remaining_slots)
         amount = max(amount, Decimal(str(settings.min_position_size)))
     else:
@@ -399,6 +405,15 @@ def _log_order_persistence(
 def _create_order_intent_or_skip(**kwargs) -> tuple[dict | None, dict | None]:
     try:
         return database.create_order_intent(**kwargs), None
+    except database.PositionCapacityError as exc:
+        message = str(exc)
+        print(database.exchange_log_prefix(), f"Order skipped: {message}")
+        return None, {
+            "skipped": True,
+            "code": "position_capacity_full",
+            "reason": message,
+            "capacity": exc.capacity,
+        }
     except database.UnsettledOrderIntentError as exc:
         message = str(exc)
         print(database.exchange_log_prefix(), f"Order skipped: {message}")
@@ -626,6 +641,7 @@ def create_buy_order(
         )
         print(database.exchange_log_prefix(), f"{market.symbol}: {message}")
         return {"skipped": True, "reason": message}
+    settings = config.load_settings()
     if quote_amount is not None and convert_all_balance:
         raise ValueError("quote_amount and convert_all_balance are mutually exclusive")
     if quote_amount is not None:
@@ -641,10 +657,20 @@ def create_buy_order(
     elif convert_all_balance:
         balance = service.fetch_balance(market.quote_asset)
         quote_amount = Decimal(str(balance.free)) * Decimal(
-            str(config.load_settings().tradable_balance_ratio)
+            str(settings.tradable_balance_ratio)
         )
     else:
-        quote_amount = _stake_amount(market.quote_asset)
+        try:
+            quote_amount = _stake_amount(market.quote_asset)
+        except database.PositionCapacityError as exc:
+            message = str(exc)
+            print(database.exchange_log_prefix(), f"{market.symbol}: {message}")
+            return {
+                "skipped": True,
+                "code": "position_capacity_full",
+                "reason": message,
+                "capacity": exc.capacity,
+            }
     validation = service.validate_order(
         OrderRequest(symbol=market.symbol, side="buy", quote_amount=quote_amount)
     )
@@ -659,6 +685,7 @@ def create_buy_order(
         requested_quote_qty=float(quote_amount),
         strategy_id=strategy_id,
         strategy_params_json=strategy_params_json,
+        max_open_positions=settings.max_number_of_open_positions,
     )
     if duplicate:
         return duplicate

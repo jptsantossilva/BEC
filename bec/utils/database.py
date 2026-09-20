@@ -67,6 +67,35 @@ class UnsettledOrderIntentError(RuntimeError):
     """A duplicate action was blocked until its existing intent is settled."""
 
 
+class PositionCapacityError(RuntimeError):
+    """A position-opening intent was blocked because no slot is available."""
+
+    def __init__(
+        self,
+        *,
+        open_positions: int,
+        pending_buy_slots: int,
+        max_positions: int,
+    ) -> None:
+        self.open_positions = int(open_positions)
+        self.pending_buy_slots = int(pending_buy_slots)
+        self.occupied_slots = self.open_positions + self.pending_buy_slots
+        self.max_positions = int(max_positions)
+        super().__init__(
+            "Maximum position capacity is occupied "
+            f"({self.open_positions} open + {self.pending_buy_slots} pending "
+            f"/ {self.max_positions} maximum)"
+        )
+
+    @property
+    def capacity(self) -> dict[str, int]:
+        return {
+            "open_positions": self.open_positions,
+            "pending_buy_slots": self.pending_buy_slots,
+            "max_positions": self.max_positions,
+        }
+
+
 def _adapter_capabilities_for_code(code: str):
     """Resolve static behavior without constructing an exchange client."""
     from bec.exchanges.registry import get_adapter_capabilities_for_code
@@ -1659,17 +1688,14 @@ def create_order_intent(
     sell_percentage: float = 100,
     take_profit_num: int = 0,
     client_order_id: str = "",
+    max_open_positions: int | None = None,
 ) -> dict:
     """Persist an immutable order intent before any private API submission."""
     connection = _get_conn()
-    exchange = get_active_exchange(required=True)
+    get_active_exchange(required=True)
     side = str(side).strip().upper()
     if side not in {"BUY", "SELL"}:
         raise ValueError("Order intent side must be BUY or SELL")
-    if has_unsettled_order_intent(position_id=position_id, side=side, symbol=symbol):
-        raise UnsettledOrderIntentError(
-            "An unsettled order intent already exists for this action"
-        )
     # A 32-character hexadecimal UUID form satisfies Kraken cl_ord_id as well
     # as the supported Binance and OKX client-order identifier constraints.
     client_order_id = client_order_id or secrets.token_hex(16)
@@ -1682,10 +1708,32 @@ def create_order_intent(
     if not strategy_params_json:
         strategy_params_json = build_strategy_params_json(strategy_id)
     created_at = _utc_now_str()
+    started_transaction = not connection.in_transaction
     try:
-        with connection:
-            cursor = connection.execute(
-                """
+        if started_transaction:
+            connection.execute("BEGIN IMMEDIATE")
+        if has_unsettled_order_intent(
+            position_id=position_id,
+            side=side,
+            symbol=symbol,
+            connection=connection,
+        ):
+            raise UnsettledOrderIntentError(
+                "An unsettled order intent already exists for this action"
+            )
+        if side == "BUY" and position_id is not None and max_open_positions is not None:
+            usage = get_position_capacity_usage(
+                exchange_id=int(exchange_fields[0]),
+                connection=connection,
+            )
+            if usage["occupied_slots"] >= int(max_open_positions):
+                raise PositionCapacityError(
+                    open_positions=usage["open_positions"],
+                    pending_buy_slots=usage["pending_buy_slots"],
+                    max_positions=int(max_open_positions),
+                )
+        cursor = connection.execute(
+            """
             INSERT INTO Orders (
                 Exchange_Id, Symbol_Normalized, Exchange_Symbol, Base_Asset,
                 Quote_Asset, Client_Order_Id, Position_Id, Date, Bot, Symbol,
@@ -1697,41 +1745,52 @@ def create_order_intent(
             ) VALUES (
                 ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0
             )
-                """,
-                (
-                    *exchange_fields,
-                    client_order_id,
-                    position_id,
-                    created_at,
-                    bot,
-                    symbol,
-                    side,
-                    0.0,
-                    0.0,
-                    strategy_id,
-                    strategy_params_json,
-                    exit_reason,
-                    float(sell_percentage),
-                    int(take_profit_num),
-                    "pending",
-                    "created",
-                    requested_qty,
-                    requested_quote_qty,
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.0,
-                ),
-            )
+            """,
+            (
+                *exchange_fields,
+                client_order_id,
+                position_id,
+                created_at,
+                bot,
+                symbol,
+                side,
+                0.0,
+                0.0,
+                strategy_id,
+                strategy_params_json,
+                exit_reason,
+                float(sell_percentage),
+                int(take_profit_num),
+                "pending",
+                "created",
+                requested_qty,
+                requested_quote_qty,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            ),
+        )
+        if started_transaction:
+            connection.commit()
     except sqlite3.IntegrityError as exc:
+        if started_transaction and connection.in_transaction:
+            connection.rollback()
         if has_unsettled_order_intent(
-            position_id=position_id, side=side, symbol=symbol
+            position_id=position_id,
+            side=side,
+            symbol=symbol,
+            connection=connection,
         ):
             raise UnsettledOrderIntentError(
                 "An unsettled order intent already exists for this action"
             ) from exc
+        raise
+    except Exception:
+        if started_transaction and connection.in_transaction:
+            connection.rollback()
         raise
     return get_order_intent(int(cursor.lastrowid))
 
@@ -1773,9 +1832,13 @@ def get_latest_manual_live_validation(exchange_id: int | None = None) -> dict | 
 
 
 def has_unsettled_order_intent(
-    *, position_id: int | None, side: str, symbol: str
+    *,
+    position_id: int | None,
+    side: str,
+    symbol: str,
+    connection=None,
 ) -> bool:
-    connection = _get_conn()
+    connection = connection or _get_conn()
     row = connection.execute(
         """
         SELECT 1 FROM Orders
@@ -2644,9 +2707,15 @@ def get_positions_by_bot_position(bot: str, position: int):
 
 
 sql_get_unrealized_pnl_by_bot = f"""
-    SELECT pos.Id, pos.Bot, pos.Symbol, pos.Strategy_Id, pos.Strategy_Name, pos.Strategy_Params_JSON, pos.PnL_Perc, pos.PnL_Value, pos.Take_Profits_JSON, ROUND((pos.Qty/ord.Qty)*100,2) as "RPQ%", pos.Qty, pos.Buy_Price, (pos.Qty*pos.Buy_Price) Position_Value, pos.Date, pos.Duration, pos.Trail_Stop_ATR, pos.Highest_Price_Since_Entry
+    SELECT pos.Id, pos.Bot, pos.Symbol, pos.Strategy_Id, pos.Strategy_Name, pos.Strategy_Params_JSON, pos.PnL_Perc, pos.PnL_Value, pos.Take_Profits_JSON, ROUND((pos.Qty/NULLIF(ord.Qty, 0))*100,2) as "RPQ%", pos.Qty, pos.Buy_Price, (pos.Qty*pos.Buy_Price) Position_Value, pos.Date, pos.Duration, pos.Trail_Stop_ATR, pos.Highest_Price_Since_Entry
     FROM Positions pos
-    JOIN Orders ord ON pos.Buy_Order_Id = ord.Exchange_Order_Id AND pos.Exchange_Id=ord.Exchange_Id
+    LEFT JOIN Orders ord ON ord.Id = (
+        SELECT MAX(matched.Id)
+        FROM Orders matched
+        WHERE matched.Exchange_Id=pos.Exchange_Id
+          AND matched.Exchange_Order_Id=pos.Buy_Order_Id
+          AND matched.Side='BUY'
+    )
     WHERE 
         pos.Bot = ?
         AND pos.Position = ?
@@ -2796,6 +2865,50 @@ sql_get_all_positions_by_bot = f"""
 def get_all_positions_by_bot(bot: str):
     connection = _get_conn()
     return pd.read_sql(sql_get_all_positions_by_bot, connection, params=(bot,))
+
+
+def get_position_capacity_usage(
+    exchange_id: int | None = None,
+    connection=None,
+) -> dict[str, int]:
+    """Return open, pending-buy and total occupied position slots."""
+    connection = connection or _get_conn()
+    exchange_id = int(exchange_id or get_active_exchange_id(required=True))
+    placeholders = ",".join("?" for _ in UNSETTLED_ORDER_STATUSES)
+    row = connection.execute(
+        f"""
+        WITH open_slots AS (
+            SELECT Id AS Position_Id
+            FROM Positions
+            WHERE Exchange_Id=? AND Position=1
+        ),
+        pending_slots AS (
+            SELECT DISTINCT ord.Position_Id
+            FROM Orders ord
+            WHERE ord.Exchange_Id=?
+              AND ord.Side='BUY'
+              AND ord.Position_Id IS NOT NULL
+              AND lower(COALESCE(ord.Order_Status, 'unknown'))
+                  IN ({placeholders})
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM open_slots opened
+                  WHERE opened.Position_Id=ord.Position_Id
+              )
+        )
+        SELECT
+            (SELECT COUNT(*) FROM open_slots),
+            (SELECT COUNT(*) FROM pending_slots)
+        """,
+        (exchange_id, exchange_id, *UNSETTLED_ORDER_STATUSES),
+    ).fetchone()
+    open_positions = int(row[0] or 0)
+    pending_buy_slots = int(row[1] or 0)
+    return {
+        "open_positions": open_positions,
+        "pending_buy_slots": pending_buy_slots,
+        "occupied_slots": open_positions + pending_buy_slots,
+    }
 
 
 sql_get_num_open_positions = f"""

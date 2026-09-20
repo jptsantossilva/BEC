@@ -34,6 +34,21 @@ def _batch_result():
     )
 
 
+def test_trade_cycle_summary_aggregates_capacity_blocks_once():
+    summary = trade_batch.live_main._new_trade_cycle_summary("1h", "summary")
+    summary["capacity_blocked"] = 3
+    summary["capacity"] = {
+        "open_positions": 24,
+        "pending_buy_slots": 1,
+        "max_positions": 25,
+    }
+
+    message = trade_batch.live_main.format_trade_cycle_summary(summary)
+
+    assert message.count("Capacity blocked:") == 1
+    assert "Capacity blocked: 3 | open 24 + pending 1 / max 25" in message
+
+
 def test_run_batch_executes_all_sells_before_any_buy(monkeypatch):
     events = []
     monkeypatch.setattr(

@@ -1,4 +1,5 @@
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -1031,6 +1032,223 @@ def test_order_intent_is_persisted_before_submission_and_never_resubmitted(
                 position_id=position_id,
                 requested_quote_qty=100,
             )
+    finally:
+        connection.close()
+        _restore_connection(original)
+
+
+def test_position_capacity_counts_open_and_distinct_pending_buy_slots(
+    tmp_path, monkeypatch
+):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        database.set_active_exchange(2)
+        monkeypatch.setattr(
+            database,
+            "_exchange_symbol_metadata",
+            lambda symbol: (
+                2,
+                symbol,
+                symbol.replace("/", ""),
+                symbol.split("/")[0],
+                "USDC",
+            ),
+        )
+        open_id = connection.execute(
+            "INSERT INTO Positions (Bot, Symbol, Position, Exchange_Id) "
+            "VALUES ('1h','OPEN/USDC',1,2)"
+        ).lastrowid
+        pending_id = connection.execute(
+            "INSERT INTO Positions (Bot, Symbol, Position, Exchange_Id) "
+            "VALUES ('1h','PENDING/USDC',0,2)"
+        ).lastrowid
+        connection.commit()
+
+        intent = database.create_order_intent(
+            side="BUY",
+            symbol="PENDING/USDC",
+            bot="1h",
+            position_id=pending_id,
+            client_order_id="pending-slot",
+        )
+        assert database.get_position_capacity_usage() == {
+            "open_positions": 1,
+            "pending_buy_slots": 1,
+            "occupied_slots": 2,
+        }
+
+        connection.execute(
+            "UPDATE Positions SET Position=1 WHERE Id=?", (pending_id,)
+        )
+        connection.execute(
+            "UPDATE Orders SET Order_Status='partially_filled' WHERE Id=?",
+            (intent["Id"],),
+        )
+        connection.commit()
+        assert database.get_position_capacity_usage() == {
+            "open_positions": 2,
+            "pending_buy_slots": 0,
+            "occupied_slots": 2,
+        }
+
+        connection.execute("UPDATE Positions SET Position=0 WHERE Id=?", (open_id,))
+        database.mark_order_intent_rejected(intent["Id"], "rejected")
+        conversion = database.create_order_intent(
+            side="BUY",
+            symbol="BTC/USDC",
+            bot="1d",
+            position_id=None,
+            client_order_id="balance-conversion",
+        )
+        assert database.get_position_capacity_usage() == {
+            "open_positions": 1,
+            "pending_buy_slots": 0,
+            "occupied_slots": 1,
+        }
+
+        canceled = database.create_order_intent(
+            side="BUY",
+            symbol="OPEN/USDC",
+            bot="1h",
+            position_id=open_id,
+            client_order_id="canceled-slot",
+        )
+        assert database.get_position_capacity_usage()["pending_buy_slots"] == 1
+        connection.execute(
+            "UPDATE Orders SET Order_Status='canceled', Intent_State='settled' WHERE Id=?",
+            (canceled["Id"],),
+        )
+        connection.commit()
+        assert database.get_position_capacity_usage()["pending_buy_slots"] == 0
+        assert database.get_order_intent(conversion["Id"])["Order_Status"] == "pending"
+    finally:
+        connection.close()
+        _restore_connection(original)
+
+
+def test_concurrent_buy_intents_can_reserve_only_the_last_position_slot(
+    tmp_path, monkeypatch
+):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        database.set_active_exchange(2)
+        monkeypatch.setattr(
+            database,
+            "_exchange_symbol_metadata",
+            lambda symbol: (
+                2,
+                symbol,
+                symbol.replace("/", ""),
+                symbol.split("/")[0],
+                "USDC",
+            ),
+        )
+        connection.execute(
+            "INSERT INTO Positions (Bot, Symbol, Position, Exchange_Id) "
+            "VALUES ('1h','OPEN/USDC',1,2)"
+        )
+        candidate_ids = [
+            connection.execute(
+                "INSERT INTO Positions (Bot, Symbol, Position, Exchange_Id) "
+                "VALUES ('1h',?,0,2)",
+                (symbol,),
+            ).lastrowid
+            for symbol in ("AAA/USDC", "BBB/USDC")
+        ]
+        connection.commit()
+
+        barrier = threading.Barrier(2)
+        outcomes = []
+        outcome_lock = threading.Lock()
+
+        def reserve(symbol, position_id, client_order_id):
+            thread_connection = sqlite3.connect(
+                tmp_path / "runtime.db", check_same_thread=False
+            )
+            database._thread_local.conn = thread_connection
+            try:
+                barrier.wait()
+                database.create_order_intent(
+                    side="BUY",
+                    symbol=symbol,
+                    bot="1h",
+                    position_id=position_id,
+                    client_order_id=client_order_id,
+                    max_open_positions=2,
+                )
+                outcome = "reserved"
+            except database.PositionCapacityError:
+                outcome = "blocked"
+            finally:
+                thread_connection.close()
+                delattr(database._thread_local, "conn")
+            with outcome_lock:
+                outcomes.append(outcome)
+
+        threads = [
+            threading.Thread(target=reserve, args=arguments)
+            for arguments in (
+                ("AAA/USDC", candidate_ids[0], "a" * 32),
+                ("BBB/USDC", candidate_ids[1], "b" * 32),
+            )
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert sorted(outcomes) == ["blocked", "reserved"]
+        assert connection.execute(
+            "SELECT COUNT(*) FROM Orders WHERE Side='BUY'"
+        ).fetchone()[0] == 1
+    finally:
+        connection.close()
+        _restore_connection(original)
+
+
+def test_unrealized_positions_are_not_duplicated_or_hidden_by_order_history(
+    tmp_path,
+):
+    connection = _runtime_database(tmp_path)
+    original = _use_connection(connection)
+    try:
+        database.set_active_exchange(2)
+        first_id = connection.execute(
+            """
+            INSERT INTO Positions (
+                Bot, Symbol, Position, Exchange_Id, Buy_Order_Id, Qty,
+                Buy_Price, PnL_Perc, PnL_Value, Trail_Stop_ATR,
+                Highest_Price_Since_Entry
+            ) VALUES ('1h','AAA/USDC',1,2,'DUPLICATE',1,10,0,0,0,10)
+            """
+        ).lastrowid
+        second_id = connection.execute(
+            """
+            INSERT INTO Positions (
+                Bot, Symbol, Position, Exchange_Id, Buy_Order_Id, Qty,
+                Buy_Price, PnL_Perc, PnL_Value, Trail_Stop_ATR,
+                Highest_Price_Since_Entry
+            ) VALUES ('1h','BBB/USDC',1,2,'MISSING',1,20,0,0,0,20)
+            """
+        ).lastrowid
+        connection.executemany(
+            """
+            INSERT INTO Orders (
+                Exchange_Id, Exchange_Order_Id, Bot, Symbol, Side, Qty,
+                Order_Status, Intent_State
+            ) VALUES (2,'DUPLICATE','1h','AAA/USDC','BUY',?,'filled','settled')
+            """,
+            [(1,), (2,)],
+        )
+        connection.commit()
+
+        positions = database.get_unrealized_pnl_by_bot("1h")
+
+        assert set(positions["Id"]) == {first_id, second_id}
+        assert positions.loc[positions["Id"] == first_id, "RPQ%"].iloc[0] == "50.0"
+        assert positions.loc[positions["Id"] == second_id, "RPQ%"].iloc[0] == "nan"
     finally:
         connection.close()
         _restore_connection(original)

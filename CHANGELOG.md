@@ -2,6 +2,10 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [2026-09-20]
+- Trading Safety - Prevented OKX and Kraken from exceeding the maximum position limit by atomically reserving slots for pending buy intents, including fixed-size stakes, while keeping excess positions open and allowing exits and reconciliation.
+- Trading Dashboard - Separated open positions from pending buys and prevented duplicate or missing order history from distorting Unrealized PnL position counts.
+
 ## [2026-09-12]
 - Market Data - Aligned market-phase analysis and live trading to a shared minimum of 200 closed candles, avoiding unnecessary insufficient-history alerts while preserving higher strategy-specific requirements.
 

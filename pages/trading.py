@@ -1885,8 +1885,11 @@ def settings():
         total_locked = float(database.get_total_locked_values())
         cur_bal, balance_error = _available_balance_for_settings(balance_asset)
         avail = None if cur_bal is None else max(cur_bal - total_locked, 0)
-        open_now = database.get_num_open_positions()
-        rem = max(max_pos - open_now, 0)
+        capacity = database.get_position_capacity_usage()
+        open_now = capacity["open_positions"]
+        pending_buys = capacity["pending_buy_slots"]
+        occupied_slots = capacity["occupied_slots"]
+        rem = max(max_pos - occupied_slots, 0)
         next_pos = None if avail is None else (0 if rem == 0 else (avail / rem))
         # c1, c2, c3, c4, c5 = st.columns(5)
         # c1.metric("Trade Against", ta)
@@ -1901,11 +1904,20 @@ def settings():
             "Unavailable" if avail is None else _format_overview_value(avail),
         )
         c7.metric(f"Locked {balance_asset}", _format_overview_value(total_locked))
-        c8.metric("Available Positions", rem)
-        c9.metric(
+        c8.metric("Open Positions", open_now)
+        c9.metric("Pending Buys", pending_buys)
+        c10, c11 = st.columns(2)
+        c10.metric("Available Positions", rem)
+        c11.metric(
             f"Next Position Size {balance_asset}",
             "Unavailable" if next_pos is None else _format_overview_value(next_pos),
         )
+        if open_now > max_pos:
+            st.warning(
+                f"Open positions exceed the configured maximum "
+                f"({open_now}/{max_pos}). New buys are blocked until capacity "
+                "is available. Existing positions are not closed automatically."
+            )
         if balance_error:
             st.caption(
                 f"The private {active_exchange['name']} balance is unavailable "

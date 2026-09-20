@@ -72,6 +72,79 @@ def _pending_result(status=OrderStatus.PENDING, *, executed="0"):
     )
 
 
+def test_fixed_stake_is_blocked_when_pending_buys_occupy_the_limit(monkeypatch):
+    monkeypatch.setattr(live_execution.config, "load_settings", lambda: _settings())
+    monkeypatch.setattr(
+        live_execution.database,
+        "get_position_capacity_usage",
+        lambda: {
+            "open_positions": 4,
+            "pending_buy_slots": 1,
+            "occupied_slots": 5,
+        },
+    )
+    monkeypatch.setattr(
+        live_execution.service,
+        "fetch_balance",
+        lambda _asset: pytest.fail("a full capacity check must happen before balance reads"),
+    )
+
+    with pytest.raises(live_execution.database.PositionCapacityError) as exc_info:
+        live_execution._stake_amount("USDC")
+
+    assert exc_info.value.capacity == {
+        "open_positions": 4,
+        "pending_buy_slots": 1,
+        "max_positions": 5,
+    }
+
+
+def test_capacity_full_returns_structured_buy_skip_without_submission(monkeypatch):
+    market = MarketInfo("BTC/USDC", "XBTUSDC", "BTC", "USDC", True)
+    monkeypatch.setattr(
+        live_execution, "_guarded_live_exchange", lambda side: (_exchange(), None)
+    )
+    monkeypatch.setattr(live_execution.config, "load_settings", lambda: _settings())
+    monkeypatch.setattr(live_execution.service, "normalize_symbol", lambda value: value)
+    monkeypatch.setattr(
+        live_execution.service, "load_markets", lambda: {market.symbol: market}
+    )
+    monkeypatch.setattr(
+        live_execution.database, "is_symbol_blacklisted", lambda _asset: False
+    )
+    monkeypatch.setattr(
+        live_execution,
+        "_stake_amount",
+        lambda _asset: (_ for _ in ()).throw(
+            live_execution.database.PositionCapacityError(
+                open_positions=4,
+                pending_buy_slots=1,
+                max_positions=5,
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        live_execution.service,
+        "create_market_buy",
+        lambda *_args, **_kwargs: pytest.fail("a capacity-blocked buy must not submit"),
+    )
+
+    outcome = live_execution.create_buy_order(
+        symbol="BTC/USDC", bot="1h", position_id=10
+    )
+
+    assert outcome == {
+        "skipped": True,
+        "code": "position_capacity_full",
+        "reason": "Maximum position capacity is occupied (4 open + 1 pending / 5 maximum)",
+        "capacity": {
+            "open_positions": 4,
+            "pending_buy_slots": 1,
+            "max_positions": 5,
+        },
+    }
+
+
 def test_live_operation_requires_run_mode_and_explicit_side_flag(monkeypatch):
     monkeypatch.setattr(
         live_execution.service,
