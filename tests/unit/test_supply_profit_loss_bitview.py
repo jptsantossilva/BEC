@@ -45,7 +45,7 @@ def test_fetch_bitview_series_uses_expected_endpoint():
     payload = spl.fetch_bitview_series("price", days=10, session=session)
 
     assert payload["data"] == [1, 2]
-    assert session.calls[0][0].endswith("/series/price/day")
+    assert session.calls[0][0].endswith("/series/price/day1")
     assert session.calls[0][1] == {"start": "-10"}
 
 
@@ -54,7 +54,7 @@ def test_fetch_bitview_series_uses_start_zero_for_full_history():
 
     spl.fetch_bitview_series("supply_in_profit_share", days=0, session=session)
 
-    assert session.calls[0][0].endswith("/series/supply_in_profit_share/day")
+    assert session.calls[0][0].endswith("/series/supply_in_profit_share/day1")
     assert session.calls[0][1] == {"start": "0"}
 
 

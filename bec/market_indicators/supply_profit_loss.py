@@ -126,7 +126,7 @@ def fetch_bitview_series(
     days = int(days)
     start = "0" if days == 0 else f"-{abs(days)}"
     response = client.get(
-        f"{BITVIEW_API_BASE_URL}/series/{series_name}/day",
+        f"{BITVIEW_API_BASE_URL}/series/{series_name}/day1",
         params={"start": start},
         timeout=BITVIEW_TIMEOUT,
     )
