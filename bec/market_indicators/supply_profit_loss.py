@@ -26,6 +26,7 @@ BITVIEW_REQUIRED_SERIES = (
     "price",
     "supply_in_profit_share",
     "supply_in_loss_share",
+    "date",
 )
 BITVIEW_OPTIONAL_SERIES = (
     "supply_in_profit",
@@ -149,8 +150,6 @@ def fetch_bitview_series(
     data = payload.get("data")
     if not isinstance(data, list) or not data:
         raise BitviewError(f"Bitview payload for {series_name} has no data.")
-    if not payload.get("stamp"):
-        raise BitviewError(f"Bitview payload for {series_name} has no stamp.")
     return payload
 
 
@@ -198,7 +197,25 @@ def normalize_bitview_series(
     if len(set(required_lengths.values())) != 1:
         raise BitviewError(f"Required Bitview series lengths differ: {required_lengths}")
 
-    dates = dates_from_bitview_payload(payloads["price"], now_utc=now_utc)
+    bounds = [
+        (payloads[name].get("start"), payloads[name].get("end"))
+        for name in BITVIEW_REQUIRED_SERIES
+    ]
+    if any(
+        not isinstance(start, int)
+        or not isinstance(end, int)
+        or end - start != required_lengths[name]
+        for name, (start, end) in zip(BITVIEW_REQUIRED_SERIES, bounds)
+    ) or len(set(bounds)) != 1:
+        raise BitviewError("Required Bitview series indexes do not match.")
+    dates = pd.to_datetime(payloads["date"]["data"], utc=True, errors="coerce")
+    if (
+        dates.isna().any()
+        or not dates.is_monotonic_increasing
+        or dates.has_duplicates
+        or any(dates[i] - dates[i - 1] != pd.Timedelta(days=1) for i in range(1, len(dates)))
+    ):
+        raise BitviewError("Bitview date series is invalid or discontinuous.")
     if len(dates) != required_lengths["price"]:
         raise BitviewError("Bitview date count does not match required series length.")
 
@@ -220,22 +237,25 @@ def normalize_bitview_series(
         ("supply_in_loss", "supply_in_loss_btc"),
     ):
         payload = payloads.get(series_name)
-        if payload and len(payload.get("data", [])) == len(df):
+        if (
+            payload
+            and len(payload.get("data", [])) == len(df)
+            and (payload.get("start"), payload.get("end")) == bounds[0]
+        ):
             df[column_name] = _series_to_numeric(payload, series_name)
         else:
             df[column_name] = pd.NA
 
-    retrieved_at = pd.to_datetime(
-        payloads["price"].get("stamp"), utc=True, errors="coerce"
-    )
     df["source"] = "bitview"
-    df["retrieved_at"] = retrieved_at.isoformat() if pd.notna(retrieved_at) else ""
+    df["retrieved_at"] = datetime.now(timezone.utc).isoformat()
+    df = df[df["date"].dt.date <= _last_complete_utc_day(now_utc)]
     return normalize_supply_profit_loss(df, source="bitview")
 
 
 def fetch_bitview_supply_profit_loss(
     days: int = DEFAULT_BACKFILL_DAYS,
     session=None,
+    now_utc: datetime | None = None,
 ) -> pd.DataFrame:
     payloads = {}
     for series_name in BITVIEW_REQUIRED_SERIES:
@@ -251,7 +271,7 @@ def fetch_bitview_supply_profit_loss(
         except BitviewError as exc:
             print(f"Optional Bitview series skipped ({series_name}): {exc}")
 
-    return normalize_bitview_series(payloads)
+    return normalize_bitview_series(payloads, now_utc=now_utc)
 
 
 def normalize_supply_profit_loss(raw: pd.DataFrame, source: str = "bitview") -> pd.DataFrame:
@@ -378,7 +398,9 @@ def update_missing_days(session=None, now_utc: datetime | None = None) -> int:
         print("BTC Supply Profit/Loss: local table is already up to date.")
         return 0
 
-    df = fetch_bitview_supply_profit_loss(days=missing_days, session=session)
+    df = fetch_bitview_supply_profit_loss(
+        days=missing_days + 1, session=session, now_utc=now_utc
+    )
     save_cached_supply_profit_loss(df)
     print(f"BTC Supply Profit/Loss: inserted/updated {len(df)} missing Bitview rows.")
     return len(df)

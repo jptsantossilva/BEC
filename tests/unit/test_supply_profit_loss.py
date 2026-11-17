@@ -35,11 +35,12 @@ def _sample_rows(values):
 
 
 def _payload(values, stamp="2026-06-10T11:44:14Z"):
-    return {"version": 1, "index": "day1", "stamp": stamp, "data": values}
+    return {"version": 1, "index": "day1", "stamp": stamp, "start": 0, "end": len(values), "data": values}
 
 
 def _bitview_payloads():
     return {
+        "date": _payload(["2026-06-07", "2026-06-08", "2026-06-09"]),
         "price": _payload([100, 110, 120]),
         "supply_in_profit_share": _payload([47.6, 50.1, 51.2]),
         "supply_in_loss_share": _payload([52.4, 49.9, 48.8]),
@@ -77,6 +78,7 @@ def test_normalize_bitview_series_maps_required_and_optional_values():
 
 def test_normalize_bitview_series_filters_null_and_zero_price_history():
     payloads = {
+        "date": _payload(["2026-06-06", "2026-06-07", "2026-06-08", "2026-06-09"]),
         "price": _payload([None, 0.0, 100.0, 110.0]),
         "supply_in_profit_share": _payload([40.0, 41.0, 42.0, 43.0]),
         "supply_in_loss_share": _payload([60.0, 59.0, 58.0, 57.0]),
@@ -97,6 +99,15 @@ def test_normalize_bitview_series_requires_aligned_required_lengths():
     payloads["supply_in_loss_share"] = _payload([52.4, 49.9])
 
     with pytest.raises(spl.BitviewError):
+        spl.normalize_bitview_series(payloads)
+
+
+def test_normalize_bitview_series_rejects_shifted_indexes():
+    payloads = _bitview_payloads()
+    payloads["supply_in_loss_share"]["start"] = 1
+    payloads["supply_in_loss_share"]["end"] = 4
+
+    with pytest.raises(spl.BitviewError, match="indexes do not match"):
         spl.normalize_bitview_series(payloads)
 
 

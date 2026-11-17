@@ -3,7 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [2026-11-17]
-- Market Data - Updated the Bitview daily series endpoint to use `day1`, restoring BTC Supply in Profit/Loss data updates after the API removed the `day` index.
+- Market Data - Updated BTC Supply in Profit/Loss to use Bitview's `day1` endpoint and date series, validate aligned indexes, and recover missing completed days after the API format change.
 
 ## [2026-09-20]
 - Trading Safety - Prevented OKX and Kraken from exceeding the maximum position limit by atomically reserving slots for pending buy intents, including fixed-size stakes, while keeping excess positions open and allowing exits and reconciliation.

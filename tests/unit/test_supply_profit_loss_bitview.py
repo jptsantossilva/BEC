@@ -36,7 +36,7 @@ def _use_memory_db(monkeypatch):
 
 
 def _payload(values):
-    return {"version": 1, "index": "day1", "stamp": "2026-06-10T11:44:14Z", "data": values}
+    return {"version": 1, "index": "day1", "start": 0, "end": len(values), "data": values}
 
 
 def test_fetch_bitview_series_uses_expected_endpoint():
@@ -104,6 +104,7 @@ def test_update_missing_days_empty_cache_backfills_full_history(monkeypatch):
             _FakeResponse(payload=_payload([100, 110])),
             _FakeResponse(payload=_payload([50, 51])),
             _FakeResponse(payload=_payload([50, 49])),
+            _FakeResponse(payload=_payload(["2026-06-08", "2026-06-09"])),
             _FakeResponse(payload=_payload([9_000_000, 9_100_000])),
             _FakeResponse(payload=_payload([9_000_000, 8_900_000])),
         ]
@@ -131,11 +132,12 @@ def test_update_missing_days_fetches_only_gap(monkeypatch):
     spl.save_cached_supply_profit_loss(existing)
     session = _FakeSession(
         [
-            _FakeResponse(payload=_payload([110, 120])),
-            _FakeResponse(payload=_payload([51, 52])),
-            _FakeResponse(payload=_payload([49, 48])),
-            _FakeResponse(payload=_payload([9_100_000, 9_200_000])),
-            _FakeResponse(payload=_payload([8_900_000, 8_800_000])),
+            _FakeResponse(payload=_payload([110, 120, 130])),
+            _FakeResponse(payload=_payload([51, 52, 53])),
+            _FakeResponse(payload=_payload([49, 48, 47])),
+            _FakeResponse(payload=_payload(["2026-06-08", "2026-06-09", "2026-06-10"])),
+            _FakeResponse(payload=_payload([9_100_000, 9_200_000, 9_300_000])),
+            _FakeResponse(payload=_payload([8_900_000, 8_800_000, 8_700_000])),
         ]
     )
 
@@ -145,5 +147,10 @@ def test_update_missing_days_fetches_only_gap(monkeypatch):
     )
 
     assert rows == 2
-    assert session.calls[0][1] == {"start": "-2"}
-    assert len(spl.load_cached_supply_profit_loss()) == 3
+    assert session.calls[0][1] == {"start": "-3"}
+    cached = spl.load_cached_supply_profit_loss()
+    assert len(cached) == 3
+    assert cached["btc_price"].tolist() == [100, 110, 120]
+    assert cached["date"].dt.strftime("%Y-%m-%d").tolist() == [
+        "2026-06-07", "2026-06-08", "2026-06-09"
+    ]
